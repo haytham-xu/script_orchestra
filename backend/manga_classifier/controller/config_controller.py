@@ -5,7 +5,7 @@ from extensions import restx_api
 
 ns = Namespace("")
 
-@ns.route("/manga/config")
+@ns.route("/manga-classifier/config")
 class ConfigResource(Resource):
 
     def get(self):

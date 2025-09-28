@@ -6,7 +6,7 @@ import os
 
 api = Namespace("")
 
-@api.route("/manga/file/<path:filepath>")
+@api.route("/manga-classifier/file/<path:filepath>")
 class FileResource(Resource):
 
     def get(self, filepath):

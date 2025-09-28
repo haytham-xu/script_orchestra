@@ -5,11 +5,10 @@ from flask_restx import Namespace, Resource
 from flask import request, jsonify
 from extensions import restx_api
 from manga_classifier import config
-import time
 
 ns = Namespace("")
 
-@ns.route("/manga/folder")
+@ns.route("/manga-classifier/folder")
 class FolderResource(Resource):
     def get(self):
         """List all folders."""
@@ -30,13 +29,12 @@ class FolderResource(Resource):
         target_folder_path = os.path.join(config.TARGET_PATHS, data["targetFolderPath"].lstrip("/"))
         if not os.path.exists(source_folder_path):
             return "source folder not exist.", 404
-        # if not os.path.exists(target_folder_path):
-        #     os.makedirs(target_folder_path)
-        # shutil.move(source_folder_path, target_folder_path)
-        time.sleep(3)
+        if not os.path.exists(target_folder_path):
+            os.makedirs(target_folder_path)
+        shutil.move(source_folder_path, target_folder_path)
         return {"message": "Accepted, processing started"}, 202
     
-@ns.route("/manga/folder/<folder_name>")
+@ns.route("/manga-classifier/folder/<folder_name>")
 class FilesResource(Resource):
     def get(self, folder_name):
         """Get file list for a folder (including one level of subfolders)."""
@@ -52,7 +50,7 @@ class FilesResource(Resource):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
-                    file_url = f"{config.HOST_URL}/manga/file/{folder_name}{'/' + relative_path if relative_path else ''}/{fname}"
+                    file_url = f"{config.HOST_URL}/manga-classifier/file/{folder_name}{'/' + relative_path if relative_path else ''}/{fname}"
                     if lower_name.endswith(config.IMAGE_EXTS):
                         collected.append({"fileUrl": file_url, "fileType": "image"})
                     elif lower_name.endswith(config.VIDEO_EXTS):
