@@ -1,0 +1,5 @@
+test_data/
+__pycache__
+config_local.py
+prompt.md
+temp
