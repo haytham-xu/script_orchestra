@@ -49,6 +49,7 @@ export default defineComponent({
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
         currentFolderName.value = currentFolderObject.value.folderName
         currentFileList.value = await getFileList(currentFolderName.value);
+        window.scrollTo(0, 0);
       } else if(currentIndex.value == maxFolderindex) {
           currentIndex.value += 1;
           currentFolderName.value = "EOL";
@@ -69,6 +70,7 @@ export default defineComponent({
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
         currentFolderName.value = currentFolderObject.value.folderName
         currentFileList.value = await getFileList(currentFolderName.value);
+        window.scrollTo(0, 0);
       } else if(currentIndex.value == 0) {
           currentIndex.value -= 1;
           currentFolderName.value = "EOL";
@@ -100,7 +102,6 @@ export default defineComponent({
 
     function handleKeyDown(event: KeyboardEvent) {
       // ArrowUp ArrowDown ArrowLeft ArrowRight Delete
-      console.log("==> ", folderObjectList)
       switch (event.code) {
         case 'ArrowLeft':
           previousFolder()
@@ -112,6 +113,7 @@ export default defineComponent({
           nextFolder()
           break
         case 'Backspace':
+          moveFolder(currentFolderName.value, "to_del")
           break
       }
     }

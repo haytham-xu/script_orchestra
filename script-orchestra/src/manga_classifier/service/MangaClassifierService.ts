@@ -11,13 +11,11 @@ export async function getButtonConfigJSON(): Promise<ButtonConfigJSON> {
 
 export async function getFolderList():Promise<FolderObjectList> {
     const responseData = await getRequest<FolderObjectList>(ENDPOINT_FOLDER)
-    console.log('getFolderList', responseData)
     return responseData
 }
 
 export async function getFileList(folderName:string):Promise<FileList> {
     const responseData = await getRequest<FileList>(ENDPOINT_FOLDER + "/" + folderName)
-    console.log('getFileList', responseData)
     return responseData
 }
 

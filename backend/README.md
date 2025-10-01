@@ -18,12 +18,17 @@ pyenv local 3.13.5
 ```
 
 
-#### Venv
+#### Venv - Unix
 python3 -m venv venv
 source venv/bin/activate
 deactivate
 
-#### Requirment
+#### Venv - Win
+python3 -m venv venv
+.\venv\Scripts\Activate.ps1
+deactivate
+
+#### Requirment - Unix/Win
 pip3 install -r requirements.txt
 pip3 freeze > requirements.txt
 

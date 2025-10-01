@@ -35,11 +35,7 @@
 </template>
 
 <style scoped>
-/* *{
-  margin: 0px;
-  padding: 0px;
-  border: 0.1px solid #eee;
-} */
+
 .el-header {
   display: flex;
   justify-content: center;

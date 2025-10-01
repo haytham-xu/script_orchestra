@@ -1,6 +1,7 @@
 HOST_URL = 'http://127.0.0.1:5000'
 ROOT_PATH = ''
 TARGET_PATHS = ''
+DELETE_PATHS = ''
 CATEGOTY = {}
 
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')

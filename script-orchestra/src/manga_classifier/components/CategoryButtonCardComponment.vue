@@ -31,7 +31,7 @@
   flex-direction: column;
   gap: 10px;
   margin-bottom: 20px;
-  width: 300px;
+  width: 150px;
   /* align-items: center; */
 }
 
@@ -54,7 +54,7 @@
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
-  width: 300px;
+  width: 150px;
 }
 
 .sub-btn {

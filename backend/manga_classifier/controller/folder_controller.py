@@ -1,5 +1,6 @@
 import os
 import shutil
+from natsort import natsorted
 from pathlib import Path
 from flask_restx import Namespace, Resource
 from flask import request, jsonify
@@ -32,6 +33,7 @@ class FolderResource(Resource):
         if not os.path.exists(target_folder_path):
             os.makedirs(target_folder_path)
         shutil.move(source_folder_path, target_folder_path)
+        # print(f"Moving {source_folder_path} to {target_folder_path}")
         return {"message": "Accepted, processing started"}, 202
     
 @ns.route("/manga-classifier/folder/<folder_name>")
@@ -46,7 +48,7 @@ class FilesResource(Resource):
 
         def collect_files_in_dir(base_path, relative_path=""):
             collected = []
-            for fname in sorted(os.listdir(base_path)):
+            for fname in natsorted(os.listdir(base_path)):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
@@ -59,11 +61,11 @@ class FilesResource(Resource):
 
         files.extend(collect_files_in_dir(folder_abs_path))
 
-        for dname in sorted(os.listdir(folder_abs_path)):
+        for dname in natsorted(os.listdir(folder_abs_path)):
             sub_dir_path = os.path.join(folder_abs_path, dname)
             if os.path.isdir(sub_dir_path):
                 files.extend(collect_files_in_dir(sub_dir_path, relative_path=dname))
-
+                
         return jsonify({"files": files})
     
 restx_api.add_namespace(ns)
