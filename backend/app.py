@@ -3,6 +3,7 @@ from flask_cors import CORS
 from extensions import restx_api
 
 import manga_classifier.manga_classifier
+import photo_classifier.photo_classifier
 
 def create_app() -> Flask:
     app = Flask(__name__)

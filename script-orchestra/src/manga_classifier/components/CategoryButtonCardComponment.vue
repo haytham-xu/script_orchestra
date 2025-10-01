@@ -25,9 +25,6 @@
 <script lang="ts" src="@/manga_classifier/components/CategoryButtonCardComponment.ts"></script>
 
 <style scoped>
-/* * {
-  outline: 1px solid red !important;
-} */
 
 .main-buttons {
   display: flex;

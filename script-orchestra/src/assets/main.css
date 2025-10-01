@@ -1,13 +1,8 @@
+/* * {
+  outline: 1px solid red !important;
+} */
+
 html, body, #app {
   margin: 0;
   padding: 0;
 }
-/* @import './base.css';
-
-#app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  font-weight: normal;
-}
-*/
