@@ -2,11 +2,11 @@
   <el-container> 
     <el-card @click="goTo('/manga-classifier')">
       <template #header>Manga Classifier</template>
-      <p>Here is content</p>
+      <!-- <p>Here is content</p> -->
     </el-card>
     <el-card @click="goTo('/photo-classifier')">
       <template #header>Photo Classifier</template>
-      <p>Here is content</p>
+      <!-- <p>Here is content</p> -->
     </el-card>
   </el-container>
 </template>

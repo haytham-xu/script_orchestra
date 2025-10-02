@@ -18,13 +18,13 @@ class FolderResource(Resource):
         if not os.path.exists(folder_abs_path):
             return jsonify({"files": files})
 
-        def collect_files_in_dir(base_path, relative_path=""):
+        def collect_files_in_dir(base_path):
             collected = []
             for fname in sorted(os.listdir(base_path)):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
-                    file_url = f"{config.HOST_URL}/photo-classifier/file/{'/' + relative_path if relative_path else ''}/{fname}"
+                    file_url = f"{config.HOST_URL}/photo-classifier/file/{fname}"
                     if lower_name.endswith(config.IMAGE_EXTS):
                         collected.append({
                             "filePath": fname,

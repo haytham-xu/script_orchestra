@@ -36,6 +36,11 @@ export default defineComponent({
       router.push('/photo-classifier')
     }
 
+    // function emptyGroup() {
+    //   if(currentDisplayFile.value) {
+    //     currentDisplayFile.value.groupId = null
+    //   }
+    // }
 
     function nextFile() {
       if (currentIndex.value < displayFileList.value.length - 1) {
@@ -125,7 +130,8 @@ export default defineComponent({
       goToGroup,
       addToGroup,
       updateDisplayFiles,
-      applyGroup
+      applyGroup,
+      // emptyGroup,
     }
   }
 })

@@ -7,7 +7,13 @@
         <el-button @click="drawerVisible = true">显示Group</el-button>
         <el-switch v-model="showFiltered" active-text="未标识" @change="updateDisplayFiles" />
       </div>
+
+      <div class="header-progress">
+        {{ currentIndex + 1 }} / {{ displayFileList.length }} -- {{currentFile?.filePath }}
+      </div>
+
       <div class="header-right">
+        <!-- <el-button @click="emptyGroup">移除当前group</el-button> -->
         <span v-if="currentFile?.categoryTag!=null">Category: {{ currentFile?.categoryTag }}   | </span>
         <span v-if="currentFile?.groupId!=null">Group: {{ currentFile?.groupId }}</span>
       </div>

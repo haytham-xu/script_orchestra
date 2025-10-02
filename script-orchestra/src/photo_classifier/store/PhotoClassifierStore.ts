@@ -44,10 +44,10 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     },
 
     createNewGroupWithFile(file: FileModel): number {
-      if(file.fileStatus == FileStatus.IN_GROUP) {
-        console.log("FIle already in group, skip: ", file.groupId)
-        return file.groupId;
-      }
+      // if(file.fileStatus == FileStatus.IN_GROUP) {
+      //   console.log("FIle already in group, skip: ", file.groupId)
+      //   return file.groupId;
+      // }
 
       const newGroupId = this.groupList.groupList.length
       file.fileStatus = FileStatus.IN_GROUP
@@ -64,10 +64,10 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     },
 
     addFileToGroup(file: FileModel, groupIndex: number) {
-      if(file.fileStatus == FileStatus.IN_GROUP) {
-        console.log("FIle already in group, skip: ", file.groupId)
-        return;
-      }
+      // if(file.fileStatus == FileStatus.IN_GROUP) {
+      //   console.log("FIle already in group, skip: ", file.groupId)
+      //   return;
+      // }
 
       const targetGroup = this.groupList.groupList[groupIndex]
       if (!targetGroup) {

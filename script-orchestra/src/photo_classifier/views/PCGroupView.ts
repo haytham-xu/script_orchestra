@@ -28,6 +28,12 @@ export default defineComponent({
       return group ? group.files : []
     })
 
+    const markAllNormal = () => {
+      for(const a_file of displayFileList.value) {
+        a_file.categoryTag = FileCategory.NORMAL
+      }
+    }
+
     const currentFile = computed<FileModel | null>(() => {
         return displayFileList.value[currentIndex.value] || null
     })
@@ -113,6 +119,7 @@ export default defineComponent({
       goNextGroup,
       goPrevGroup,
       applyGroup,
+      markAllNormal,
       // setCategory
     }
   }
