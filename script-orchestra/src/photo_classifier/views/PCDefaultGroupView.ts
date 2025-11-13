@@ -1,32 +1,50 @@
-
-
-import {defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { usePhotoClassifierStore } from '../store/PhotoClassifierStore';
+import { usePhotoClassifierStore } from '../store/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
-import type { GroupList, DefaultGroup, FileModel, Group} from '@/photo_classifier/model/Model.ts'
-import { FileCategory, FileStatus, FileType, GroupStatus } from '@/photo_classifier/model/Model.ts'
+import type { FileModel } from '@/photo_classifier/model/Model.ts'
+import { FileCategory, FileStatus } from '@/photo_classifier/model/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
 
 export default defineComponent({
   name: 'PCDefaultGroupView',
-  components: {MediaComponment},
+  components: { MediaComponment },
   setup() {
+    const currentIndex = ref(0)
+    // const emit = defineEmits(['update:currentIndex'])
+
+    const isEditing = ref(false)
+    const editValue = ref(1)
+
+    function startEditing() {
+      isEditing.value = true
+      editValue.value = currentIndex!.value + 1
+    }
+
+    function applyEdit() {
+      let newIndex = editValue.value - 1
+      if (newIndex < 0) newIndex = 0
+      if (newIndex >= displayFileList!.value.length) {
+        newIndex = displayFileList!.value.length - 1
+      }
+      // emit('update:currentIndex', newIndex)
+      isEditing.value = false
+    }
+
     const router = useRouter()
     const photoClassifierStore = usePhotoClassifierStore()
 
-    const currentIndex = ref(0)
     const currentLastGroupIndex = ref(-1)
     const showFiltered = ref(false)
     const drawerVisible = ref(false)
 
     const displayFileList = computed<FileModel[]>(() => {
-    const files = photoClassifierStore.defaultGroup.files;
+      const files = photoClassifierStore.defaultGroup.files
       if (!showFiltered.value) {
-        return files;
+        return files
       }
-      return files.filter(f => f.fileStatus !== FileStatus.IN_GROUP);
-    });
+      return files.filter((f) => f.fileStatus !== FileStatus.IN_GROUP)
+    })
 
     const currentDisplayFile = computed<FileModel | null>(() => {
       return displayFileList.value[currentIndex.value] || null
@@ -55,7 +73,7 @@ export default defineComponent({
     }
 
     function addToGroup(file: FileModel, index: number) {
-      if (!currentDisplayFile) return
+      if (!currentDisplayFile.value) return
       photoClassifierStore.addFileToGroup(file, index)
       nextFile()
     }
@@ -65,8 +83,12 @@ export default defineComponent({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.repeat) {
+        ElMessage.warning('Get a repeat event!!')
+        return
+      }
       if (!currentDisplayFile.value) {
-          return;
+        return
       }
 
       switch (event.code) {
@@ -76,12 +98,16 @@ export default defineComponent({
         case 'ArrowRight':
           nextFile()
           break
-        case 'Space':
+        // case 'Space':
+        case 'KeyW':
           photoClassifierStore.addFileToGroup(currentDisplayFile.value, currentLastGroupIndex.value)
           nextFile()
           break
-        case 'Enter':
-          currentLastGroupIndex.value = photoClassifierStore.createNewGroupWithFile(currentDisplayFile.value)
+        // case 'Enter':
+        case 'KeyQ':
+          currentLastGroupIndex.value = photoClassifierStore.createNewGroupWithFile(
+            currentDisplayFile.value,
+          )
           nextFile()
           break
         case 'Backspace':
@@ -96,10 +122,10 @@ export default defineComponent({
         case 'KeyC':
           currentDisplayFile.value.categoryTag = FileCategory.NORMAL
           break
-        default:
-          if (/^Digit[0-9]$/.test(event.code)) {
-            console.log("hi", event.code)
-          }
+        // default:
+        //   if (/^Digit[0-9]$/.test(event.code)) {
+        //     console.log("hi", event.code)
+        //   }
       }
     }
 
@@ -112,7 +138,9 @@ export default defineComponent({
     }
 
     onMounted(() => {
-      window.addEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown)
+      // window.addEventListener('keydown', handleKeyDown)
+      window.addEventListener('keydown', handleKeyDown, { once: false })
     })
 
     onUnmounted(() => {
@@ -131,8 +159,12 @@ export default defineComponent({
       addToGroup,
       updateDisplayFiles,
       applyGroup,
+      isEditing,
+      editValue,
+      applyEdit,
+      startEditing,
       // emptyGroup,
+      currentLastGroupIndex,
     }
-  }
+  },
 })
-

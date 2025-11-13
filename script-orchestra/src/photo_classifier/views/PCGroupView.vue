@@ -59,9 +59,10 @@
 }
 
 .header-progress {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   text-align: center;
-  font-weight: bold;
 }
 
 .header-tags {

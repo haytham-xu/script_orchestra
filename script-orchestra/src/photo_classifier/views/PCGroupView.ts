@@ -1,8 +1,6 @@
-
-
-import {defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { usePhotoClassifierStore } from '../store/PhotoClassifierStore';
+import { usePhotoClassifierStore } from '../store/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
 import { FileCategory, FileStatus, FileType, GroupStatus } from '@/photo_classifier/model/Model.ts'
 import type { FileModel } from '@/photo_classifier/model/Model.ts'
@@ -10,12 +8,12 @@ import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
 
 export default defineComponent({
   name: 'PCGroupView',
-  components: {MediaComponment},
+  components: { MediaComponment },
   props: {
     groupId: {
       type: Number,
-      required: true
-    }
+      required: true,
+    },
   },
   setup(props) {
     const router = useRouter()
@@ -29,13 +27,13 @@ export default defineComponent({
     })
 
     const markAllNormal = () => {
-      for(const a_file of displayFileList.value) {
+      for (const a_file of displayFileList.value) {
         a_file.categoryTag = FileCategory.NORMAL
       }
     }
 
     const currentFile = computed<FileModel | null>(() => {
-        return displayFileList.value[currentIndex.value] || null
+      return displayFileList.value[currentIndex.value] || null
     })
 
     const goNextImage = () => {
@@ -51,19 +49,23 @@ export default defineComponent({
     }
 
     const goNextGroup = () => {
-      if (props.groupId >= 0 && props.groupId < photoClassifierStore.groupList.groupList.length - 1) {
+      if (
+        props.groupId >= 0 &&
+        props.groupId < photoClassifierStore.groupList.groupList.length - 1
+      ) {
+        currentIndex.value = 0
         router.push(`/photo-classifier/group/${Number(props.groupId) + 1}`)
       } else {
-        ElMessage.info("Already the last group.")
+        ElMessage.info('Already the last group.')
       }
-      
     }
 
     const goPrevGroup = () => {
       if (props.groupId > 0) {
+        currentIndex.value = 0
         router.push(`/photo-classifier/group/${Number(props.groupId) - 1}`)
       } else {
-        ElMessage.info("Already the first group.")
+        ElMessage.info('Already the first group.')
       }
     }
 
@@ -104,6 +106,7 @@ export default defineComponent({
 
     onMounted(() => {
       window.addEventListener('keydown', handleKeydowna)
+      // currentIndex.value = 0
     })
 
     onUnmounted(() => {
@@ -122,5 +125,5 @@ export default defineComponent({
       markAllNormal,
       // setCategory
     }
-  }
+  },
 })

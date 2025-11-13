@@ -6,7 +6,7 @@
       shadow="hover"
       @click="goToDefaultGroup"
     >
-      <div class="card-title">Default</div>
+      <!-- <div class="card-title">Default</div> -->
       <el-image
         v-if="photoClassifierStore.defaultGroupAvatar"
         :src="photoClassifierStore.defaultGroupAvatar"
@@ -22,7 +22,7 @@
       shadow="hover"
       @click="goToGroup(group, index)"
     >
-      <div class="card-title">Group {{ index + 1 }}</div>
+      <!-- <div class="card-title">Group {{ index + 1 }}</div> -->
       <el-image
         v-if="photoClassifierStore.groupAvatar(index)"
         :src="photoClassifierStore.groupAvatar(index)"
