@@ -12,7 +12,9 @@
           <video
             v-else-if="file.fileType === 'video'"
             :src="file.fileUrl"
-            controls>
+            controls
+            autoplay>
+            <!-- muted> -->
           </video>
         </div>
       </el-main>
