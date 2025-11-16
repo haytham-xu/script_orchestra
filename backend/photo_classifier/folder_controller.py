@@ -4,7 +4,7 @@ from pathlib import Path
 from flask_restx import Namespace, Resource
 from flask import request, jsonify
 from extensions import restx_api
-from photo_classifier import config
+import config
 
 ns = Namespace("")
 
@@ -12,7 +12,7 @@ ns = Namespace("")
 class FolderResource(Resource):
     def get(self):
         """List all files."""
-        folder_abs_path = os.path.join(config.ROOT_PATH)
+        folder_abs_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH)
         files = []
 
         if not os.path.exists(folder_abs_path):
@@ -51,8 +51,8 @@ class FolderResource(Resource):
     def post(self):
         """Move folder."""
         data = request.json
-        source_folder_path = os.path.join(config.ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
-        target_folder_path = os.path.join(config.ROOT_PATH, data["targetFolderPath"].lstrip("/"))
+        source_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
+        target_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["targetFolderPath"].lstrip("/"))
         if not os.path.exists(source_folder_path):
             return "source folder not exist.", 404
         if not os.path.exists(target_folder_path):

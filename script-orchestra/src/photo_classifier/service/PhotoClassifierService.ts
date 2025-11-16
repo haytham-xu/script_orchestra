@@ -1,10 +1,10 @@
 
-import {getRequest, postRequest} from '@/photo_classifier/service/RequestService.ts'
+import {getRequest, postRequest} from '@/basic/RequestService.ts'
 import type {DefaultGroup} from '@/photo_classifier/model/Model'
-import {ENDPOINT_FOLDER} from '@/photo_classifier/constants/index.ts'
+import {PHOTO_CLASSIFIER_ENDPOINT_FOLDER} from '@/basic/Constants'
 
 export async function getFileList():Promise<DefaultGroup> {
-    const responseData = await getRequest<DefaultGroup>(ENDPOINT_FOLDER)
+    const responseData = await getRequest<DefaultGroup>(PHOTO_CLASSIFIER_ENDPOINT_FOLDER)
     console.log('getFileList', responseData)
     return responseData
 }
@@ -14,6 +14,6 @@ export async function postMoveFolder(sourceFolderPath:string, targetFolderPath:s
         "sourceFolderPath": sourceFolderPath,
         "targetFolderPath": targetFolderPath
     }
-    const responseData = await postRequest(ENDPOINT_FOLDER, {}, payload)
+    const responseData = await postRequest(PHOTO_CLASSIFIER_ENDPOINT_FOLDER, {}, payload)
     return responseData
 }

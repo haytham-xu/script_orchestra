@@ -1,10 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
-// import HomeView from '../views/HomeView.vue'
 import DashboardView from '@/dashboard/views/OrchestraView.vue'
 import MangaClassifierView from '@/manga_classifier/views/MangaClassifierView.vue'
 import PCDashboardView from '@/photo_classifier/views/PCDashboardView.vue'
 import PCDefaultGroupView from '@/photo_classifier/views/PCDefaultGroupView.vue'
 import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
+import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -34,7 +34,12 @@ const router = createRouter({
       name: 'photo-classifier-group',
       component: PCGroupView,
       props: true,
-    }
+    },
+    {
+      path: '/manga-viewer',
+      name: 'manga-viewer',
+      component: MangaViewerView
+    },
   ],
 })
 

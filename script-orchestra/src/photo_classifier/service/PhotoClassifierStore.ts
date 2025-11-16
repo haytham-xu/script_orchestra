@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia'
-import type { GroupList, DefaultGroup, FileModel, Group } from '@/photo_classifier/model/Model.ts'
-import { FileStatus, FileType, GroupStatus } from '@/photo_classifier/model/Model.ts'
+import type { GroupList, DefaultGroup, FileModel, Group } from '@/photo_classifier/service/Model.ts'
+import { FileStatus, FileType, GroupStatus } from '@/photo_classifier/service/Model.ts'
 import { postMoveFolder } from '@/photo_classifier/service/PhotoClassifierService.ts'
 import { ElMessage } from 'element-plus'
-import { tr } from 'element-plus/es/locales.mjs'
 
 interface PhotoClassifierStoreState {
   groupList: GroupList

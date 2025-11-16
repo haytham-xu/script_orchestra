@@ -1,9 +1,9 @@
 import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { usePhotoClassifierStore } from '../store/PhotoClassifierStore'
+import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
-import type { FileModel } from '@/photo_classifier/model/Model.ts'
-import { FileCategory, FileStatus } from '@/photo_classifier/model/Model.ts'
+import type { FileModel } from '@/photo_classifier/service/Model.ts'
+import { FileCategory, FileStatus } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
 
 export default defineComponent({

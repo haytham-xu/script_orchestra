@@ -2,7 +2,7 @@
 
 import {defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { usePhotoClassifierStore } from '@/photo_classifier/store/PhotoClassifierStore';
+import { usePhotoClassifierStore } from '@/photo_classifier/service/PhotoClassifierStore';
 import {getFileList} from '@/photo_classifier/service/PhotoClassifierService.ts'
 import { useRouter } from 'vue-router'
 
@@ -31,7 +31,7 @@ export default defineComponent({
     })
 
     onUnmounted(() => {
-      
+
     })
 
     return {
