@@ -36,20 +36,19 @@ class FolderScanResource(Resource):
         print(file_url_list)
         return jsonify(file_url_list)
 
-
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
-        abs_path = filepath if filepath.startswith("/") else f"/{filepath}"
-        abs_path = unquote(abs_path)
-        if not os.path.isfile(abs_path):
+        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
+        rel_url_path = unquote(filepath).lstrip("/")
+        if os.path.isabs(rel_url_path) or ":" in rel_url_path.split("/")[0]:
+            return "Forbidden", 403
+        safe_path = os.path.normpath(os.path.join(root_abs, rel_url_path.replace("/", os.sep)))
+        if not safe_path.startswith(root_abs + os.sep) and safe_path != root_abs:
+            return "Forbidden", 403
+        if not os.path.isfile(safe_path):
             return "Not Found", 404
-        response = make_response(send_file(abs_path))
-        # response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        # response.headers["Pragma"] = "no-cache"
-        # response.headers["Expires"] = "0"
-        return response
-
+        return make_response(send_file(safe_path))
 
 @api.route("/manga-viewer/folder/<folder_id>")
 class FolderUpdateResource(Resource):

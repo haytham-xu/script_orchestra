@@ -67,24 +67,24 @@ class Repository:
         except OSError:
             return file_list
 
-        root_files = [
-            f for f in entries if os.path.isfile(os.path.join(folder_path, f))
-        ]
+        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
+
+        # 当前目录文件
+        root_files = [f for f in entries if os.path.isfile(os.path.join(folder_path, f))]
         for fname in flex_natsort(root_files):
             lower = fname.lower()
             if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS):
                 full_path = os.path.join(folder_path, fname)
                 try:
-                    rel_for_url = full_path.lstrip(os.sep)
-                    file_url = (
-                        f"{config.HOST_URL}/manga-viewer/file/{quote(rel_for_url)}"
-                    )
+                    rel_path = os.path.relpath(full_path, root_abs)
+                    rel_for_url = rel_path.replace(os.sep, "/")
+                    file_url = f"{config.HOST_URL}/manga-viewer/file/{quote(rel_for_url)}"
                     file_list.append(file_url)
                 except OSError:
                     pass
 
+        # 子目录文件（仅一层）
         subdirs = [d for d in entries if os.path.isdir(os.path.join(folder_path, d))]
-        print(flex_natsort(subdirs))
         for dname in flex_natsort(subdirs):
             subdir_path = os.path.join(folder_path, dname)
             try:
@@ -92,21 +92,16 @@ class Repository:
             except OSError:
                 continue
             sub_files = [
-                sf
-                for sf in sub_entries
-                if os.path.isfile(os.path.join(subdir_path, sf))
+                sf for sf in sub_entries if os.path.isfile(os.path.join(subdir_path, sf))
             ]
             for sf in flex_natsort(sub_files):
                 lower = sf.lower()
-                if lower.endswith(config.IMAGE_EXTS) or lower.endswith(
-                    config.VIDEO_EXTS
-                ):
+                if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS):
                     full_path = os.path.join(subdir_path, sf)
                     try:
-                        rel_for_url = full_path.lstrip(os.sep)
-                        file_url = (
-                            f"{config.HOST_URL}/manga-viewer/file/{quote(rel_for_url)}"
-                        )
+                        rel_path = os.path.relpath(full_path, root_abs)
+                        rel_for_url = rel_path.replace(os.sep, "/")
+                        file_url = f"{config.HOST_URL}/manga-viewer/file/{quote(rel_for_url)}"
                         file_list.append(file_url)
                     except OSError:
                         pass
