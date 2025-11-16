@@ -75,10 +75,11 @@ class FolderUpdateResource(Resource):
             folder.name = new_name
             folder.path = new_path
             folder.file_list = Repository.get_files_url_list(folder.path)
+            folder.initialized = True
 
         # update tags
         if tags_dict:
-
+            folder.initialized = True
             def non_empty(v):
                 if v is None:
                     return False
@@ -133,5 +134,34 @@ class FolderUpdateResource(Resource):
         )
         return jsonify(folder_dict)
 
+    def delete(self, folder_id):
+        # Repository.load_index()
+        folder = Repository.manga_index.folders.get(folder_id)
+        if not folder:
+            return jsonify({"error": "folder not found"}), 404
+        folder_path = folder.path
+        # 物理删除
+        try:
+            if os.path.isdir(folder_path):
+                import shutil
+                shutil.rmtree(folder_path)
+        except OSError:
+            return jsonify({"error": "delete folder failed"}), 500
+        # 从索引删除
+        del Repository.manga_index.folders[folder_id]
+        # 重建 metadata
+        auth_set, cat_main_set, cat_sub_set = set(), set(), set()
+        for f in Repository.manga_index.folders.values():
+            for a_auth in f.tags.auth:
+                auth_set.add(a_auth)
+            if f.tags.category_main:
+                cat_main_set.add(f.tags.category_main)
+            if f.tags.category_sub:
+                cat_sub_set.add(f.tags.category_sub)
+        Repository.manga_index.metadata.auth = sorted(auth_set)
+        Repository.manga_index.metadata.category_main = sorted(cat_main_set)
+        Repository.manga_index.metadata.category_sub = sorted(cat_sub_set)
+        Repository.save_index()
+        return jsonify({"deleted": folder_id})
 
 restx_api.add_namespace(api)

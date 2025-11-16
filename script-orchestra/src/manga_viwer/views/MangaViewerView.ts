@@ -2,12 +2,13 @@
 import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick } from 'vue'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
 import type { FolderModel } from '../service/Model'
-import { ElInput, ElTag } from 'element-plus'
-import { updateFolderModel, fetchHotTags } from '@/manga_viwer/service/Service'
+import { ElInput, ElTag, ElSwitch } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
+import { updateFolderModel, fetchHotTags, deleteFolderModel } from '@/manga_viwer/service/Service'
 
 export default defineComponent({
   name: 'MangaViewerView',
-  components: { ElInput, ElTag },
+  components: { ElInput, ElTag, ElSwitch },
   setup() {
     //  Basic
     // -------------------------------------------------------------------------------------------------------
@@ -33,6 +34,7 @@ export default defineComponent({
     const searchTokens = ref<string[]>([])
     const searchInput = ref('')
     const hotTags = ref<string[]>([])
+    const showUninitializedOnly = ref(false)
 
     function addSearchToken() {
       const v = searchInput.value.trim()
@@ -47,23 +49,42 @@ export default defineComponent({
       if (!searchTokens.value.includes(tag)) searchTokens.value.push(tag)
     }
 
-        const folders = computed(() => Object.values(store.mangaIndex.folders))
+    const folders = computed(() => Object.values(store.mangaIndex.folders))
 
+    // const filteredFolders = computed(() => {
+    //   const tokens = searchTokens.value
+    //     .map(t => t.trim().toLowerCase())
+    //     .filter(Boolean)
+    //   if (!tokens.length) return folders.value
+    //   return folders.value.filter(f => {
+    //     const pool: string[] = [
+    //       f.name,
+    //       f.tags.category_main,
+    //       f.tags.category_sub,
+    //       String(f.tags.mosaic ?? '')
+    //     ].concat(f.tags.auth, f.tags.name, f.tags.custom, f.tags.others)
+    //       .map(s => s?.toLowerCase())
+    //     return tokens.every(tok => pool.some(p => p && p.includes(tok)))
+    //   })
+    // })
     const filteredFolders = computed(() => {
-      const tokens = searchTokens.value
-        .map(t => t.trim().toLowerCase())
-        .filter(Boolean)
-      if (!tokens.length) return folders.value
-      return folders.value.filter(f => {
-        const pool: string[] = [
-          f.name,
-          f.tags.category_main,
-          f.tags.category_sub,
-          String(f.tags.mosaic ?? '')
-        ].concat(f.tags.auth, f.tags.name, f.tags.custom, f.tags.others)
-          .map(s => s?.toLowerCase())
-        return tokens.every(tok => pool.some(p => p && p.includes(tok)))
-      })
+      const tokens = searchTokens.value.map(t => t.trim().toLowerCase()).filter(Boolean)
+      let base = folders.value
+      if (tokens.length) {
+        base = base.filter(f => {
+          const pool: string[] = [
+            f.name,
+            f.tags.category_main,
+            f.tags.category_sub,
+            String(f.tags.mosaic ?? '')
+          ].concat(f.tags.auth, f.tags.name, f.tags.custom, f.tags.others).map(s => s?.toLowerCase())
+          return tokens.every(tok => pool.some(p => p && p.includes(tok)))
+        })
+      }
+      if (showUninitializedOnly.value) {
+        base = base.filter(f => !f.initialized)
+      }
+      return base
     })
 
     watch(searchTokens, () => {
@@ -211,6 +232,7 @@ export default defineComponent({
         editingMosaicFlag.value = null
       }
       if (changed) {
+        f.initialized = true
         await updateFolderModel(f)
       }
     }
@@ -274,7 +296,43 @@ export default defineComponent({
       await updateFolderModel(f)
     }
 
+    // Switch Initialized
+    // -------------------------------------------------------------------------------------------------------
 
+    // const showUninitializedOnly = ref(false)
+
+    // const folders = computed(() => Object.values(store.mangaIndex.folders))
+
+    // const filteredFolders = computed(() => {
+    //   const tokens = searchTokens.value.map(t => t.trim().toLowerCase()).filter(Boolean)
+    //   let base = folders.value
+    //   if (tokens.length) {
+    //     base = base.filter(f => {
+    //       const pool: string[] = [
+    //         f.name,
+    //         f.tags.category_main,
+    //         f.tags.category_sub,
+    //         String(f.tags.mosaic ?? '')
+    //       ].concat(f.tags.auth, f.tags.name, f.tags.custom, f.tags.others).map(s => s?.toLowerCase())
+    //       return tokens.every(tok => pool.some(p => p && p.includes(tok)))
+    //     })
+    //   }
+    //   if (showUninitializedOnly.value) {
+    //     base = base.filter(f => !f.initialized)
+    //   }
+    //   return base
+    // })
+
+    // Folder Delete
+    // -------------------------------------------------------------------------------------------------------
+    async function deleteFolder(f: FolderModel) {
+      try {
+        await deleteFolderModel(f)
+        delete store.mangaIndex.folders[f.id]
+      } catch (e) {
+        console.error('Delete failed', e)
+      }
+    }
     // Life Cycle
     // -------------------------------------------------------------------------------------------------------
     onMounted(async () => {
@@ -322,6 +380,11 @@ export default defineComponent({
       dialogFiles,
       isImage,
       isVideo,
+      // Switch Initialized
+      showUninitializedOnly,
+      // Folder Delete
+      deleteFolder,
+      Delete
     }
   }
 })

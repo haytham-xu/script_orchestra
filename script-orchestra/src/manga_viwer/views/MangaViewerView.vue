@@ -1,6 +1,17 @@
 <template>
 
   <div class="viewer-root">
+    <!-- <div class="header-bar">
+      <div class="search-area">
+        <div class="search-tags">
+          <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
+          <el-input v-model="searchInput" class="search-tag-input" @keyup.enter="addSearchToken" />
+          <span class="hot-label">热门:</span>
+          <el-tag v-for="ht in hotTags" :key="ht" class="hot-tag" @click="addHotTag(ht)">{{ ht }}</el-tag>
+        </div>
+      </div>
+    </div> -->
+
     <div class="header-bar">
       <div class="search-area">
         <div class="search-tags">
@@ -9,6 +20,9 @@
           <span class="hot-label">热门:</span>
           <el-tag v-for="ht in hotTags" :key="ht" class="hot-tag" @click="addHotTag(ht)">{{ ht }}</el-tag>
         </div>
+      </div>
+      <div class="header-right">
+        <el-switch v-model="showUninitializedOnly" inactive-text="全部" active-text="仅未初始化" />
       </div>
     </div>
 
@@ -37,7 +51,7 @@
               </template>
               <span v-else-if="f.tags.category_main" class="label" @click="startEdit('category_main', f)">{{
                 f.tags.category_main
-              }}</span>
+                }}</span>
               <span v-else class="tag placeholder" @click="startEdit('category_main', f)">+</span>
             </div>
 
@@ -61,7 +75,7 @@
                   @keyup.enter="commitEdit('mosaic', f)" @blur="commitEdit('mosaic', f)" />
               </template>
               <span v-else-if="f.tags.mosaic" class="label" @click="startEdit('mosaic', f)">{{ f.tags.mosaic
-              }}</span>
+                }}</span>
               <span v-else class="tag placeholder" @click="startEdit('mosaic', f)">+</span>
             </div>
 
@@ -81,8 +95,9 @@
             <!-- Name -->
             <div class="tags-group">
               <span class="label">Name:</span>
-              <el-tag type="success" v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable @close="removeTag(f, 'name', i)">{{
-                t
+              <el-tag type="success" v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable
+                @close="removeTag(f, 'name', i)">{{
+                  t
                 }}</el-tag>
               <el-input v-if="isTagInputVisible(f, 'name')" :ref="setTagInputRef(f.id, 'name')"
                 v-model="tagInputValues[f.id].name" size="small" class="tag-input"
@@ -112,6 +127,10 @@
               <span v-else class="tag placeholder" @click="showTagInput(f, 'others')">+</span>
             </div>
           </div>
+
+          <!-- Delete Folder Button -->
+          <el-button class="delete-btn" type="danger" :icon="Delete" size="small" circle @click.stop="deleteFolder(f)"
+            :title="'删除: ' + f.name" />
         </div>
 
 
@@ -153,15 +172,7 @@
 
 /* ===== Search - with Hot Tags ===== */
 
-.header-bar {
-  position: sticky;
-  top: 0;
-  background: #fff;
-  padding: 10px 12px;
-  border: 1px solid #e2e6eb;
-  border-radius: 8px;
-  z-index: 5;
-}
+
 
 /* .search-input {
   width: 300px;
@@ -238,6 +249,7 @@
 }
 
 .line-left {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -451,4 +463,53 @@
 }
 
 /* -------------- */
+
+/* ---- switch for initialized  ---- */
+/*
+.header-bar {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding: 10px 12px;
+  border: 1px solid #e2e6eb;
+  border-radius: 8px;
+  z-index: 5;
+} */
+
+.header-bar {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding: 10px 12px;
+  border: 1px solid #e2e6eb;
+  border-radius: 8px;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #5a636d;
+}
+
+
+/* ---- folder delete button  ---- */
+.delete-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  box-shadow: 0 2px 6px -2px rgba(40,48,63,.25);
+}
+.delete-btn:hover {
+  box-shadow: 0 4px 12px -4px rgba(40,48,63,.3);
+}
+
 </style>
