@@ -1,9 +1,9 @@
 
 
 import {defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import {getButtonConfigJSON, getFolderList, getFileList, postMoveFolder} from "@/manga_classifier/service/MangaClassifierService.ts"
-import type {ButtonConfigJSON, FolderObject, FolderObjectList, FileList} from '@/manga_classifier/model/Model'
-import {FolderStatus} from '@/manga_classifier/model/Model'
+import {getButtonConfigJSON, getFolderList, getFileList, postMoveFolder} from "@/manga_classifier/service/MangaClassifierService"
+import type {ButtonConfigJSON, FolderObject, FolderObjectList, FileList} from '@/manga_classifier/service/Model'
+import {FolderStatus} from '@/manga_classifier/service/Model'
 import CategoryButtonCardComponment from "@/manga_classifier/components/CategoryButtonCardComponment.vue"
 import { ElMessage } from 'element-plus'
 

@@ -2,8 +2,14 @@ from flask import Flask
 from flask_cors import CORS
 from extensions import restx_api
 
-import manga_classifier.manga_classifier
-import photo_classifier.photo_classifier
+import manga_classifier.config_controller
+import manga_classifier.folder_controller
+import manga_classifier.file_controller
+
+import photo_classifier.file_controller
+import photo_classifier.folder_controller
+
+import manga_viewer.controller
 
 def create_app() -> Flask:
     app = Flask(__name__)

@@ -1,7 +1,7 @@
 
 import {ref, defineComponent} from 'vue';
 import type {PropType} from 'vue'
-import type {CategoryButton, CategoryButtonCard} from '@/manga_classifier/model/Model'
+import type {CategoryButton, CategoryButtonCard} from '@/manga_classifier/service/Model'
 
 export default defineComponent({
   name: 'CategoryButtonCardComponment',
@@ -25,7 +25,7 @@ export default defineComponent({
     const handleButtonClick = (btn: CategoryButton) => {
       emit('folderChange', props.currentFolderPath, btn.folderPath)
     };
-    
+
     return { expanded, handleButtonClick}
   }
 });

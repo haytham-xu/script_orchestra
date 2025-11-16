@@ -1,3 +1,0 @@
-
-import photo_classifier.controller.folder_controller
-import photo_classifier.controller.file_controller

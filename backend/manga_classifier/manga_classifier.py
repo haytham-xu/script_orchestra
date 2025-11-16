@@ -1,4 +1,0 @@
-
-import manga_classifier.controller.config_controller
-import manga_classifier.controller.folder_controller
-import manga_classifier.controller.file_controller

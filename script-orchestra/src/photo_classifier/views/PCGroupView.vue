@@ -5,8 +5,14 @@
         <el-button type="primary" @click="$router.push('/photo-classifier')">返回列表</el-button>
         <el-button @click="goPrevGroup">上一组</el-button>
         <el-button @click="goNextGroup">下一组</el-button>
+        <el-button @click="markAllNormal">Mark All Normal</el-button>
         <el-button type="success" @click="applyGroup">Apply</el-button>
       </div>
+
+      <div class="header-progress">
+        {{ currentIndex + 1 }} / {{ displayFileList.length }} -- {{currentFile?.filePath }}
+      </div>
+
       <div class="header-tags">
          <span v-if="currentFile?.categoryTag!=null">Category: {{ currentFile?.categoryTag }}</span>
       </div>
@@ -20,6 +26,7 @@
 </template>
 
 <style scoped>
+
 .main-image {
   flex: 1;
   display: flex;
@@ -49,6 +56,13 @@
 .header-buttons {
   display: flex;
   gap: 10px;
+}
+
+.header-progress {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
 }
 
 .header-tags {

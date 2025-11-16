@@ -1,6 +1,6 @@
 from flask_restx import Namespace, Resource
 from flask import jsonify
-from manga_classifier import config
+import config
 from extensions import restx_api
 
 ns = Namespace("")
@@ -9,6 +9,6 @@ ns = Namespace("")
 class ConfigResource(Resource):
 
     def get(self):
-        return jsonify(config.CATEGOTY)
+        return jsonify(config.MANGA_CLASSIFIER_CATEGOTY)
 
 restx_api.add_namespace(ns)

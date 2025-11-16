@@ -7,24 +7,48 @@
         <el-button @click="drawerVisible = true">显示Group</el-button>
         <el-switch v-model="showFiltered" active-text="未标识" @change="updateDisplayFiles" />
       </div>
+
+      <!-- <div class="header-progress">
+        {{ currentIndex + 1 }} / {{ displayFileList.length }} -- {{currentFile?.filePath }}
+      </div> -->
+      <div class="header-progress">
+        <span v-if="!isEditing" @click="startEditing">{{ currentIndex + 1 }}</span>
+
+        <el-input
+          v-else
+          v-model.number="currentIndex"
+          size="small"
+          class="page-input"
+          @blur="applyEdit"
+          @keyup.enter="applyEdit"
+        />
+        <span> / {{ displayFileList.length }}</span>
+        <span> -- {{ currentFile?.filePath }}</span>
+        <span> -- {{ currentLastGroupIndex }}</span>
+        <span> -- {{ photoClassifierStore.groupList.groupList.length }}</span>
+        <span> -- {{ photoClassifierStore.groupActionLock }}</span>
+      </div>
+
       <div class="header-right">
-        <span v-if="currentFile?.categoryTag!=null">Category: {{ currentFile?.categoryTag }}   | </span>
-        <span v-if="currentFile?.groupId!=null">Group: {{ currentFile?.groupId }}</span>
+        <!-- <el-button @click="emptyGroup">移除当前group</el-button> -->
+        <span v-if="currentFile?.categoryTag != null"
+          >Category: {{ currentFile?.categoryTag }} |
+        </span>
+        <span v-if="currentFile?.groupId != null">Group: {{ currentFile?.groupId }}</span>
       </div>
     </div>
 
     <div class="main-image">
-       <MediaComponment v-if="currentFile" :url="currentFile.fileUrl" :type="currentFile.fileType"/>
+      <MediaComponment v-if="currentFile" :url="currentFile.fileUrl" :type="currentFile.fileType" />
     </div>
-
 
     <el-drawer
       v-model="drawerVisible"
       direction="ltr"
       size="15%"
-      :modal=false
-      :show-close=false
-      :with-header=false
+      :modal="false"
+      :show-close="false"
+      :with-header="false"
       :resizable="true"
     >
       <div class="group-list">
@@ -35,9 +59,15 @@
         >
           <div class="group-header">
             <!-- <span>{{ index }}</span> -->
-            <el-button v-if="currentFile" size="small" type="success" @click="addToGroup(currentFile, index)">Add</el-button>
+            <el-button
+              v-if="currentFile"
+              size="small"
+              type="success"
+              @click="addToGroup(currentFile, index)"
+              >Add</el-button
+            >
           </div>
-      
+
           <el-image
             v-if="photoClassifierStore.groupAvatar(index)"
             :src="photoClassifierStore.groupAvatar(index)"
@@ -52,6 +82,9 @@
 </template>
 
 <style scoped>
+.page-input {
+  width: 30px;
+}
 
 .pc-default-group-view {
   display: flex;
@@ -76,6 +109,13 @@
   margin-left: 20px;
 }
 
+.header-progress {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
 .main-image {
   flex: 1;
   display: flex;
@@ -86,7 +126,6 @@
 }
 /* --------- */
 
-
 .group-header {
   display: flex;
   justify-content: space-between;
@@ -94,7 +133,7 @@
   margin-bottom: 10px;
 }
 
- .group-list {
+.group-list {
   display: flex;
   flex-direction: column;
   gap: 20px;

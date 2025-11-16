@@ -4,7 +4,7 @@ from pathlib import Path
 from flask_restx import Namespace, Resource
 from flask import request, jsonify
 from extensions import restx_api
-from photo_classifier import config
+import config
 
 ns = Namespace("")
 
@@ -12,19 +12,19 @@ ns = Namespace("")
 class FolderResource(Resource):
     def get(self):
         """List all files."""
-        folder_abs_path = os.path.join(config.ROOT_PATH)
+        folder_abs_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH)
         files = []
 
         if not os.path.exists(folder_abs_path):
             return jsonify({"files": files})
 
-        def collect_files_in_dir(base_path, relative_path=""):
+        def collect_files_in_dir(base_path):
             collected = []
             for fname in sorted(os.listdir(base_path)):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
-                    file_url = f"{config.HOST_URL}/photo-classifier/file/{'/' + relative_path if relative_path else ''}/{fname}"
+                    file_url = f"{config.HOST_URL}/photo-classifier/file/{fname}"
                     if lower_name.endswith(config.IMAGE_EXTS):
                         collected.append({
                             "filePath": fname,
@@ -51,8 +51,8 @@ class FolderResource(Resource):
     def post(self):
         """Move folder."""
         data = request.json
-        source_folder_path = os.path.join(config.ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
-        target_folder_path = os.path.join(config.ROOT_PATH, data["targetFolderPath"].lstrip("/"))
+        source_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
+        target_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["targetFolderPath"].lstrip("/"))
         if not os.path.exists(source_folder_path):
             return "source folder not exist.", 404
         if not os.path.exists(target_folder_path):
