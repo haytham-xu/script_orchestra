@@ -35,7 +35,7 @@
                 <el-input :ref="setActiveInput" v-model="editValue.category_main" size="small"
                   @keyup.enter="commitEdit('category_main', f)" @blur="commitEdit('category_main', f)" />
               </template>
-              <span v-else-if="f.tags.category_main" class="tag accent" @click="startEdit('category_main', f)">{{
+              <span v-else-if="f.tags.category_main" class="label" @click="startEdit('category_main', f)">{{
                 f.tags.category_main
               }}</span>
               <span v-else class="tag placeholder" @click="startEdit('category_main', f)">+</span>
@@ -48,8 +48,7 @@
                 <el-input :ref="setActiveInput" v-model="editValue.category_sub" size="small"
                   @keyup.enter="commitEdit('category_sub', f)" @blur="commitEdit('category_sub', f)" />
               </template>
-              <!-- <span v-else class="tag accent subtle" @click="startEdit('category_sub', f)">{{ f.tags.category_sub }}</span> -->
-              <span v-else-if="f.tags.category_sub" class="tag accent subtle" @click="startEdit('category_sub', f)">{{
+              <span v-else-if="f.tags.category_sub" class="label" @click="startEdit('category_sub', f)">{{
                 f.tags.category_sub }}</span>
               <span v-else class="tag placeholder" @click="startEdit('category_sub', f)">+</span>
             </div>
@@ -61,8 +60,7 @@
                 <el-input :ref="setActiveInput" v-model="editValue.mosaic" size="small"
                   @keyup.enter="commitEdit('mosaic', f)" @blur="commitEdit('mosaic', f)" />
               </template>
-              <!-- <span v-else class="tag" @click="startEdit('mosaic', f)">{{ f.tags.mosaic }}</span> -->
-              <span v-else-if="f.tags.category_sub" class="tag" @click="startEdit('mosaic', f)">{{ f.tags.mosaic
+              <span v-else-if="f.tags.mosaic" class="label" @click="startEdit('mosaic', f)">{{ f.tags.mosaic
               }}</span>
               <span v-else class="tag placeholder" @click="startEdit('mosaic', f)">+</span>
             </div>
@@ -70,7 +68,7 @@
             <!-- 动态标签组: auth / name(tags.name) / custom / others -->
             <div class="tags-group">
               <span class="label">Auth:</span>
-              <el-tag v-for="(t, i) in f.tags.auth" :key="f.id + 'auth' + i" closable
+              <el-tag type="primary" v-for="(t, i) in f.tags.auth" :key="f.id + 'auth' + i" closable
                 @close="removeTag(f, 'auth', i)">{{ t
                 }}</el-tag>
 
@@ -83,7 +81,7 @@
             <!-- Name -->
             <div class="tags-group">
               <span class="label">Name:</span>
-              <el-tag v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable @close="removeTag(f, 'name', i)">{{
+              <el-tag type="success" v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable @close="removeTag(f, 'name', i)">{{
                 t
                 }}</el-tag>
               <el-input v-if="isTagInputVisible(f, 'name')" :ref="setTagInputRef(f.id, 'name')"
@@ -95,7 +93,7 @@
             <!-- Custom -->
             <div class="tags-group">
               <span class="label">Custom:</span>
-              <el-tag v-for="(t, i) in f.tags.custom" :key="f.id + 'custom' + i" type="success" closable
+              <el-tag type="warning" v-for="(t, i) in f.tags.custom" :key="f.id + 'custom' + i" closable
                 @close="removeTag(f, 'custom', i)">{{ t }}</el-tag>
               <el-input v-if="isTagInputVisible(f, 'custom')" :ref="setTagInputRef(f.id, 'custom')"
                 v-model="tagInputValues[f.id].custom" size="small" class="tag-input"
@@ -106,7 +104,7 @@
             <!-- Others -->
             <div class="tags-group">
               <span class="label">Others:</span>
-              <el-tag v-for="(t, i) in f.tags.others" :key="f.id + 'others' + i" type="warning" closable
+              <el-tag v-for="(t, i) in f.tags.others" :key="f.id + 'others' + i" type="danger" closable
                 @close="removeTag(f, 'others', i)">{{ t }}</el-tag>
               <el-input v-if="isTagInputVisible(f, 'others')" :ref="setTagInputRef(f.id, 'others')"
                 v-model="tagInputValues[f.id].others" size="small" class="tag-input"
@@ -165,7 +163,7 @@
   z-index: 5;
 }
 
-.search-input {
+/* .search-input {
   width: 300px;
   padding: 6px 10px;
   border: 1px solid #cfd5dc;
@@ -177,7 +175,7 @@
   outline: none;
   border-color: #409eff;
   box-shadow: 0 0 0 2px rgba(64, 158, 255, .25);
-}
+} */
 
 .search-area {
   display: flex;
@@ -262,11 +260,11 @@
   /* 不允许在行内拉伸 */
 }
 
-.line-head {
+/* .line-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
+} */
 
 .name-cell {
   font-size: 15px;
@@ -307,29 +305,9 @@
   line-height: 1.3;
 }
 
-.tag.accent {
-  background: #e8f2ff;
-  border-color: #c5defa;
-  color: #215d9c;
-}
 
-.tag.accent.subtle {
-  background: #eef7ff;
-  border-color: #d7eafa;
-  color: #4978ad;
-}
 
-.tag.green {
-  background: #e9f9f0;
-  border-color: #ccefdc;
-  color: #267246;
-}
 
-.tag.warn {
-  background: #fff5e6;
-  border-color: #ffe2b8;
-  color: #a25d10;
-}
 
 .thumbs {
   display: flex;

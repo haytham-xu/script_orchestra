@@ -1,5 +1,5 @@
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 class Tag:
     def __init__(self,

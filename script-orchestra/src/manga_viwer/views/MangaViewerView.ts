@@ -1,6 +1,5 @@
 
-import { defineComponent, ref, onMounted, computed, watch, reactive, nextTick } from 'vue'
-// import FolderComponent from '@/manga_viwer/componments/Componment.vue'
+import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick } from 'vue'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
 import type { FolderModel } from '../service/Model'
 import { ElInput, ElTag } from 'element-plus'
@@ -10,14 +9,13 @@ export default defineComponent({
   name: 'MangaViewerView',
   components: { ElInput, ElTag },
   setup() {
-
-
-
-
-    // ============ Basic ===========
+    //  Basic
+    // -------------------------------------------------------------------------------------------------------
     const store = useMangaIndexStore()
-    // ============ Basic ===========
-    // ============ Lazy load on scroll ===========
+
+
+    // Lazy load on scroll
+    // -------------------------------------------------------------------------------------------------------
     const pageSize = 10
     const currentPage = ref(1)
     const loadingToken = ref(0)
@@ -28,9 +26,10 @@ export default defineComponent({
         fetchFilesForCurrentPage()
       }
     }
-    // ============ Lazy load on scroll ===========
-    // ============ Search with Hot Tags ===========
-    const search = ref('')
+
+    // Search with Hot Tags
+    // -------------------------------------------------------------------------------------------------------
+    // const search = ref('')
     const searchTokens = ref<string[]>([])
     const searchInput = ref('')
     const hotTags = ref<string[]>([])
@@ -50,19 +49,6 @@ export default defineComponent({
 
         const folders = computed(() => Object.values(store.mangaIndex.folders))
 
-    // const filteredFolders = computed(() => {
-    //   const kw = search.value.trim().toLowerCase()
-    //   if (!kw) return folders.value
-    //   return folders.value.filter(f => {
-    //     if (f.name.toLowerCase().includes(kw)) return true
-    //     const t = f.tags
-    //     const arrays: string[][] = [t.auth, t.name, t.custom, t.others]
-    //     if (arrays.some(arr => arr.some(x => x.toLowerCase().includes(kw)))) return true
-    //     if (t.category_main.toLowerCase().includes(kw)) return true
-    //     if (t.category_sub.toLowerCase().includes(kw)) return true
-    //     return false
-    //   })
-    // })
     const filteredFolders = computed(() => {
       const tokens = searchTokens.value
         .map(t => t.trim().toLowerCase())
@@ -85,20 +71,8 @@ export default defineComponent({
       fetchFilesForCurrentPage()
     })
 
-    // ============ Search with Hot Tags ===========
-
-
-    // ============  ===========
-
-
-    // ============  ===========
-
-
-
-
-
-
-
+    // Lazy Load Files
+    // -------------------------------------------------------------------------------------------------------
     const pagedFolders = computed(() =>
       filteredFolders.value.slice(0, currentPage.value * pageSize)
     )
@@ -157,7 +131,8 @@ export default defineComponent({
       return /\.(mp4|webm|mov|mkv|avi|flv)$/i.test(p)
     }
 
-    // =========== Code for Update ============
+    // Code for Update
+    // -------------------------------------------------------------------------------------------------------
     const editingNameFlag = ref<string | null>(null)
     const activeInput = ref<InstanceType<typeof ElInput> | null>(null)
 
@@ -240,7 +215,9 @@ export default defineComponent({
       }
     }
 
-    // ========== Update -Tags ============
+
+    // Update -Tags
+    // -------------------------------------------------------------------------------------------------------
     const tagInputVisible = reactive<Record<string, Record<string, boolean>>>({})
     const tagInputValues = reactive<Record<string, Record<string, string>>>({})
     const tagInputRefs = reactive<Record<string, Record<string, InstanceType<typeof ElInput> | null>>>({})
@@ -297,26 +274,44 @@ export default defineComponent({
       await updateFolderModel(f)
     }
 
-    // ============ Life Cycle ===========
+
+    // Life Cycle
+    // -------------------------------------------------------------------------------------------------------
     onMounted(async () => {
       await store.loadIndex()
       hotTags.value = await fetchHotTags().catch(() => [])
       fetchFilesForCurrentPage()
       window.addEventListener('scroll', onScroll)
     })
-    // ============ Life Cycle ===========
+    onBeforeUnmount(() => {
+      window.removeEventListener('scroll', onScroll)
+    })
 
     return {
-      // ===> Search with Hot Tags
+      // Search with Hot Tags
       searchTokens,
       searchInput,
       hotTags,
       addSearchToken,
       removeSearchToken,
       addHotTag,
-
-      // ===> Search with Hot Tags
-      search,
+      // Update - Basic
+      startEdit,
+      commitEdit,
+      editingNameFlag,
+      editingCategoryMainFlag,
+      editingCategorySubFlag,
+      editingMosaicFlag,
+      editValue,
+      setActiveInput,
+      // Update — Tag
+      isTagInputVisible,
+      showTagInput,
+      handleTagInputConfirm,
+      setTagInputRef,
+      removeTag,
+      tagInputValues,
+      // unknown
       pagedFolders,
       canLoadMore,
       previewImages,
@@ -327,22 +322,6 @@ export default defineComponent({
       dialogFiles,
       isImage,
       isVideo,
-      // ===> Update - Basic
-      startEdit,
-      commitEdit,
-      editingNameFlag,
-      editingCategoryMainFlag,
-      editingCategorySubFlag,
-      editingMosaicFlag,
-      editValue,
-      setActiveInput,
-      // ===> Update — Tag
-      isTagInputVisible,
-      showTagInput,
-      handleTagInputConfirm,
-      setTagInputRef,
-      removeTag,
-      tagInputValues,
     }
   }
 })
