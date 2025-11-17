@@ -286,6 +286,7 @@ export default defineComponent({
       }
       if (!f.tags[group].includes(v)) {
         f.tags[group].push(v)
+        f.initialized = true
         await updateFolderModel(f)
       }
       tagInputValues[f.id][group] = ''

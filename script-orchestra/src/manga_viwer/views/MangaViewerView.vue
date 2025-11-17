@@ -39,7 +39,8 @@
 
           <div class="tags-row">
             <!-- size / number -->
-            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ f.size }}</span></div>
+            <div class="tags-group"><span class="label">Path:</span> <span class="label">{{ f.path }}</span></div>
+            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size/1024/1024) }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
 
             <!-- category_main -->

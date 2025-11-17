@@ -144,7 +144,7 @@ class FolderUpdateResource(Resource):
         try:
             if os.path.isdir(folder_path):
                 import shutil
-                shutil.rmtree(folder_path)
+                shutil.move(folder_path, config.MANGA_CLASSIFIER_DELETE_PATHS)
         except OSError:
             return jsonify({"error": "delete folder failed"}), 500
         # 从索引删除

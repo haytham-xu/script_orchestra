@@ -135,8 +135,8 @@ class Repository:
                 del Repository.manga_index.folders[folder_id]
 
         for a_folder_path in existing_paths:
+            print("checking: ", a_folder_path)
             if a_folder_path in path_id_map:
-
                 folder_id = path_id_map[a_folder_path]
                 folder_instance = Repository.manga_index.folders[folder_id]
                 size, number = Repository.get_size_number(a_folder_path)
