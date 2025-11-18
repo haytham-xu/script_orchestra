@@ -2,6 +2,7 @@ from flask_restx import Namespace, Resource
 from flask import request, jsonify, send_file, make_response
 import os
 import config
+import shutil
 from extensions import restx_api
 from manga_viewer.repository import Repository
 from urllib.parse import quote, unquote
@@ -36,6 +37,7 @@ class FolderScanResource(Resource):
         print(file_url_list)
         return jsonify(file_url_list)
 
+
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
@@ -43,12 +45,15 @@ class FileResource(Resource):
         rel_url_path = unquote(filepath).lstrip("/")
         if os.path.isabs(rel_url_path) or ":" in rel_url_path.split("/")[0]:
             return "Forbidden", 403
-        safe_path = os.path.normpath(os.path.join(root_abs, rel_url_path.replace("/", os.sep)))
+        safe_path = os.path.normpath(
+            os.path.join(root_abs, rel_url_path.replace("/", os.sep))
+        )
         if not safe_path.startswith(root_abs + os.sep) and safe_path != root_abs:
             return "Forbidden", 403
         if not os.path.isfile(safe_path):
             return "Not Found", 404
         return make_response(send_file(safe_path))
+
 
 @api.route("/manga-viewer/folder/<folder_id>")
 class FolderUpdateResource(Resource):
@@ -80,6 +85,7 @@ class FolderUpdateResource(Resource):
         # update tags
         if tags_dict:
             folder.initialized = True
+
             def non_empty(v):
                 if v is None:
                     return False
@@ -103,19 +109,7 @@ class FolderUpdateResource(Resource):
                     if non_empty(v):
                         setattr(folder.tags, k, v)
 
-        # rebuild metadata
-        auth_set, cat_main_set, cat_sub_set = set(), set(), set()
-        for f in Repository.manga_index.folders.values():
-            for a_auth in f.tags.auth:
-                auth_set.add(a_auth)
-            if f.tags.category_main:
-                cat_main_set.add(f.tags.category_main)
-            if f.tags.category_sub:
-                cat_sub_set.add(f.tags.category_sub)
-        Repository.manga_index.metadata.auth = sorted(auth_set)
-        Repository.manga_index.metadata.category_main = sorted(cat_main_set)
-        Repository.manga_index.metadata.category_sub = sorted(cat_sub_set)
-
+        rebuildMeta()
         Repository.save_index()
 
         # return clone value
@@ -135,33 +129,52 @@ class FolderUpdateResource(Resource):
         return jsonify(folder_dict)
 
     def delete(self, folder_id):
-        # Repository.load_index()
         folder = Repository.manga_index.folders.get(folder_id)
         if not folder:
             return jsonify({"error": "folder not found"}), 404
         folder_path = folder.path
-        # 物理删除
         try:
             if os.path.isdir(folder_path):
-                import shutil
-                shutil.move(folder_path, config.MANGA_CLASSIFIER_DELETE_PATHS)
+                shutil.move(folder_path, config.MANGA_VIEWER_DELETE_PATHS)
         except OSError:
             return jsonify({"error": "delete folder failed"}), 500
-        # 从索引删除
         del Repository.manga_index.folders[folder_id]
-        # 重建 metadata
-        auth_set, cat_main_set, cat_sub_set = set(), set(), set()
-        for f in Repository.manga_index.folders.values():
-            for a_auth in f.tags.auth:
-                auth_set.add(a_auth)
-            if f.tags.category_main:
-                cat_main_set.add(f.tags.category_main)
-            if f.tags.category_sub:
-                cat_sub_set.add(f.tags.category_sub)
-        Repository.manga_index.metadata.auth = sorted(auth_set)
-        Repository.manga_index.metadata.category_main = sorted(cat_main_set)
-        Repository.manga_index.metadata.category_sub = sorted(cat_sub_set)
+        rebuildMeta()
         Repository.save_index()
         return jsonify({"deleted": folder_id})
+
+
+@api.route("/manga-viewer/folder/star/<folder_id>")
+class FolderUpdateResource(Resource):
+    def put(self, folder_id):
+        folder = Repository.manga_index.folders.get(folder_id)
+        if not folder:
+            return jsonify({"error": "folder not found"}), 404
+        folder_path = folder.path
+        try:
+            if os.path.isdir(folder_path):
+                shutil.move(folder_path, config.MANGA_VIEWER_STAR_PATHS)
+        except OSError:
+            return jsonify({"error": "delete folder failed"}), 500
+        del Repository.manga_index.folders[folder_id]
+
+        rebuildMeta()
+        Repository.save_index()
+        return jsonify({"deleted": folder_id})
+
+
+def rebuildMeta():
+    auth_set, cat_main_set, cat_sub_set = set(), set(), set()
+    for f in Repository.manga_index.folders.values():
+        for a_auth in f.tags.auth:
+            auth_set.add(a_auth)
+        if f.tags.category_main:
+            cat_main_set.add(f.tags.category_main)
+        if f.tags.category_sub:
+            cat_sub_set.add(f.tags.category_sub)
+    Repository.manga_index.metadata.auth = sorted(auth_set)
+    Repository.manga_index.metadata.category_main = sorted(cat_main_set)
+    Repository.manga_index.metadata.category_sub = sorted(cat_sub_set)
+
 
 restx_api.add_namespace(api)

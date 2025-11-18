@@ -1,16 +1,6 @@
 <template>
 
   <div class="viewer-root">
-    <!-- <div class="header-bar">
-      <div class="search-area">
-        <div class="search-tags">
-          <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
-          <el-input v-model="searchInput" class="search-tag-input" @keyup.enter="addSearchToken" />
-          <span class="hot-label">热门:</span>
-          <el-tag v-for="ht in hotTags" :key="ht" class="hot-tag" @click="addHotTag(ht)">{{ ht }}</el-tag>
-        </div>
-      </div>
-    </div> -->
 
     <div class="header-bar">
       <div class="search-area">
@@ -22,6 +12,7 @@
         </div>
       </div>
       <div class="header-right">
+        <el-switch v-model="sizeSortEnabled" inactive-text="原序" active-text="按大小" />
         <el-switch v-model="showUninitializedOnly" inactive-text="全部" active-text="仅未初始化" />
       </div>
     </div>
@@ -40,7 +31,9 @@
           <div class="tags-row">
             <!-- size / number -->
             <div class="tags-group"><span class="label">Path:</span> <span class="label">{{ f.path }}</span></div>
-            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size/1024/1024) }} MB</span></div>
+            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024 /
+              1024)
+                }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
 
             <!-- category_main -->
@@ -129,6 +122,9 @@
             </div>
           </div>
 
+          <!-- Star Folder Button -->
+          <el-button class="star-btn" type="warning" :icon="Star" size="small" circle @click.stop="starFolder(f)"
+            :title="'收藏: ' + f.name" />
           <!-- Delete Folder Button -->
           <el-button class="delete-btn" type="danger" :icon="Delete" size="small" circle @click.stop="deleteFolder(f)"
             :title="'删除: ' + f.name" />
@@ -172,8 +168,6 @@
 }
 
 /* ===== Search - with Hot Tags ===== */
-
-
 
 /* .search-input {
   width: 300px;
@@ -222,10 +216,7 @@
   filter: brightness(0.92);
 }
 
-
 /* ===== Search - with Hot Tags ===== */
-
-
 
 .folder-list {
   display: grid;
@@ -258,7 +249,6 @@
   gap: 8px;
   padding: 15px 15px 15px;
   margin: 0;
-  /* 去掉原 margin 以免挤压 */
 }
 
 .line-right {
@@ -270,7 +260,6 @@
   /* padding: 24px 16px 28px 0; */
   min-width: 0;
   margin-right: 15px;
-  /* 不允许在行内拉伸 */
 }
 
 /* .line-head {
@@ -288,7 +277,6 @@
   text-overflow: ellipsis;
   padding-right: 12px;
 }
-
 
 .tags-row {
   display: flex;
@@ -317,10 +305,6 @@
   color: #3f4c5a;
   line-height: 1.3;
 }
-
-
-
-
 
 .thumbs {
   display: flex;
@@ -466,16 +450,6 @@
 /* -------------- */
 
 /* ---- switch for initialized  ---- */
-/*
-.header-bar {
-  position: sticky;
-  top: 0;
-  background: #fff;
-  padding: 10px 12px;
-  border: 1px solid #e2e6eb;
-  border-radius: 8px;
-  z-index: 5;
-} */
 
 .header-bar {
   position: sticky;
@@ -505,12 +479,24 @@
 /* ---- folder delete button  ---- */
 .delete-btn {
   position: absolute;
-  bottom: 8px;
+  bottom: 25px;
   right: 8px;
-  box-shadow: 0 2px 6px -2px rgba(40,48,63,.25);
-}
-.delete-btn:hover {
-  box-shadow: 0 4px 12px -4px rgba(40,48,63,.3);
+  box-shadow: 0 2px 6px -2px rgba(40, 48, 63, .25);
 }
 
+.delete-btn:hover {
+  box-shadow: 0 4px 12px -4px rgba(40, 48, 63, .3);
+}
+
+/* ---- folder star button  ---- */
+.star-btn {
+  position: absolute;
+  bottom: 245px;
+  right: 8px;
+  box-shadow: 0 2px 6px -2px rgba(40, 48, 63, .25);
+}
+
+.star-btn:hover {
+  box-shadow: 0 4px 12px -4px rgba(40, 48, 63, .3);
+}
 </style>
