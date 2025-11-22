@@ -94,7 +94,6 @@ export default defineComponent({
         ElMessage.info("The Folder already moved.");
         return;
       }
-      console.log('moveFolder', sourceFolderPath, targetFolderPath);
       postMoveFolder(sourceFolderPath, targetFolderPath);
       currentFolderObject.value.status = FolderStatus.Done
       nextFolder();

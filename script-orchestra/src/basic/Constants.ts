@@ -8,7 +8,4 @@ export const PHOTO_CLASSIFIER_ENDPOINT_FOLDER = '/photo-classifier/folder'
 
 export const MANGA_VIEWER_INDEX_ENDPOINT = '/manga-viewer/index'
 export const MANGA_VIEWER_FOLDER_SCAN_ENDPINT = '/manga-viewer/files-url-list'
-export const MANGA_VIEWER_UPDATE_ENDPOINT = '/manga-viewer/folder/'
-export const MANGA_VIEWER_DELETE_ENDPOINT = '/manga-viewer/folder/'
-export const MANGA_VIEWER_STAR_ENDPOINT = '/manga-viewer/folder/star/'
-export const MANGA_VIEWER_HOTTAG_ENDPOINT = '/manga-viewer/hot-tags'
+export const MANGA_VIEWER_UPDATE_ENDPOINT = '/manga-viewer/folders'

@@ -9,11 +9,10 @@ from urllib.parse import quote, unquote
 
 api = Namespace("")
 
-
-@api.route("/manga-viewer/hot-tags")
-class HotTagsResource(Resource):
-    def get(self):
-        return jsonify(config.MANGA_VIEWER_HOT_TAGS)
+# @api.route("/manga-viewer/hot-tags")
+# class HotTagsResource(Resource):
+#     def get(self):
+#         return jsonify(config.MANGA_VIEWER_HOT_TAGS)
 
 
 @api.route("/manga-viewer/index")
@@ -41,126 +40,126 @@ class FolderScanResource(Resource):
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
-        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
-        rel_url_path = unquote(filepath).lstrip("/")
-        if os.path.isabs(rel_url_path) or ":" in rel_url_path.split("/")[0]:
+        # 使用内容根目录(需在 config 中新增或改成正确的根)
+        root_abs = os.path.abspath(getattr(config, "MANGA_VIEWER_CONTENT_ROOT", config.MANGA_VIEWER_INDEX_PATH))
+        rel_url_path = unquote(filepath).lstrip("/\\")
+        # 禁止绝对路径与盘符
+        first_seg = rel_url_path.split("/")[0]
+        if os.path.isabs(rel_url_path) or (":" in first_seg):
             return "Forbidden", 403
-        safe_path = os.path.normpath(
-            os.path.join(root_abs, rel_url_path.replace("/", os.sep))
-        )
-        if not safe_path.startswith(root_abs + os.sep) and safe_path != root_abs:
+        safe_path = os.path.normpath(os.path.join(root_abs, rel_url_path.replace("/", os.sep)))
+        # 越权校验
+        root_with_sep = root_abs + os.sep
+        if not (safe_path == root_abs or safe_path.startswith(root_with_sep)):
             return "Forbidden", 403
         if not os.path.isfile(safe_path):
             return "Not Found", 404
         return make_response(send_file(safe_path))
 
-
-@api.route("/manga-viewer/folder/<folder_id>")
+@api.route("/manga-viewer/folders/<path:classifier_mode>")
 class FolderUpdateResource(Resource):
-    def put(self, folder_id):
-        folder = Repository.manga_index.folders.get(folder_id)
-        if not folder:
-            return jsonify({"error": "folder not found"}), 404
+    def put(self, classifier_mode: bool=True):
+        folder_models = request.json or {}
+        print("Received folder update request:")
+        import json
+        print(json.dumps(folder_models, indent=2, ensure_ascii=False))
+        print("======> ", classifier_mode)
+        if not isinstance(folder_models, dict):
+            return jsonify({"error": "invalid payload"}), 400
 
-        data = request.json or {}
-        new_name = (data.get("name") or "").strip()
-        tags_dict = data.get("tags") or {}
+        main_map = {"bou": "boutique", "arch": "archive"}
+        invalid_chars = set('<>:"/\\|?*')
 
-        # update name, path, url list
-        if new_name and new_name != folder.name:
-            old_path = folder.path
-            parent_dir = os.path.dirname(old_path)
-            new_path = os.path.join(parent_dir, new_name)
-            if os.path.exists(new_path):
-                return jsonify({"error": "target name path already exists"}), 400
-            try:
-                os.rename(old_path, new_path)
-            except OSError:
-                return jsonify({"error": "rename failed"}), 500
-            folder.name = new_name
-            folder.path = new_path
-            folder.file_list = Repository.get_files_url_list(folder.path)
-            folder.initialized = True
+        for folder_id, incoming in folder_models.items():
+            old_folder = Repository.manga_index.folders.get(folder_id)
+            if not old_folder:
+                continue
 
-        # update tags
-        if tags_dict:
-            folder.initialized = True
+            new_tags = (incoming.get("tags") or {})
+            new_name = (incoming.get("name") or old_folder.name or "").strip()
+
+            # Windows 非法字符校验
+            if any(ch in invalid_chars for ch in new_name):
+                # 跳过非法重命名
+                new_name = old_folder.name
+
+            # 重命名（大小写敏感兼容处理）
+            if new_name and os.path.normcase(new_name) != os.path.normcase(old_folder.name):
+                old_path = old_folder.path
+                parent_dir = os.path.dirname(old_path)
+                target_path = os.path.join(parent_dir, new_name)
+                if not (target_path and os.path.exists(target_path)):
+                    try:
+                        os.rename(old_path, target_path)
+                        old_folder.name = new_name
+                        old_folder.path = target_path
+                        old_folder.file_list = Repository.get_files_url_list(old_folder.path)
+                        old_folder.initialized = True
+                    except OSError:
+                        pass
 
             def non_empty(v):
-                if v is None:
-                    return False
-                if isinstance(v, (list, tuple, set, dict)):
-                    return len(v) > 0
-                if isinstance(v, str):
-                    return v.strip() != ""
-                return True  # bool / number
+                if v is None: return False
+                if isinstance(v, (list, tuple, set, dict)): return len(v) > 0
+                if isinstance(v, str): return v.strip() != ""
+                return True
 
-            for k in [
-                "auth",
-                "name",
-                "category_main",
-                "category_sub",
-                "custom",
-                "mosaic",
-                "others",
-            ]:
-                if k in tags_dict:
-                    v = tags_dict[k]
-                    if non_empty(v):
-                        setattr(folder.tags, k, v)
+            changed_other = False
+            for k in ["auth", "name", "custom", "others", "mosaic"]:
+                if k in new_tags and non_empty(new_tags[k]):
+                    setattr(old_folder.tags, k, new_tags[k])
+                    changed_other = True
+            if changed_other:
+                old_folder.initialized = True
 
-        rebuildMeta()
-        Repository.save_index()
+            cat_main_new = new_tags.get("category_main", old_folder.tags.category_main)
+            cat_sub_new = new_tags.get("category_sub", old_folder.tags.category_sub)
 
-        # return clone value
-        folder_dict = (
-            folder.to_dict()
-            if hasattr(folder, "to_dict")
-            else {
-                "id": folder.id,
-                "name": folder.name,
-                "path": folder.path,
-                "size": folder.size,
-                "number": folder.number,
-                "file_list": folder.file_list,
-                "tags": vars(folder.tags),
-            }
-        )
-        return jsonify(folder_dict)
+            cat_main_changed = cat_main_new and cat_main_new != old_folder.tags.category_main
+            cat_sub_changed = cat_sub_new and cat_sub_new != old_folder.tags.category_sub
 
-    def delete(self, folder_id):
-        folder = Repository.manga_index.folders.get(folder_id)
-        if not folder:
-            return jsonify({"error": "folder not found"}), 404
-        folder_path = folder.path
-        try:
-            if os.path.isdir(folder_path):
-                shutil.move(folder_path, config.MANGA_VIEWER_DELETE_PATHS)
-        except OSError:
-            return jsonify({"error": "delete folder failed"}), 500
-        del Repository.manga_index.folders[folder_id]
-        rebuildMeta()
-        Repository.save_index()
-        return jsonify({"deleted": folder_id})
-
-
-@api.route("/manga-viewer/folder/star/<folder_id>")
-class FolderUpdateResource(Resource):
-    def put(self, folder_id):
-        folder = Repository.manga_index.folders.get(folder_id)
-        if not folder:
-            return jsonify({"error": "folder not found"}), 404
-        folder_path = folder.path
-        try:
-            if os.path.isdir(folder_path):
-                shutil.move(folder_path, config.MANGA_VIEWER_STAR_PATHS)
-        except OSError:
-            return jsonify({"error": "delete folder failed"}), 500
-        del Repository.manga_index.folders[folder_id]
+            if cat_main_changed or cat_sub_changed:
+                if cat_main_new == "del":
+                    delete_root = getattr(config, "MANGA_VIEWER_DELETE_PATHS", "")
+                    if delete_root:
+                        delete_root_abs = os.path.abspath(delete_root)
+                        os.makedirs(delete_root_abs, exist_ok=True)
+                        try:
+                            dst = os.path.join(delete_root_abs, os.path.basename(old_folder.path))
+                            if not os.path.exists(dst):
+                                shutil.move(old_folder.path, dst)
+                        except OSError:
+                            pass
+                    if folder_id in Repository.manga_index.folders:
+                        del Repository.manga_index.folders[folder_id]
+                    continue
+                else:
+                    base_root = getattr(config, "MANGA_VIEWER_CATEGORY_PATHS", "")
+                    if base_root:
+                        base_root_abs = os.path.abspath(base_root)
+                        main_folder_name = main_map.get(cat_main_new, cat_main_new)
+                        main_folder_path = os.path.join(base_root_abs, main_folder_name)
+                        sub_folder_name = f"{cat_main_new}_{cat_sub_new}" if cat_sub_new else cat_main_new
+                        target_sub_path = os.path.join(main_folder_path, sub_folder_name)
+                        os.makedirs(target_sub_path, exist_ok=True)
+                        new_abs_path = os.path.join(target_sub_path, os.path.basename(old_folder.path))
+                        if os.path.normcase(os.path.abspath(old_folder.path)) != os.path.normcase(os.path.abspath(new_abs_path)):
+                            try:
+                                if not os.path.exists(new_abs_path):
+                                    shutil.move(old_folder.path, new_abs_path)
+                                    old_folder.path = new_abs_path
+                                    old_folder.file_list = Repository.get_files_url_list(old_folder.path)
+                                    old_folder.initialized = True
+                            except OSError:
+                                pass
+                    old_folder.tags.category_main = cat_main_new
+                    old_folder.tags.category_sub = cat_sub_new
+                    if classifier_mode:
+                        del Repository.manga_index.folders[folder_id]
 
         rebuildMeta()
         Repository.save_index()
-        return jsonify({"deleted": folder_id})
+        return '', 204
 
 
 def rebuildMeta():

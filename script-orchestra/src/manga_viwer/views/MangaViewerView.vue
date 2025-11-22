@@ -12,8 +12,11 @@
         </div>
       </div>
       <div class="header-right">
-        <el-switch v-model="sizeSortEnabled" inactive-text="原序" active-text="按大小" />
-        <el-switch v-model="showUninitializedOnly" inactive-text="全部" active-text="仅未初始化" />
+        <el-switch v-model="sizeSortEnabled" inactive-text="size" active-text="" />
+        <el-switch v-model="showUninitializedOnly" inactive-text="all" active-text="" />
+        <el-switch v-model="nameSortEnabled" inactive-text="name" active-text="" />
+        <el-switch v-model="classifierModeEnabled" inactive-text="classifier" active-text="" />
+        <el-button class="apply-button" type="primary" @click="applyChanges">Apply</el-button>
       </div>
     </div>
 
@@ -21,56 +24,56 @@
       <div v-for="f in pagedFolders" :key="f.id" class="folder-line">
         <!-- Folder Line - Left -->
         <div class="line-left">
+
           <!-- FolderName -->
           <div v-if="editingNameFlag === f.id" class="edit-inline">
             <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
               @blur="commitEdit('name', f)" />
           </div>
-          <div v-else class="name-cell" :title="f.name" @click="startEdit('name', f)">{{ f.name }}</div>
+          <div v-else class="name-cell" :title="f.name" @click="startEdit(f)">{{ f.name }}</div>
 
           <div class="tags-row">
-            <!-- size / number -->
+            <!-- path /size / number -->
             <div class="tags-group"><span class="label">Path:</span> <span class="label">{{ f.path }}</span></div>
-            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024 /
-              1024)
-                }} MB</span></div>
+            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024/ 1024) }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
+
+            <!-- mosaic -->
+            <div class="tags-group">
+              <span class="label">Mosaic:</span>
+              <el-radio-group v-model="f.tags.mosaic" @change="commitEdit('mosaic', f)">
+                <el-radio size="small" label="true">true</el-radio>
+                <el-radio size="small" label="false">false</el-radio>
+              </el-radio-group>
+            </div>
 
             <!-- category_main -->
             <div class="tags-group">
               <span class="label">Category Main:</span>
-              <template v-if="editingCategoryMainFlag === f.id">
-                <el-input :ref="setActiveInput" v-model="editValue.category_main" size="small"
-                  @keyup.enter="commitEdit('category_main', f)" @blur="commitEdit('category_main', f)" />
-              </template>
-              <span v-else-if="f.tags.category_main" class="label" @click="startEdit('category_main', f)">{{
-                f.tags.category_main
-                }}</span>
-              <span v-else class="tag placeholder" @click="startEdit('category_main', f)">+</span>
+              <el-radio-group v-model="f.tags.category_main" @change="commitEdit('category_main', f)">
+                <el-radio size="small" label="bou">bou</el-radio>
+                <el-radio size="small" label="arch">arch</el-radio>
+                <el-radio size="small" label="del">del</el-radio>
+              </el-radio-group>
             </div>
 
             <!-- category_sub -->
             <div class="tags-group">
               <span class="label">Category Sub:</span>
-              <template v-if="editingCategorySubFlag === f.id">
-                <el-input :ref="setActiveInput" v-model="editValue.category_sub" size="small"
-                  @keyup.enter="commitEdit('category_sub', f)" @blur="commitEdit('category_sub', f)" />
-              </template>
-              <span v-else-if="f.tags.category_sub" class="label" @click="startEdit('category_sub', f)">{{
-                f.tags.category_sub }}</span>
-              <span v-else class="tag placeholder" @click="startEdit('category_sub', f)">+</span>
-            </div>
-
-            <!-- mosaic -->
-            <div class="tags-group">
-              <span class="label">Mosaic:</span>
-              <template v-if="editingMosaicFlag === f.id">
-                <el-input :ref="setActiveInput" v-model="editValue.mosaic" size="small"
-                  @keyup.enter="commitEdit('mosaic', f)" @blur="commitEdit('mosaic', f)" />
-              </template>
-              <span v-else-if="f.tags.mosaic" class="label" @click="startEdit('mosaic', f)">{{ f.tags.mosaic
-                }}</span>
-              <span v-else class="tag placeholder" @click="startEdit('mosaic', f)">+</span>
+              <el-radio-group v-model="f.tags.category_sub" @change="commitEdit('category_sub', f)">
+                <el-radio size="small" label="hf">hf</el-radio>
+                <el-radio size="small" label="ntr">ntr</el-radio>
+                <el-radio size="small" label="3d">3d</el-radio>
+                <el-radio size="small" label="hm">hm</el-radio>
+                <el-radio size="small" label="q">q</el-radio>
+                <el-radio size="small" label="m">m</el-radio>
+                <el-radio size="small" label="ll">ll</el-radio>
+                <el-radio size="small" label="lo">lo</el-radio>
+                <el-radio size="small" label="xz">xz</el-radio>
+                <el-radio size="small" label="zr">zr</el-radio>
+                <el-radio size="small" label="sp">sp</el-radio>
+                <el-radio size="small" label="tr">tr</el-radio>
+              </el-radio-group>
             </div>
 
             <!-- 动态标签组: auth / name(tags.name) / custom / others -->
@@ -121,13 +124,6 @@
               <span v-else class="tag placeholder" @click="showTagInput(f, 'others')">+</span>
             </div>
           </div>
-
-          <!-- Star Folder Button -->
-          <el-button class="star-btn" type="warning" :icon="Star" size="small" circle @click.stop="starFolder(f)"
-            :title="'收藏: ' + f.name" />
-          <!-- Delete Folder Button -->
-          <el-button class="delete-btn" type="danger" :icon="Delete" size="small" circle @click.stop="deleteFolder(f)"
-            :title="'删除: ' + f.name" />
         </div>
 
 
@@ -475,7 +471,6 @@
   color: #5a636d;
 }
 
-
 /* ---- folder delete button  ---- */
 .delete-btn {
   position: absolute;
@@ -498,5 +493,11 @@
 
 .star-btn:hover {
   box-shadow: 0 4px 12px -4px rgba(40, 48, 63, .3);
+}
+
+/* ---- apply button  ---- */
+.apply-button {
+  margin-left: 20px;
+  width: 120px;
 }
 </style>

@@ -1,19 +1,17 @@
 
-import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick } from 'vue'
+import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick, toRefs } from 'vue'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
 import type { FolderModel } from '../service/Model'
-import { ElInput, ElTag, ElSwitch } from 'element-plus'
-import { Delete, Star } from '@element-plus/icons-vue'
-import { updateFolderModel, fetchHotTags, deleteFolderModel, starFolderModel } from '@/manga_viwer/service/Service'
+import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading } from 'element-plus'
 
 export default defineComponent({
   name: 'MangaViewerView',
-  components: { ElInput, ElTag, ElSwitch },
+  components: { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup },
   setup() {
     //  Basic
     // -------------------------------------------------------------------------------------------------------
     const store = useMangaIndexStore()
-
+    const { hotTags } = toRefs(store)
 
     // Lazy load on scroll
     // -------------------------------------------------------------------------------------------------------
@@ -32,20 +30,24 @@ export default defineComponent({
     // -------------------------------------------------------------------------------------------------------
     const searchTokens = ref<string[]>([])
     const searchInput = ref('')
-    const hotTags = ref<string[]>([])
+    // const hotTags = ref<string[]>([])
     const showUninitializedOnly = ref(false)
     const sizeSortEnabled = ref(false)
+    const nameSortEnabled = ref(true)
+    const classifierModeEnabled = ref(true)
 
     function addSearchToken() {
       const v = searchInput.value.trim()
       if (!v) return
       if (!searchTokens.value.includes(v)) searchTokens.value.push(v)
+      store.recordHotTag(v)
       searchInput.value = ''
     }
     function removeSearchToken(idx: number) {
       searchTokens.value.splice(idx, 1)
     }
     function addHotTag(tag: string) {
+      store.recordHotTag(tag)
       if (!searchTokens.value.includes(tag)) searchTokens.value.push(tag)
     }
 
@@ -68,7 +70,9 @@ export default defineComponent({
       if (showUninitializedOnly.value) {
         base = base.filter(f => !f.initialized)
       }
-      if (sizeSortEnabled.value) {
+      if (nameSortEnabled.value) {
+        base = [...base].sort((a, b) => a.name.localeCompare(b.name))
+      } else if (sizeSortEnabled.value) {
         base = [...base].sort((a, b) => b.size - a.size)
       }
       return base
@@ -78,12 +82,14 @@ export default defineComponent({
       currentPage.value = 1
       fetchFilesForCurrentPage()
     })
-
     watch(sizeSortEnabled, () => {
       currentPage.value = 1
       fetchFilesForCurrentPage()
     })
-
+    watch(nameSortEnabled, () => {
+      currentPage.value = 1
+      fetchFilesForCurrentPage()
+    })
     // Lazy Load Files
     // -------------------------------------------------------------------------------------------------------
     const pagedFolders = computed(() =>
@@ -96,9 +102,8 @@ export default defineComponent({
 
     async function fetchFilesForCurrentPage() {
       const token = ++loadingToken.value
-      // 顺序加载当前页中尚未加载的文件夹
       for (const f of pagedFolders.value) {
-        if (loadingToken.value !== token) return // 被重置，中止
+        if (loadingToken.value !== token) return
         if (!f.files || f.files.length === 0) {
           await store.fetchFolderFiles(f)
         }
@@ -106,11 +111,12 @@ export default defineComponent({
     }
 
     watch(filteredFolders, () => {
-      // 搜索或过滤变化：重置页数并重新加载第一页需要的文件
       currentPage.value = 1
       fetchFilesForCurrentPage()
     })
 
+    // Preivew Imag/Video
+    // -------------------------------------------------------------------------------------------------------
     function previewImages(f: FolderModel): string[] {
       const exts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
       const list: string[] = (f.files || []).filter((p: string) => {
@@ -127,7 +133,6 @@ export default defineComponent({
     function openModal(f: FolderModel) {
       dialogFolder.value = f
       dialogVisible.value = true
-      // 若尚未加载此文件夹的文件，加载
       if (!f.files || f.files.length === 0) {
         store.fetchFolderFiles(f)
       }
@@ -137,16 +142,12 @@ export default defineComponent({
       dialogFolder.value = null
     }
 
-    function isImage(p: string) {
-      return /\.(jpe?g|png|gif|webp|bmp|tiff)$/i.test(p)
-    }
-    function isVideo(p: string) {
-      return /\.(mp4|webm|mov|mkv|avi|flv)$/i.test(p)
-    }
+    function isImage(p: string) { return /\.(jpe?g|png|gif|webp|bmp|tiff)$/i.test(p) }
+    function isVideo(p: string) { return /\.(mp4|webm|mov|mkv|avi|flv)$/i.test(p) }
 
     // Code for Update
     // -------------------------------------------------------------------------------------------------------
-    const editingNameFlag = ref<string | null>(null)
+
     const activeInput = ref<InstanceType<typeof ElInput> | null>(null)
 
     function setActiveInput(el: InstanceType<typeof ElInput> | null) {
@@ -163,72 +164,29 @@ export default defineComponent({
       })
     }
 
-    const editingCategoryMainFlag = ref<string | null>(null)
-    const editingCategorySubFlag = ref<string | null>(null)
-    const editingMosaicFlag = ref<string | null>(null)
-
-    const editValue = reactive({
-      name: '',
-      category_main: '',
-      category_sub: '',
-      mosaic: ''
-    })
-
-    function startEdit(field: 'name' | 'category_main' | 'category_sub' | 'mosaic', f: FolderModel) {
-      if (field === 'name') {
-        editingNameFlag.value = f.id
-        editValue.name = f.name
-      }
-      if (field === 'category_main') {
-        editingCategoryMainFlag.value = f.id
-        editValue.category_main = f.tags.category_main
-        return
-      }
-      if (field === 'category_sub') {
-        editingCategorySubFlag.value = f.id
-        editValue.category_sub = f.tags.category_sub
-        return
-      }
-      if (field === 'mosaic') {
-        editingMosaicFlag.value = f.id
-        editValue.mosaic = String(f.tags.mosaic ?? '')
-      }
+    const editingNameFlag = ref<string | null>(null)
+    const editValue = reactive({name: ''})
+    function startNameEdit(f: FolderModel) {
+      editingNameFlag.value = f.id
+      editValue.name = f.name
     }
 
-    async function commitEdit(field: 'name' | 'category_main' | 'category_sub' | 'mosaic', f: FolderModel) {
-      let changed = false
+    async function commitNameAndRadioEdit(field: 'name' | 'category_main' | 'category_sub' | 'mosaic', f: FolderModel) {
       if (field === 'name') {
         editingNameFlag.value = null
         if (f.name !== editValue.name) {
           f.name = editValue.name.trim()
-          changed = true
+          f.initialized = true
+          store.addChangeId(f.id)
         }
-      } else if (field === 'category_main') {
-        editingCategoryMainFlag.value = null
-        if (f.tags.category_main !== editValue.category_main) {
-          f.tags.category_main = editValue.category_main.trim()
-          changed = true
-        }
-      } else if (field === 'category_sub') {
-        editingCategorySubFlag.value = null
-        if (f.tags.category_sub !== editValue.category_sub) {
-          f.tags.category_sub = editValue.category_sub.trim()
-          changed = true
-        }
-      } else if (field === 'mosaic') {
-        const v = editValue.mosaic.trim()
-        if (String(f.tags.mosaic ?? '') !== v) {
-          f.tags.mosaic = v as any
-          changed = true
-        }
-        editingMosaicFlag.value = null
+        return
       }
-      if (changed) {
-        f.initialized = true
-        await updateFolderModel(f)
+      f.initialized = true
+      store.addChangeId(f.id)
+      if (field === 'category_main' || field === 'category_sub') {
+        store.addMoveId(f.id)
       }
     }
-
 
     // Update -Tags
     // -------------------------------------------------------------------------------------------------------
@@ -263,9 +221,30 @@ export default defineComponent({
       }
     }
 
+    function parseAuthName(raw: string): { auth: string; name: string } {
+      const s = (raw || '').trim()
+      const m = s.match(/^(\[(?<b>[^\]]+)\]|\((?<p>[^)]+)\))(?<rest>.*)$/)
+      if (!m) {
+        const nm = s.match(/^([^[(]+)/)
+        return { auth: '', name: (nm ? nm[1] : s).trim() }
+      }
+      const auth = (m.groups?.b || m.groups?.p || '').trim()
+      const rest = (m.groups?.rest || '')
+      const nm = rest.match(/^([^[(]+)/)
+      const name = (nm ? nm[1] : '').trim()
+      return { auth, name }
+    }
+
     function showTagInput(f: FolderModel, group: 'auth' | 'name' | 'custom' | 'others') {
       ensureTagState(f.id, group)
       tagInputVisible[f.id][group] = true
+      const { auth, name } = parseAuthName(f.name)
+      if (group === 'auth') {
+        tagInputValues[f.id].auth = auth
+      }
+      if (group === 'name') {
+        tagInputValues[f.id].name = name
+      }
     }
 
     async function handleTagInputConfirm(f: FolderModel, group: 'auth' | 'name' | 'custom' | 'others') {
@@ -279,41 +258,29 @@ export default defineComponent({
       if (!f.tags[group].includes(v)) {
         f.tags[group].push(v)
         f.initialized = true
-        await updateFolderModel(f)
+        store.addChangeId(f.id)
       }
       tagInputValues[f.id][group] = ''
     }
 
     async function removeTag(f: FolderModel, group: 'auth' | 'name' | 'custom' | 'others', index: number) {
       f.tags[group].splice(index, 1)
-      await updateFolderModel(f)
+      store.addChangeId(f.id)
     }
 
-    // Folder Delete
+
+    // Appying
     // -------------------------------------------------------------------------------------------------------
-    async function deleteFolder(f: FolderModel) {
-      try {
-        await deleteFolderModel(f)
-        delete store.mangaIndex.folders[f.id]
-      } catch (e) {
-        console.error('Delete failed', e)
-      }
+    async function applyChanges() {
+      const loading = ElLoading.service({ lock: true, text: 'Applying...', background: 'rgba(0,0,0,0.4)' })
+      await store.applyChanges(classifierModeEnabled.value)
+      loading.close()
     }
-    // Folder Star
-    // -------------------------------------------------------------------------------------------------------
-    async function starFolder(f: FolderModel) {
-      try {
-        await starFolderModel(f)
-        delete store.mangaIndex.folders[f.id]
-      } catch (e) {
-        console.error('Star failed', e)
-      }
-    }
+
     // Life Cycle
     // -------------------------------------------------------------------------------------------------------
     onMounted(async () => {
       await store.loadIndex()
-      hotTags.value = await fetchHotTags().catch(() => [])
       fetchFilesForCurrentPage()
       window.addEventListener('scroll', onScroll)
     })
@@ -330,12 +297,9 @@ export default defineComponent({
       removeSearchToken,
       addHotTag,
       // Update - Basic
-      startEdit,
-      commitEdit,
+      startEdit: startNameEdit,
+      commitEdit: commitNameAndRadioEdit,
       editingNameFlag,
-      editingCategoryMainFlag,
-      editingCategorySubFlag,
-      editingMosaicFlag,
       editValue,
       setActiveInput,
       // Update — Tag
@@ -359,12 +323,10 @@ export default defineComponent({
       // Switch Initialized
       showUninitializedOnly,
       sizeSortEnabled,
-      // Folder Delete
-      deleteFolder,
-      Delete,
-      // Star Folder
-      starFolder,
-      Star,
+      nameSortEnabled,
+      classifierModeEnabled,
+      // Applying
+      applyChanges,
     }
   }
 })

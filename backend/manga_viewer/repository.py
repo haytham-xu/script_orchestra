@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 class Repository:
     manga_index: MangaIndex = None
-    index_path = os.path.join(config.MANGA_VIEWER_ROOT_PATH, "manga_index.json")
+    index_path = os.path.join(config.MANGA_VIEWER_INDEX_PATH, "manga_index.json")
     scan_paths = config.MANGA_VIEWER_SCAN_FOLDER
     ignore_scan_paths = config.MANGA_VIEWER_IGNORE_SCAN_FOLDER
 
@@ -67,7 +67,7 @@ class Repository:
         except OSError:
             return file_list
 
-        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
+        root_abs = os.path.abspath(config.MANGA_VIEWER_INDEX_PATH)
 
         # 当前目录文件
         root_files = [f for f in entries if os.path.isfile(os.path.join(folder_path, f))]

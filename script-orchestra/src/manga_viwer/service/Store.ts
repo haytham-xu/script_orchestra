@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
-import type { MangaIndex, FolderModel, TagData } from '../service/Model'
-import { fetchIndex, fetchFileList } from '@/manga_viwer/service/Service'
+import type { MangaIndex, FolderModel } from '../service/Model'
+import { fetchIndex, fetchFileList, updateFolderModels } from '@/manga_viwer/service/Service'
 
 interface State {
   mangaIndex: MangaIndex
-  selectedFolderId: string | null
-  filterTags: Partial<Record<keyof TagData, string[]>>
-  keyword: string
+  changeIdList: Set<string>,
+  moveIdList: Set<string>,
+  hotTags: string[]
 }
 
 export const useMangaIndexStore = defineStore('mangaIndex', {
@@ -19,40 +19,12 @@ export const useMangaIndexStore = defineStore('mangaIndex', {
         category_sub: []
       }
     },
-    selectedFolderId: null,
-    filterTags: {},
-    keyword: ''
+    changeIdList: new Set<string>(),
+    moveIdList: new Set<string>(),
+    hotTags: [],
   }),
 
   getters: {
-    // foldersArray: (s): FolderModel[] => Object.values(s.mang a mangaIndex.folders),
-    // selectedFolder: (s): FolderModel | null =>
-    //   s.selectedFolderId ? s.mangaIndex.folders[s.selectedFolderId] || null : null,
-    // filteredFolders(): FolderModel[] {
-    //   let list = this.foldersArray
-    //   // 关键词（匹配 name 或 path）
-    //   if (this.keyword.trim()) {
-    //     const kw = this.keyword.trim().toLowerCase()
-    //     list = list.filter(f => f.name.toLowerCase().includes(kw) || f.path.toLowerCase().includes(kw))
-    //   }
-    //   // 标签筛选（全部条件命中）
-    //   for (const key of Object.keys(this.filterTags) as (keyof TagData)[]) {
-    //     const values = this.filterTags[key]
-    //     if (!values || values.length === 0) continue
-    //     list = list.filter(f => {
-    //       const t = f.tags[key]
-    //       if (Array.isArray(t)) {
-    //         return values.some(v => t.includes(v))
-    //       } else if (typeof t === 'string') {
-    //         return values.includes(t)
-    //       } else if (typeof t === 'boolean' || t === null) {
-    //         return values.includes(String(t))
-    //       }
-    //       return false
-    //     })
-    //   }
-    //   return list
-    // }
   },
 
   actions: {
@@ -65,10 +37,65 @@ export const useMangaIndexStore = defineStore('mangaIndex', {
       try {
         const list = await fetchFileList(folder.id)
         folder.files = list
-        console.log('fetch success:', folder.path)
       } catch {
         folder.files = []
       }
-    }
+    },
+    recordHotTag(tag: string) {
+      const t = tag.trim()
+      if (!t) return
+      this.hotTags = [t, ...this.hotTags.filter(x => x !== t)].slice(0, 10)
+    },
+    addChangeId(id: string) {
+      if (!id) return
+      if (!this.changeIdList.has(id)) {
+        const s = new Set(this.changeIdList)
+        s.add(id)
+        this.changeIdList = s
+      }
+    },
+    addMoveId(id: string) {
+      if (!id) return
+      if (!this.moveIdList.has(id)) {
+        const s = new Set(this.moveIdList)
+        s.add(id)
+        this.moveIdList = s
+      }
+    },
+    async applyChanges(classifierModeEnabled: boolean): Promise<void> {
+      // console.log("==1==> " + classifierModeEnabled + " " + this.moveIdList.size + " " + this.moveIdList)
+      if (!this.changeIdList.size) return
+      const changed: Record<string, FolderModel> = {}
+      for (const id of this.changeIdList) {
+        const fm = this.mangaIndex.folders[id]
+        if (fm) changed[id] = fm
+      }
+      if (!Object.keys(changed).length) {
+        this.changeIdList = new Set()
+        return
+      }
+      try {
+        await updateFolderModels(changed, classifierModeEnabled)
+        for (const id of Object.keys(changed)) {
+          if (this.mangaIndex.folders[id].tags.category_main === 'del') {
+            delete this.mangaIndex.folders[id]
+          }
+        }
+        this.changeIdList = new Set()
+        if (classifierModeEnabled) {
+          for (const id of this.moveIdList) {
+            // console.log("==2==> " + id)
+            // console.log("==3==> " + this.mangaIndex.folders[id].tags.category_main !== 'del')
+            if (id in this.mangaIndex.folders) {
+              delete this.mangaIndex.folders[id]
+            }
+          }
+          this.moveIdList = new Set()
+        }
+      } catch (e) {
+        console.error('applyChanges failed:', e)
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    },
   }
 })

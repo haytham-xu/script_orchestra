@@ -124,7 +124,6 @@ export default defineComponent({
           break
         // default:
         //   if (/^Digit[0-9]$/.test(event.code)) {
-        //     console.log("hi", event.code)
         //   }
       }
     }

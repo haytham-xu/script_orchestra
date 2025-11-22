@@ -5,7 +5,6 @@ import {PHOTO_CLASSIFIER_ENDPOINT_FOLDER} from '@/basic/Constants'
 
 export async function getFileList():Promise<DefaultGroup> {
     const responseData = await getRequest<DefaultGroup>(PHOTO_CLASSIFIER_ENDPOINT_FOLDER)
-    console.log('getFileList', responseData)
     return responseData
 }
 
