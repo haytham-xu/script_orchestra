@@ -30,7 +30,6 @@ export default defineComponent({
     // -------------------------------------------------------------------------------------------------------
     const searchTokens = ref<string[]>([])
     const searchInput = ref('')
-    // const hotTags = ref<string[]>([])
     const showUninitializedOnly = ref(false)
     const sizeSortEnabled = ref(false)
     const nameSortEnabled = ref(true)

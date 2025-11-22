@@ -63,7 +63,6 @@ export const useMangaIndexStore = defineStore('mangaIndex', {
       }
     },
     async applyChanges(classifierModeEnabled: boolean): Promise<void> {
-      // console.log("==1==> " + classifierModeEnabled + " " + this.moveIdList.size + " " + this.moveIdList)
       if (!this.changeIdList.size) return
       const changed: Record<string, FolderModel> = {}
       for (const id of this.changeIdList) {
@@ -84,8 +83,6 @@ export const useMangaIndexStore = defineStore('mangaIndex', {
         this.changeIdList = new Set()
         if (classifierModeEnabled) {
           for (const id of this.moveIdList) {
-            // console.log("==2==> " + id)
-            // console.log("==3==> " + this.mangaIndex.folders[id].tags.category_main !== 'del')
             if (id in this.mangaIndex.folders) {
               delete this.mangaIndex.folders[id]
             }

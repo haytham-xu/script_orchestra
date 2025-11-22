@@ -1,6 +1,5 @@
 export const BACKEND_BASE_URL = 'http://127.0.0.1:5000'
 
-
 export const MANGA_CLASSIFIER_ENDPOINT_CONFIG = '/manga-classifier/config'
 export const MANGA_CLASSIFIER_ENDPOINT_FOLDER = '/manga-classifier/folder'
 

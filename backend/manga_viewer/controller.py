@@ -5,15 +5,9 @@ import config
 import shutil
 from extensions import restx_api
 from manga_viewer.repository import Repository
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 api = Namespace("")
-
-# @api.route("/manga-viewer/hot-tags")
-# class HotTagsResource(Resource):
-#     def get(self):
-#         return jsonify(config.MANGA_VIEWER_HOT_TAGS)
-
 
 @api.route("/manga-viewer/index")
 class MangaIndexResource(Resource):
@@ -33,22 +27,18 @@ class FolderScanResource(Resource):
             return jsonify([])
 
         file_url_list = Repository.manga_index.folders[folder_id].file_list
-        print(file_url_list)
         return jsonify(file_url_list)
 
 
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
-        # 使用内容根目录(需在 config 中新增或改成正确的根)
         root_abs = os.path.abspath(getattr(config, "MANGA_VIEWER_CONTENT_ROOT", config.MANGA_VIEWER_INDEX_PATH))
         rel_url_path = unquote(filepath).lstrip("/\\")
-        # 禁止绝对路径与盘符
         first_seg = rel_url_path.split("/")[0]
         if os.path.isabs(rel_url_path) or (":" in first_seg):
             return "Forbidden", 403
         safe_path = os.path.normpath(os.path.join(root_abs, rel_url_path.replace("/", os.sep)))
-        # 越权校验
         root_with_sep = root_abs + os.sep
         if not (safe_path == root_abs or safe_path.startswith(root_with_sep)):
             return "Forbidden", 403
@@ -60,10 +50,6 @@ class FileResource(Resource):
 class FolderUpdateResource(Resource):
     def put(self, classifier_mode: bool=True):
         folder_models = request.json or {}
-        print("Received folder update request:")
-        import json
-        print(json.dumps(folder_models, indent=2, ensure_ascii=False))
-        print("======> ", classifier_mode)
         if not isinstance(folder_models, dict):
             return jsonify({"error": "invalid payload"}), 400
 
@@ -78,12 +64,9 @@ class FolderUpdateResource(Resource):
             new_tags = (incoming.get("tags") or {})
             new_name = (incoming.get("name") or old_folder.name or "").strip()
 
-            # Windows 非法字符校验
             if any(ch in invalid_chars for ch in new_name):
-                # 跳过非法重命名
                 new_name = old_folder.name
 
-            # 重命名（大小写敏感兼容处理）
             if new_name and os.path.normcase(new_name) != os.path.normcase(old_folder.name):
                 old_path = old_folder.path
                 parent_dir = os.path.dirname(old_path)

@@ -126,8 +126,7 @@
           </div>
         </div>
 
-
-        <!-- 右侧图片预览块 -->
+        <!-- Preview -->
         <div class="line-right" @click="openModal(f)">
           <div v-if="previewImages(f).length" class="thumbs">
             <div v-for="(img, i) in previewImages(f)" :key="img + i" class="thumb" :title="img">
@@ -309,14 +308,12 @@
   align-items: center;
   height: 250px;
   max-width: 520px;
-  /* 3 张图时总宽度上限 (含间距) */
 }
 
 .thumb {
   height: 250px;
   width: auto;
   max-width: 160px;
-  /* 单张最大宽度，避免过宽 */
   flex: 0 0 auto;
   border: 1px solid #d9e1e8;
   border-radius: 10px;
@@ -347,12 +344,10 @@
 
 /* .empty { padding:28px 0; text-align:center; color:#7d8792; font-size:13px; border:1px dashed #d9e1e8; border-radius:10px; background:#fff; } */
 
-/* 弹窗整体容器定制 */
 .manga-center-dialog {
   padding: 0;
 }
 
-/* 头部（如果不需要可以直接去掉模板中 dialog-header） */
 /* .dialog-header {
   padding: 10px 16px 6px;
   font-weight: 600;
@@ -365,8 +360,6 @@
   text-overflow: ellipsis;
 } */
 
-/* 可滚动内容区 */
-/* 替换原 .dialog-body / .media-item / 媒体元素相关样式 */
 .dialog-body {
   flex: 1;
   overflow-y: auto;

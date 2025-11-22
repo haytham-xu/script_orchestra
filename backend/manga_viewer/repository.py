@@ -9,7 +9,6 @@ from manga_viewer.model.folder import Folder
 from manga_viewer.model.tag import Tag
 from urllib.parse import quote
 
-
 class Repository:
     manga_index: MangaIndex = None
     index_path = os.path.join(config.MANGA_VIEWER_INDEX_PATH, "manga_index.json")
@@ -69,7 +68,6 @@ class Repository:
 
         root_abs = os.path.abspath(config.MANGA_VIEWER_INDEX_PATH)
 
-        # 当前目录文件
         root_files = [f for f in entries if os.path.isfile(os.path.join(folder_path, f))]
         for fname in flex_natsort(root_files):
             lower = fname.lower()
@@ -83,7 +81,6 @@ class Repository:
                 except OSError:
                     pass
 
-        # 子目录文件（仅一层）
         subdirs = [d for d in entries if os.path.isdir(os.path.join(folder_path, d))]
         for dname in flex_natsort(subdirs):
             subdir_path = os.path.join(folder_path, dname)
