@@ -66,7 +66,7 @@ class Repository:
         except OSError:
             return file_list
 
-        root_abs = os.path.abspath(config.MANGA_VIEWER_INDEX_PATH)
+        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
 
         root_files = [f for f in entries if os.path.isfile(os.path.join(folder_path, f))]
         for fname in flex_natsort(root_files):

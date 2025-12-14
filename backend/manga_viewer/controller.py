@@ -33,7 +33,7 @@ class FolderScanResource(Resource):
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
-        root_abs = os.path.abspath(getattr(config, "MANGA_VIEWER_CONTENT_ROOT", config.MANGA_VIEWER_INDEX_PATH))
+        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
         rel_url_path = unquote(filepath).lstrip("/\\")
         first_seg = rel_url_path.split("/")[0]
         if os.path.isabs(rel_url_path) or (":" in first_seg):
@@ -103,7 +103,7 @@ class FolderUpdateResource(Resource):
 
             if cat_main_changed or cat_sub_changed:
                 if cat_main_new == "del":
-                    delete_root = getattr(config, "MANGA_VIEWER_DELETE_PATHS", "")
+                    delete_root = config.MANGA_VIEWER_DELETE_PATHS
                     if delete_root:
                         delete_root_abs = os.path.abspath(delete_root)
                         os.makedirs(delete_root_abs, exist_ok=True)
@@ -117,7 +117,7 @@ class FolderUpdateResource(Resource):
                         del Repository.manga_index.folders[folder_id]
                     continue
                 else:
-                    base_root = getattr(config, "MANGA_VIEWER_CATEGORY_PATHS", "")
+                    base_root = config.MANGA_VIEWER_CATEGORY_PATHS
                     if base_root:
                         base_root_abs = os.path.abspath(base_root)
                         main_folder_name = main_map.get(cat_main_new, cat_main_new)
