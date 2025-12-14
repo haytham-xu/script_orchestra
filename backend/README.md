@@ -1,9 +1,7 @@
 
 ## Backend
 
-
 ## Intelligent Bank Receipt Claiming and AR Clearing
-
 #### Python version management
 ```
 brew install pyenv
@@ -16,7 +14,6 @@ pyenv global 3.13.5
 cd /path/to/project
 pyenv local 3.13.5
 ```
-
 
 #### Venv - Unix
 python3 -m venv venv

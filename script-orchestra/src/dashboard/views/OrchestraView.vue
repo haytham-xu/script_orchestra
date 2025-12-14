@@ -1,11 +1,19 @@
 <template>
-  <el-container> 
+  <el-container>
     <el-card @click="goTo('/manga-classifier')">
       <template #header>Manga Classifier</template>
       <!-- <p>Here is content</p> -->
     </el-card>
     <el-card @click="goTo('/photo-classifier')">
       <template #header>Photo Classifier</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
+    <el-card @click="goTo('/manga-viewer')">
+      <template #header>Manga Viewer</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
+    <el-card @click="goTo('/roadmap')">
+      <template #header>Roadmap</template>
       <!-- <p>Here is content</p> -->
     </el-card>
   </el-container>

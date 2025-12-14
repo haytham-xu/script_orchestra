@@ -5,6 +5,7 @@ import PCDashboardView from '@/photo_classifier/views/PCDashboardView.vue'
 import PCDefaultGroupView from '@/photo_classifier/views/PCDefaultGroupView.vue'
 import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
+import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -39,6 +40,11 @@ const router = createRouter({
       path: '/manga-viewer',
       name: 'manga-viewer',
       component: MangaViewerView
+    },
+    {
+      path: '/roadmap',
+      name: 'roadmap',
+      component: RoadmapView
     },
   ],
 })
