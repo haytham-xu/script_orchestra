@@ -16,6 +16,10 @@
       <template #header>Roadmap</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/pdf-converter')">
+      <template #header>PDF Converter</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
   </el-container>
 </template>
 

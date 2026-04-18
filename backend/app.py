@@ -11,6 +11,8 @@ import photo_classifier.folder_controller
 
 import manga_viewer.controller
 
+import pdf_converter.controller
+
 def create_app() -> Flask:
     app = Flask(__name__)
     CORS(app)

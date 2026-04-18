@@ -6,6 +6,7 @@ import PCDefaultGroupView from '@/photo_classifier/views/PCDefaultGroupView.vue'
 import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
+import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -45,6 +46,11 @@ const router = createRouter({
       path: '/roadmap',
       name: 'roadmap',
       component: RoadmapView
+    },
+    {
+      path: '/pdf-converter',
+      name: 'pdf-converter',
+      component: PdfConverterView
     },
   ],
 })

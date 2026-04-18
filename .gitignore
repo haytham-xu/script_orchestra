@@ -5,3 +5,4 @@ config_local.json
 prompt.md
 *temp*
 venv
+/.claude

@@ -17,6 +17,8 @@ MANGA_VIEWER_IGNORE_SCAN_FOLDER = []
 MANGA_VIEWER_CATEGORY_PATHS = ''
 MANGA_VIEWER_DELETE_PATHS = ''
 
+PDF_CONVERTER_TEMP_PATH = '/tmp/pdf_converter'
+
 try:
     from config_local import *
 except ImportError:
