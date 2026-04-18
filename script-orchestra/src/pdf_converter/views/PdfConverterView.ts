@@ -8,7 +8,7 @@ import {
 import type { PdfToImagesResponse, ImagesToPdfResponse, MergePdfsResponse } from '@/pdf_converter/service/Model'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadUserFile } from 'element-plus'
-import { flexNatsort } from '@/basic/flexSort'
+import { flexNatsort } from '@/pdf_converter/utils/flexSort'
 
 // Interface for folder queue item
 interface FolderQueueItem {

@@ -181,7 +181,7 @@ class FolderToPdfResource(Resource):
 
             # Group files by their folder while preserving the order they were received
             from collections import OrderedDict
-            from basic.flex_sort import flex_natsort
+            from pdf_converter.flex_sort import flex_natsort
 
             folder_files = OrderedDict()
             folder_order = []  # Track the order folders appear

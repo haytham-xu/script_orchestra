@@ -1,3 +1,5 @@
+import os
+
 HOST_URL = 'http://127.0.0.1:5000'
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')
 VIDEO_EXTS = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
@@ -17,7 +19,9 @@ MANGA_VIEWER_IGNORE_SCAN_FOLDER = []
 MANGA_VIEWER_CATEGORY_PATHS = ''
 MANGA_VIEWER_DELETE_PATHS = ''
 
-PDF_CONVERTER_TEMP_PATH = '/tmp/pdf_converter'
+# PDF Converter temporary files path (in project's buffer folder)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PDF_CONVERTER_TEMP_PATH = os.path.join(BASE_DIR, 'buffer', 'pdf_converter')
 
 try:
     from config_local import *
