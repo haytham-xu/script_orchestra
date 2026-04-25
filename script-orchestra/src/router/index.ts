@@ -8,6 +8,9 @@ import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
+import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
+import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
+import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -57,6 +60,21 @@ const router = createRouter({
       path: '/unzip',
       name: 'unzip',
       component: UnzipView
+    },
+    {
+      path: '/file-git',
+      name: 'file-git',
+      component: FileGitReposView
+    },
+    {
+      path: '/file-git/settings',
+      name: 'file-git-settings',
+      component: FileGitSettingsView
+    },
+    {
+      path: '/file-git/:id',
+      name: 'file-git-detail',
+      component: FileGitRepoDetailView
     },
   ],
 })
