@@ -20,6 +20,10 @@
       <template #header>PDF Converter</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/unzip')">
+      <template #header>Unzip</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
   </el-container>
 </template>
 

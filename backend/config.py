@@ -1,6 +1,6 @@
 import os
 
-HOST_URL = 'http://127.0.0.1:5000'
+HOST_URL = 'http://127.0.0.1:5001'
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')
 VIDEO_EXTS = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
 

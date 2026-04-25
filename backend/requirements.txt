@@ -16,6 +16,8 @@ natsort==8.4.0
 pdf2image==1.17.0
 Pillow==11.1.0
 PyPDF2==3.0.1
+py7zr==0.20.8
+rarfile==4.0
 referencing==0.36.2
 rpds-py==0.27.1
 typing_extensions==4.15.0

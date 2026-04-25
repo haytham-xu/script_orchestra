@@ -7,3 +7,6 @@ prompt.md
 venv
 /.claude
 buffer/
+
+# Unzip local password config
+backend/unzip/config_local.py

@@ -1,0 +1,16 @@
+"""
+Local Password Configuration (Example)
+
+Copy this file to config_local.py and add your commonly used passwords.
+config_local.py is gitignored and will not be tracked.
+"""
+
+# Password list for encrypted archives
+# The first empty string means "try without password first"
+PASSWORD_LIST = [
+    "",           # No password (always try first)
+    "123456",
+    "password",
+    "qwerty",
+    # Add your commonly used passwords below
+]

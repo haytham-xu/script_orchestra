@@ -20,14 +20,14 @@
       </el-main>
     </el-container>
     <CategoryButtonCardComponment
-      v-if="categoryButtonCardJSON"
+      v-if="categoryButtonCardJSON && categoryButtonCardJSON.left"
       :currentFolderPath="currentFolderName"
       side="left"
       :buttonCard="categoryButtonCardJSON.left"
       @folderChange="moveFolder"
     />
     <CategoryButtonCardComponment
-      v-if="categoryButtonCardJSON"
+      v-if="categoryButtonCardJSON && categoryButtonCardJSON.right"
       :currentFolderPath="currentFolderName"
       side="right"
       :buttonCard="categoryButtonCardJSON.right"
