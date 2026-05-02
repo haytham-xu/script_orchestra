@@ -9,6 +9,7 @@ interface PhotoClassifierStoreState {
   defaultGroup: DefaultGroup
   initialized: boolean
   groupActionLock: boolean
+  currentGroupIndex: number  // Track current active group index
 }
 
 export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
@@ -17,6 +18,7 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     defaultGroup: { files: [] },
     initialized: false,
     groupActionLock: false,
+    currentGroupIndex: -1,  // -1 means no group selected
   }),
 
   getters: {
@@ -69,6 +71,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
 
         this.groupList.groupList.push(newGroup)
 
+        // Update currentGroupIndex to the newly created group
+        this.currentGroupIndex = newGroupId
+
         ElMessage.success('Added file to new Group: ' + newGroupId)
         return newGroupId
       } finally {
@@ -90,6 +95,14 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           return
         }
 
+        // If file is already in a group, remove it from that group first
+        if (file.fileStatus == FileStatus.IN_GROUP && file.groupId !== null && file.groupId !== groupIndex) {
+          const oldGroup = this.groupList.groupList[file.groupId]
+          if (oldGroup) {
+            oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
+          }
+        }
+
         if (file.fileStatus == FileStatus.IN_GROUP && file.groupId === groupIndex) {
           ElMessage.warning('File already in this group')
           return
@@ -98,6 +111,10 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
         file.fileStatus = FileStatus.IN_GROUP
         file.groupId = groupIndex
         targetGroup.files.push(file)
+
+        // Update currentGroupIndex to the group we just added to
+        this.currentGroupIndex = groupIndex
+
         ElMessage.success('Added file to Group: ' + groupIndex)
       } finally {
         this.groupActionLock = false

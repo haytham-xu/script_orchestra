@@ -24,6 +24,9 @@
       </div>
 
       <div class="header-right">
+        <span v-if="photoClassifierStore.currentGroupIndex >= 0" class="current-group-badge">
+          Current Group: {{ photoClassifierStore.currentGroupIndex }} |
+        </span>
         <span v-if="currentFile?.categoryTag != null"
           >Category: {{ currentFile.categoryTag }} |
         </span>
@@ -99,6 +102,11 @@
 
 .header-right {
   margin-left: 20px;
+}
+
+.current-group-badge {
+  font-weight: bold;
+  color: #409eff;
 }
 
 .header-progress {

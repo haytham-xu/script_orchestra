@@ -1,5 +1,17 @@
 <template>
-  <div class="dashboard-container">
+  <div class="dashboard-wrapper">
+    <!-- Settings Button -->
+    <div class="header-bar">
+      <el-button
+        type="primary"
+        :icon="Setting"
+        @click="settingsDrawerVisible = true"
+        circle
+      />
+    </div>
+
+    <!-- Dashboard Content -->
+    <div class="dashboard-container">
     <el-card
       class="group-card"
       v-if="photoClassifierStore.defaultGroup.files.length"
@@ -30,10 +42,29 @@
         class="card-image"
       ></el-image>
     </el-card>
+    </div>
+
+    <!-- Settings Drawer -->
+    <PCSettingsDrawer
+      v-model="settingsDrawerVisible"
+      @path-changed="handlePathChanged"
+    />
   </div>
 </template>
 
 <style scoped>
+.dashboard-wrapper {
+  position: relative;
+  height: 100%;
+}
+
+.header-bar {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 10;
+}
+
 .dashboard-container {
   display: flex;
   flex-wrap: wrap;

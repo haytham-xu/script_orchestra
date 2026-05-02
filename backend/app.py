@@ -6,8 +6,8 @@ import manga_classifier.config_controller
 import manga_classifier.folder_controller
 import manga_classifier.file_controller
 
-import photo_classifier.file_controller
-import photo_classifier.folder_controller
+# Import photo_classifier as independent module (using Blueprint)
+from photo_classifier import blueprint as photo_classifier_blueprint
 
 import manga_viewer.controller
 
@@ -24,6 +24,9 @@ def create_app() -> Flask:
     CORS(app, resources={r"/*": {"origins": "*"}})
 
     restx_api.init_app(app)
+
+    # Register photo_classifier blueprint
+    app.register_blueprint(photo_classifier_blueprint)
 
     # Initialize WebSocket (optional - will gracefully fail if not installed)
     socketio = init_socketio(app)

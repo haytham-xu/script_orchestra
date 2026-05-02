@@ -3,16 +3,21 @@ import shutil
 from pathlib import Path
 from flask_restx import Namespace, Resource
 from flask import request
-from extensions import restx_api
-import config
+from . import config
 
 ns = Namespace("")
 
-@ns.route("/photo-classifier/folder")
+@ns.route("/folder")
 class FolderResource(Resource):
     def get(self):
         """List all files."""
-        folder_abs_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH)
+        # Support dynamic root path from query parameter
+        root_path = request.args.get('rootPath') or config.get_root_path()
+
+        if not root_path:
+            return {"error": "Root path not configured"}, 400
+
+        folder_abs_path = os.path.abspath(root_path)
         files = []
 
         if not os.path.exists(folder_abs_path):
@@ -24,7 +29,8 @@ class FolderResource(Resource):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
-                    file_url = f"{config.HOST_URL}/photo-classifier/file/{fname}"
+                    # Include rootPath in file URL for dynamic path support
+                    file_url = f"{config.HOST_URL}/photo-classifier/file/{fname}?rootPath={root_path}"
                     if lower_name.endswith(config.IMAGE_EXTS):
                         collected.append({
                             "filePath": fname,
@@ -57,10 +63,16 @@ class FolderResource(Resource):
         if "sourceFolderPath" not in data or "targetFolderPath" not in data:
             return {"error": "Missing required fields"}, 400
 
+        # Support dynamic root path
+        root_path = data.get('rootPath') or config.get_root_path()
+
+        if not root_path:
+            return {"error": "Root path not configured"}, 400
+
         # sourceFolderPath is the filename, targetFolderPath is the category folder name
-        source_file_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
+        source_file_path = os.path.join(root_path, data["sourceFolderPath"].lstrip("/"))
         target_folder_name = data["targetFolderPath"].lstrip("/")
-        target_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, target_folder_name)
+        target_folder_path = os.path.join(root_path, target_folder_name)
 
         # Validate source file exists
         if not os.path.exists(source_file_path):
@@ -86,5 +98,3 @@ class FolderResource(Resource):
             return {"message": f"File moved successfully to {target_folder_name}/{filename}"}, 202
         except Exception as e:
             return {"error": f"Failed to move file: {str(e)}"}, 500
-    
-restx_api.add_namespace(ns)

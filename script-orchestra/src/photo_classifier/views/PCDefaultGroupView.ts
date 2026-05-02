@@ -31,7 +31,6 @@ export default defineComponent({
     const router = useRouter()
     const photoClassifierStore = usePhotoClassifierStore()
 
-    const currentLastGroupIndex = ref(-1)
     const showFiltered = ref(false)
     const drawerVisible = ref(false)
 
@@ -95,17 +94,17 @@ export default defineComponent({
           nextFile()
           break
         case 'KeyW':
-          if (currentLastGroupIndex.value >= 0) {
-            photoClassifierStore.addFileToGroup(currentDisplayFile.value, currentLastGroupIndex.value)
+          // W: Add to current group index
+          if (photoClassifierStore.currentGroupIndex >= 0) {
+            photoClassifierStore.addFileToGroup(currentDisplayFile.value, photoClassifierStore.currentGroupIndex)
             nextFile()
           } else {
-            ElMessage.warning('Please create a group first (press Q)')
+            ElMessage.warning('No group selected. Press Q to create a new group first.')
           }
           break
         case 'KeyQ':
-          currentLastGroupIndex.value = photoClassifierStore.createNewGroupWithFile(
-            currentDisplayFile.value,
-          )
+          // Q: Always create a new group
+          photoClassifierStore.createNewGroupWithFile(currentDisplayFile.value)
           nextFile()
           break
         case 'Backspace':
@@ -174,7 +173,6 @@ export default defineComponent({
       editValue,
       applyEdit,
       startEditing,
-      currentLastGroupIndex,
     }
   },
 })
