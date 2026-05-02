@@ -41,8 +41,16 @@ def init_socketio(app):
         print("[WebSocket] SocketIO not available, progress updates disabled")
         return None
 
-    socketio = SocketIO(app, cors_allowed_origins="*")
-    print("[WebSocket] SocketIO initialized")
+    # Configure SocketIO with proper CORS settings
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        cors_credentials=True,
+        logger=False,
+        engineio_logger=False,
+        async_mode='threading'
+    )
+    print("[WebSocket] SocketIO initialized with CORS support")
 
     @socketio.on('connect')
     def handle_connect():

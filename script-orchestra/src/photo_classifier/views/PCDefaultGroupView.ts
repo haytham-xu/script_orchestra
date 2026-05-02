@@ -11,8 +11,6 @@ export default defineComponent({
   components: { MediaComponment },
   setup() {
     const currentIndex = ref(0)
-    // const emit = defineEmits(['update:currentIndex'])
-
     const isEditing = ref(false)
     const editValue = ref(1)
 
@@ -27,7 +25,6 @@ export default defineComponent({
       if (newIndex >= displayFileList!.value.length) {
         newIndex = displayFileList!.value.length - 1
       }
-      // emit('update:currentIndex', newIndex)
       isEditing.value = false
     }
 
@@ -54,12 +51,6 @@ export default defineComponent({
       router.push('/photo-classifier')
     }
 
-    // function emptyGroup() {
-    //   if(currentDisplayFile.value) {
-    //     currentDisplayFile.value.groupId = null
-    //   }
-    // }
-
     function nextFile() {
       if (currentIndex.value < displayFileList.value.length - 1) {
         currentIndex.value++
@@ -73,18 +64,23 @@ export default defineComponent({
     }
 
     function addToGroup(file: FileModel, index: number) {
-      if (!currentDisplayFile.value) return
+      if (!file) return
       photoClassifierStore.addFileToGroup(file, index)
       nextFile()
     }
 
     const applyGroup = async () => {
       await photoClassifierStore.applyFiles(displayFileList.value)
+
+      // 处理完成后，调整 currentIndex
+      if (currentIndex.value >= displayFileList.value.length) {
+        currentIndex.value = Math.max(0, displayFileList.value.length - 1)
+      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      // Ignore repeated key events to prevent duplicate operations
       if (event.repeat) {
-        ElMessage.warning('Get a repeat event!!')
         return
       }
       if (!currentDisplayFile.value) {
@@ -98,12 +94,14 @@ export default defineComponent({
         case 'ArrowRight':
           nextFile()
           break
-        // case 'Space':
         case 'KeyW':
-          photoClassifierStore.addFileToGroup(currentDisplayFile.value, currentLastGroupIndex.value)
-          nextFile()
+          if (currentLastGroupIndex.value >= 0) {
+            photoClassifierStore.addFileToGroup(currentDisplayFile.value, currentLastGroupIndex.value)
+            nextFile()
+          } else {
+            ElMessage.warning('Please create a group first (press Q)')
+          }
           break
-        // case 'Enter':
         case 'KeyQ':
           currentLastGroupIndex.value = photoClassifierStore.createNewGroupWithFile(
             currentDisplayFile.value,
@@ -122,14 +120,30 @@ export default defineComponent({
         case 'KeyC':
           currentDisplayFile.value.categoryTag = FileCategory.NORMAL
           break
-        // default:
-        //   if (/^Digit[0-9]$/.test(event.code)) {
-        //   }
       }
     }
 
     function updateDisplayFiles() {
-      currentIndex.value = 0
+      // Try to maintain the current file when switching filter modes
+      const currentFilePath = currentDisplayFile.value?.filePath
+
+      // Reset to beginning if there's no current file
+      if (!currentFilePath) {
+        currentIndex.value = 0
+        return
+      }
+
+      // Find the current file in the new filtered list
+      const newIndex = displayFileList.value.findIndex(f => f.filePath === currentFilePath)
+
+      if (newIndex >= 0) {
+        // Keep the same file if it's still in the filtered list
+        currentIndex.value = newIndex
+      } else {
+        // Otherwise, try to stay at a similar position or reset to 0
+        currentIndex.value = Math.min(currentIndex.value, displayFileList.value.length - 1)
+        if (currentIndex.value < 0) currentIndex.value = 0
+      }
     }
 
     function goToGroup(index: number) {
@@ -137,9 +151,7 @@ export default defineComponent({
     }
 
     onMounted(() => {
-      window.removeEventListener('keydown', handleKeyDown)
-      // window.addEventListener('keydown', handleKeyDown)
-      window.addEventListener('keydown', handleKeyDown, { once: false })
+      window.addEventListener('keydown', handleKeyDown)
     })
 
     onUnmounted(() => {
@@ -162,7 +174,6 @@ export default defineComponent({
       editValue,
       applyEdit,
       startEditing,
-      // emptyGroup,
       currentLastGroupIndex,
     }
   },

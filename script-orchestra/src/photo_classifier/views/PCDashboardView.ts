@@ -1,14 +1,10 @@
-
-
-import {defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { usePhotoClassifierStore } from '@/photo_classifier/service/PhotoClassifierStore';
-import {getFileList} from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { defineComponent, onMounted } from 'vue'
+import { usePhotoClassifierStore } from '@/photo_classifier/service/PhotoClassifierStore'
+import { getFileList } from '@/photo_classifier/service/PhotoClassifierService.ts'
 import { useRouter } from 'vue-router'
 
 export default defineComponent({
   name: 'PCDashboardView',
-  components: {},
   setup() {
     const router = useRouter()
     const photoClassifierStore = usePhotoClassifierStore()
@@ -30,14 +26,10 @@ export default defineComponent({
       initStore()
     })
 
-    onUnmounted(() => {
-
-    })
-
     return {
       photoClassifierStore,
       goToDefaultGroup,
-      goToGroup
+      goToGroup,
     }
   },
 })

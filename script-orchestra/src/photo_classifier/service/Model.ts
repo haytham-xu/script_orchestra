@@ -21,8 +21,8 @@ export interface FileModel {
     filePath: string
     fileStatus: FileStatus
     fileUrl: string
-    categoryTag: FileCategory
-    groupId: number
+    categoryTag: FileCategory | null
+    groupId: number | null
     fileType: FileType
 }
 
@@ -33,7 +33,6 @@ export enum GroupStatus {
 
 export interface Group {
   files: FileModel[]
-  // groupAvatar: FileModel
   groupStatus: GroupStatus
   groupId: number
 }

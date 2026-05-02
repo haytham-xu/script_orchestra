@@ -1,8 +1,8 @@
-import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
-import { FileCategory, FileStatus, FileType, GroupStatus } from '@/photo_classifier/service/Model.ts'
+import { FileCategory } from '@/photo_classifier/service/Model.ts'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
 
@@ -72,7 +72,6 @@ export default defineComponent({
     const setCategory = (category: FileCategory) => {
       if (currentFile.value) {
         currentFile.value.categoryTag = category
-        // goNextImage()
       }
     }
 
@@ -106,7 +105,6 @@ export default defineComponent({
 
     onMounted(() => {
       window.addEventListener('keydown', handleKeydowna)
-      // currentIndex.value = 0
     })
 
     onUnmounted(() => {
@@ -123,7 +121,6 @@ export default defineComponent({
       goPrevGroup,
       applyGroup,
       markAllNormal,
-      // setCategory
     }
   },
 })

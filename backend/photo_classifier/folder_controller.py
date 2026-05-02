@@ -2,7 +2,7 @@ import os
 import shutil
 from pathlib import Path
 from flask_restx import Namespace, Resource
-from flask import request, jsonify
+from flask import request
 from extensions import restx_api
 import config
 
@@ -16,7 +16,7 @@ class FolderResource(Resource):
         files = []
 
         if not os.path.exists(folder_abs_path):
-            return jsonify({"files": files})
+            return {"files": files}
 
         def collect_files_in_dir(base_path):
             collected = []
@@ -46,18 +46,45 @@ class FolderResource(Resource):
             return collected
 
         files.extend(collect_files_in_dir(folder_abs_path))
-        return jsonify({"files": files})
+        return {"files": files}
     
     def post(self):
-        """Move folder."""
+        """Move file to target folder."""
         data = request.json
-        source_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
-        target_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["targetFolderPath"].lstrip("/"))
-        if not os.path.exists(source_folder_path):
-            return "source folder not exist.", 404
-        if not os.path.exists(target_folder_path):
-            os.makedirs(target_folder_path)
-        shutil.move(source_folder_path, target_folder_path)
-        return {"message": "Accepted, processing started"}, 202
+        if not data:
+            return {"error": "No data provided"}, 400
+
+        if "sourceFolderPath" not in data or "targetFolderPath" not in data:
+            return {"error": "Missing required fields"}, 400
+
+        # sourceFolderPath is the filename, targetFolderPath is the category folder name
+        source_file_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, data["sourceFolderPath"].lstrip("/"))
+        target_folder_name = data["targetFolderPath"].lstrip("/")
+        target_folder_path = os.path.join(config.PHOTO_CLASSIFIER_ROOT_PATH, target_folder_name)
+
+        # Validate source file exists
+        if not os.path.exists(source_file_path):
+            return {"error": f"Source file does not exist: {data['sourceFolderPath']}"}, 404
+
+        if not os.path.isfile(source_file_path):
+            return {"error": f"Source is not a file: {data['sourceFolderPath']}"}, 400
+
+        try:
+            # Create target folder if it doesn't exist
+            if not os.path.exists(target_folder_path):
+                os.makedirs(target_folder_path)
+
+            # Move file to target folder
+            filename = os.path.basename(source_file_path)
+            destination_path = os.path.join(target_folder_path, filename)
+
+            # Check if destination already exists
+            if os.path.exists(destination_path):
+                return {"error": f"File already exists at destination: {destination_path}"}, 409
+
+            shutil.move(source_file_path, destination_path)
+            return {"message": f"File moved successfully to {target_folder_name}/{filename}"}, 202
+        except Exception as e:
+            return {"error": f"Failed to move file: {str(e)}"}, 500
     
 restx_api.add_namespace(ns)

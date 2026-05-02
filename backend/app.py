@@ -20,7 +20,9 @@ from file_git.websocket_service import init_socketio
 
 def create_app() -> Flask:
     app = Flask(__name__)
-    CORS(app)
+
+    CORS(app, resources={r"/*": {"origins": "*"}})
+
     restx_api.init_app(app)
 
     # Initialize WebSocket (optional - will gracefully fail if not installed)

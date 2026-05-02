@@ -8,9 +8,6 @@
         <el-switch v-model="showFiltered" active-text="未标识" @change="updateDisplayFiles" />
       </div>
 
-      <!-- <div class="header-progress">
-        {{ currentIndex + 1 }} / {{ displayFileList.length }} -- {{currentFile?.filePath }}
-      </div> -->
       <div class="header-progress">
         <span v-if="!isEditing" @click="startEditing">{{ currentIndex + 1 }}</span>
 
@@ -23,18 +20,14 @@
           @keyup.enter="applyEdit"
         />
         <span> / {{ displayFileList.length }}</span>
-        <span> -- {{ currentFile?.filePath }}</span>
-        <span> -- {{ currentLastGroupIndex }}</span>
-        <span> -- {{ photoClassifierStore.groupList.groupList.length }}</span>
-        <span> -- {{ photoClassifierStore.groupActionLock }}</span>
+        <span v-if="currentFile"> -- {{ currentFile.filePath }}</span>
       </div>
 
       <div class="header-right">
-        <!-- <el-button @click="emptyGroup">移除当前group</el-button> -->
         <span v-if="currentFile?.categoryTag != null"
-          >Category: {{ currentFile?.categoryTag }} |
+          >Category: {{ currentFile.categoryTag }} |
         </span>
-        <span v-if="currentFile?.groupId != null">Group: {{ currentFile?.groupId }}</span>
+        <span v-if="currentFile?.groupId != null">Group: {{ currentFile.groupId }}</span>
       </div>
     </div>
 
@@ -47,8 +40,8 @@
       direction="ltr"
       size="15%"
       :modal="false"
-      :show-close="false"
-      :with-header="false"
+      :show-close="true"
+      title="分组列表"
       :resizable="true"
     >
       <div class="group-list">
@@ -58,7 +51,6 @@
           class="group-card"
         >
           <div class="group-header">
-            <!-- <span>{{ index }}</span> -->
             <el-button
               v-if="currentFile"
               size="small"
@@ -152,7 +144,6 @@
 
 .group-avatar {
   max-width: 100%;
-  /* max-height: 120px; */
   object-fit: contain;
   border-radius: 4px;
 }
