@@ -76,7 +76,7 @@ export default defineComponent({
 
     async function removeSelectedFromGroup() {
       if (selectedFiles.value.length === 0) {
-        ElMessage.warning('请先选择要移除的图片')
+        ElMessage.warning({ message: '请先选择要移除的图片', offset: 20, duration: 1500, customClass: 'message-bottom' })
         return
       }
 

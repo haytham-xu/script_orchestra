@@ -6,3 +6,8 @@ html, body, #app {
   margin: 0;
   padding: 0;
 }
+
+.message-bottom {
+  bottom: 20px !important;
+  top: auto !important;
+}

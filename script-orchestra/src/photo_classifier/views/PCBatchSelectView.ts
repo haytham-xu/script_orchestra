@@ -76,23 +76,23 @@ export default defineComponent({
 
     function createNewGroupWithSelected() {
       if (selectedFiles.value.length === 0) {
-        ElMessage.warning('请先选择图片')
+        ElMessage.warning({ message: '请先选择图片', offset: 20, duration: 1500, customClass: 'message-bottom' })
         return
       }
 
       const newGroupId = photoClassifierStore.batchCreateNewGroup(selectedFiles.value)
-      ElMessage.success(`已创建新分组 ${newGroupId}，包含 ${selectedFiles.value.length} 张图片`)
+      ElMessage.success({ message: `已创建新分组 ${newGroupId}，包含 ${selectedFiles.value.length} 张图片`, offset: 20, duration: 1500, customClass: 'message-bottom' })
       clearSelection()
     }
 
     function addSelectedToGroup(groupIndex: number) {
       if (selectedFiles.value.length === 0) {
-        ElMessage.warning('请先选择图片')
+        ElMessage.warning({ message: '请先选择图片', offset: 20, duration: 1500, customClass: 'message-bottom' })
         return
       }
 
       photoClassifierStore.batchAddFilesToGroup(selectedFiles.value, groupIndex)
-      ElMessage.success(`已将 ${selectedFiles.value.length} 张图片添加到分组 ${groupIndex}`)
+      ElMessage.success({ message: `已将 ${selectedFiles.value.length} 张图片添加到分组 ${groupIndex}`, offset: 20, duration: 1500, customClass: 'message-bottom' })
       clearSelection()
       showGroupSelectDrawer.value = false
     }

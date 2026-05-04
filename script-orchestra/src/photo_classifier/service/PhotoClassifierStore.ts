@@ -59,7 +59,12 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           const oldGroup = this.groupList.groupList[file.groupId]
           if (oldGroup) {
             oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
-            ElMessage.info(`Moved file from Group ${file.groupId} to new group`)
+            ElMessage.info({
+              message: `Moved file from Group ${file.groupId} to new group`,
+              offset: 20,
+              duration: 1500,
+              customClass: 'message-bottom'
+            })
           }
         }
 
@@ -78,7 +83,12 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
         // Update currentGroupIndex to the newly created group
         this.currentGroupIndex = newGroupId
 
-        ElMessage.success('Added file to new Group: ' + newGroupId)
+        ElMessage.success({
+          message: 'Added file to new Group: ' + newGroupId,
+          offset: 20,
+          duration: 1500,
+          customClass: 'message-bottom'
+        })
         return newGroupId
       } finally {
         this.groupActionLock = false
@@ -110,7 +120,12 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           const oldGroup = this.groupList.groupList[file.groupId]
           if (oldGroup) {
             oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
-            ElMessage.info(`Moved file from Group ${file.groupId} to Group ${groupIndex}`)
+            ElMessage.info({
+              message: `Moved file from Group ${file.groupId} to Group ${groupIndex}`,
+              offset: 20,
+              duration: 1500,
+              customClass: 'message-bottom'
+            })
           }
         }
 
@@ -122,7 +137,12 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
         // Update currentGroupIndex to the group we just added to
         this.currentGroupIndex = groupIndex
 
-        ElMessage.success('Added file to Group: ' + groupIndex)
+        ElMessage.success({
+          message: 'Added file to Group: ' + groupIndex,
+          offset: 20,
+          duration: 1500,
+          customClass: 'message-bottom'
+        })
       } finally {
         this.groupActionLock = false
       }
@@ -146,17 +166,18 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
       )
 
       // 显示结果统计
+      const messageConfig = { offset: 20, duration: 1500, customClass: 'message-bottom' }
       if (successCount > 0) {
-        ElMessage.success(`成功处理 ${successCount} 个文件`)
+        ElMessage.success({ message: `成功处理 ${successCount} 个文件`, ...messageConfig })
       }
       if (skipCount > 0) {
-        ElMessage.info(`跳过 ${skipCount} 个文件（未标记或已处理）`)
+        ElMessage.info({ message: `跳过 ${skipCount} 个文件（未标记或已处理）`, ...messageConfig })
       }
       if (errorCount > 0) {
-        ElMessage.error(`处理失败 ${errorCount} 个文件`)
+        ElMessage.error({ message: `处理失败 ${errorCount} 个文件`, ...messageConfig })
       }
       if (successCount === 0 && skipCount === 0 && errorCount === 0) {
-        ElMessage.warning('没有需要处理的文件')
+        ElMessage.warning({ message: '没有需要处理的文件', ...messageConfig })
       }
     },
 
@@ -256,12 +277,13 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
 
         this.currentGroupIndex = groupIndex
 
+        const messageConfig = { offset: 20, duration: 1500, customClass: 'message-bottom' }
         if (movedCount > 0 && addedCount > 0) {
-          ElMessage.success(`移动了 ${movedCount} 张，新增了 ${addedCount} 张到分组 ${groupIndex}`)
+          ElMessage.success({ message: `移动了 ${movedCount} 张，新增了 ${addedCount} 张到分组 ${groupIndex}`, ...messageConfig })
         } else if (movedCount > 0) {
-          ElMessage.success(`移动了 ${movedCount} 张到分组 ${groupIndex}`)
+          ElMessage.success({ message: `移动了 ${movedCount} 张到分组 ${groupIndex}`, ...messageConfig })
         } else if (addedCount > 0) {
-          ElMessage.success(`添加了 ${addedCount} 张到分组 ${groupIndex}`)
+          ElMessage.success({ message: `添加了 ${addedCount} 张到分组 ${groupIndex}`, ...messageConfig })
         }
       } finally {
         this.groupActionLock = false
@@ -291,7 +313,12 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           file.groupId = null
         }
 
-        ElMessage.success(`已从分组 ${groupIndex} 移除 ${files.length} 张图片`)
+        ElMessage.success({
+          message: `已从分组 ${groupIndex} 移除 ${files.length} 张图片`,
+          offset: 20,
+          duration: 1500,
+          customClass: 'message-bottom'
+        })
       } finally {
         this.groupActionLock = false
       }
