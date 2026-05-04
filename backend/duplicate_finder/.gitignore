@@ -1,0 +1,4 @@
+# SQLite database
+.phash_cache.db
+*.db
+*.db-journal

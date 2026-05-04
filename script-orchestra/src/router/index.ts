@@ -6,6 +6,7 @@ import PCDefaultGroupView from '@/photo_classifier/views/PCDefaultGroupView.vue'
 import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
 import PCBatchSelectView from '@/photo_classifier/views/PCBatchSelectView.vue'
 import PCGroupBatchView from '@/photo_classifier/views/PCGroupBatchView.vue'
+import DuplicateFinderView from '@/duplicate_finder/views/DuplicateFinderView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
@@ -73,6 +74,11 @@ const router = createRouter({
       path: '/unzip',
       name: 'unzip',
       component: UnzipView
+    },
+    {
+      path: '/duplicate-finder',
+      name: 'duplicate-finder',
+      component: DuplicateFinderView
     },
     {
       path: '/file-git',

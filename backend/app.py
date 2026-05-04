@@ -9,6 +9,9 @@ import manga_classifier.file_controller
 # Import photo_classifier as independent module (using Blueprint)
 from photo_classifier import blueprint as photo_classifier_blueprint
 
+# Import duplicate_finder tool
+from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
+
 import manga_viewer.controller
 
 import pdf_converter.controller
@@ -16,7 +19,10 @@ import pdf_converter.controller
 import unzip.controller
 
 import file_git.controller
-from file_git.websocket_service import init_socketio
+
+# Import websocket services from both tools
+from file_git import websocket_service as fg_websocket
+from duplicate_finder import websocket_service as df_websocket
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -28,8 +34,16 @@ def create_app() -> Flask:
     # Register photo_classifier blueprint
     app.register_blueprint(photo_classifier_blueprint)
 
-    # Initialize WebSocket (optional - will gracefully fail if not installed)
-    socketio = init_socketio(app)
+    # Register duplicate_finder blueprint
+    app.register_blueprint(duplicate_finder_blueprint)
+
+    # Initialize WebSocket using duplicate_finder's init (both are identical)
+    # This creates a single shared socketio instance for all tools
+    socketio = df_websocket.init_socketio(app)
+
+    # Share the same socketio instance with file_git
+    if socketio:
+        fg_websocket.socketio = socketio
 
     return app, socketio
 

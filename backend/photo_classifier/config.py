@@ -10,7 +10,7 @@ from . import settings_manager
 HOST_URL = 'http://127.0.0.1:5001'
 
 # File type extensions
-IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')
+IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.heic')
 VIDEO_EXTS = ('.mp4', '.webm', '.mov', '.avi', '.mkv')
 
 # Root path - dynamically loaded from user_settings.json

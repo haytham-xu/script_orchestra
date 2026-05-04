@@ -24,6 +24,10 @@
       <template #header>Unzip</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/duplicate-finder')">
+      <template #header>Duplicate Finder</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
     <el-card @click="goTo('/file-git')">
       <template #header>File-Git</template>
       <!-- <p>Here is content</p> -->

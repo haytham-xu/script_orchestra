@@ -14,3 +14,5 @@ backend/file_git/repos.json
 backend/file_git/settings.json
 backend/photo_classifier/user_settings.json
 backend/photo_classifier/.thumbnail_cache
+backend/duplicate_finder/delete/
+backend/duplicate_finder/settings.json
