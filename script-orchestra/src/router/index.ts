@@ -4,6 +4,8 @@ import MangaClassifierView from '@/manga_classifier/views/MangaClassifierView.vu
 import PCDashboardView from '@/photo_classifier/views/PCDashboardView.vue'
 import PCDefaultGroupView from '@/photo_classifier/views/PCDefaultGroupView.vue'
 import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
+import PCBatchSelectView from '@/photo_classifier/views/PCBatchSelectView.vue'
+import PCGroupBatchView from '@/photo_classifier/views/PCGroupBatchView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
@@ -31,6 +33,11 @@ const router = createRouter({
       component: PCDashboardView,
     },
     {
+      path: '/photo-classifier/batch-select',
+      name: 'photo-classifier-batch-select',
+      component: PCBatchSelectView
+    },
+    {
       path: '/photo-classifier/default-group',
       name: 'photo-classifier-default',
       component: PCDefaultGroupView
@@ -40,6 +47,12 @@ const router = createRouter({
       name: 'photo-classifier-group',
       component: PCGroupView,
       props: true,
+    },
+    {
+      path: '/photo-classifier/group/:groupId/batch',
+      name: 'photo-classifier-group-batch',
+      component: PCGroupBatchView,
+      props: (route) => ({ groupId: Number(route.params.groupId) }),
     },
     {
       path: '/manga-viewer',

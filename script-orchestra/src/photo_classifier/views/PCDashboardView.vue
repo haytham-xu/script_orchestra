@@ -8,6 +8,12 @@
       <div class="header-right">
         <el-button
           type="primary"
+          @click="goToBatchSelect"
+        >
+          批量选择
+        </el-button>
+        <el-button
+          type="primary"
           :icon="Setting"
           @click="settingsDrawerVisible = true"
         >

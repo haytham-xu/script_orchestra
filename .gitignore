@@ -13,3 +13,4 @@ backend/unzip/config_local.py
 backend/file_git/repos.json
 backend/file_git/settings.json
 backend/photo_classifier/user_settings.json
+backend/photo_classifier/.thumbnail_cache

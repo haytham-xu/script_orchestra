@@ -173,5 +173,128 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
         return 'error'
       }
     },
+
+    // Batch operations for multi-select
+    batchCreateNewGroup(files: FileModel[]): number {
+      if (this.groupActionLock) {
+        ElMessage.warning('Operation in progress, please wait')
+        return -1
+      }
+      this.groupActionLock = true
+
+      try {
+        const newGroupId = this.groupList.groupList.length
+        const filesToAdd: FileModel[] = []
+
+        // Remove files from their old groups if needed
+        for (const file of files) {
+          if (file.fileStatus === FileStatus.IN_GROUP && file.groupId !== null) {
+            const oldGroup = this.groupList.groupList[file.groupId]
+            if (oldGroup) {
+              oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
+            }
+          }
+
+          file.fileStatus = FileStatus.IN_GROUP
+          file.groupId = newGroupId
+          filesToAdd.push(file)
+        }
+
+        const newGroup: Group = {
+          files: filesToAdd,
+          groupStatus: GroupStatus.IN_PROGRESS,
+          groupId: newGroupId,
+        }
+
+        this.groupList.groupList.push(newGroup)
+        this.currentGroupIndex = newGroupId
+
+        return newGroupId
+      } finally {
+        this.groupActionLock = false
+      }
+    },
+
+    batchAddFilesToGroup(files: FileModel[], groupIndex: number) {
+      if (this.groupActionLock) {
+        ElMessage.warning('Operation in progress, please wait')
+        return
+      }
+      this.groupActionLock = true
+
+      try {
+        const targetGroup = this.groupList.groupList[groupIndex]
+        if (!targetGroup) {
+          ElMessage.warning(`Group ${groupIndex} not found`)
+          return
+        }
+
+        let addedCount = 0
+        let movedCount = 0
+
+        for (const file of files) {
+          // Skip if already in target group
+          if (file.fileStatus === FileStatus.IN_GROUP && file.groupId === groupIndex) {
+            continue
+          }
+
+          // Remove from old group if needed
+          if (file.fileStatus === FileStatus.IN_GROUP && file.groupId !== null) {
+            const oldGroup = this.groupList.groupList[file.groupId]
+            if (oldGroup) {
+              oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
+              movedCount++
+            }
+          } else {
+            addedCount++
+          }
+
+          file.fileStatus = FileStatus.IN_GROUP
+          file.groupId = groupIndex
+          targetGroup.files.push(file)
+        }
+
+        this.currentGroupIndex = groupIndex
+
+        if (movedCount > 0 && addedCount > 0) {
+          ElMessage.success(`移动了 ${movedCount} 张，新增了 ${addedCount} 张到分组 ${groupIndex}`)
+        } else if (movedCount > 0) {
+          ElMessage.success(`移动了 ${movedCount} 张到分组 ${groupIndex}`)
+        } else if (addedCount > 0) {
+          ElMessage.success(`添加了 ${addedCount} 张到分组 ${groupIndex}`)
+        }
+      } finally {
+        this.groupActionLock = false
+      }
+    },
+
+    removeFilesFromGroup(files: FileModel[], groupIndex: number) {
+      if (this.groupActionLock) {
+        ElMessage.warning('Operation in progress, please wait')
+        return
+      }
+      this.groupActionLock = true
+
+      try {
+        const group = this.groupList.groupList[groupIndex]
+        if (!group) {
+          ElMessage.warning(`Group ${groupIndex} not found`)
+          return
+        }
+
+        const filePathsToRemove = files.map(f => f.filePath)
+        group.files = group.files.filter(f => !filePathsToRemove.includes(f.filePath))
+
+        // Update file status
+        for (const file of files) {
+          file.fileStatus = FileStatus.Pending
+          file.groupId = null
+        }
+
+        ElMessage.success(`已从分组 ${groupIndex} 移除 ${files.length} 张图片`)
+      } finally {
+        this.groupActionLock = false
+      }
+    },
   },
 })

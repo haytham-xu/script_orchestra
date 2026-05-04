@@ -29,6 +29,10 @@ export default defineComponent({
       router.push({ name: 'photo-classifier-default' })
     }
 
+    function goToBatchSelect() {
+      router.push({ name: 'photo-classifier-batch-select' })
+    }
+
     function goToGroup(group: any, index: number) {
       router.push({ name: 'photo-classifier-group', params: { groupId: index } })
     }
@@ -45,6 +49,7 @@ export default defineComponent({
     return {
       photoClassifierStore,
       goToDefaultGroup,
+      goToBatchSelect,
       goToGroup,
       settingsDrawerVisible,
       handlePathChanged,

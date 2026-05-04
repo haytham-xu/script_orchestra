@@ -3,6 +3,7 @@
     <div class="header">
       <div class="header-buttons">
         <el-button type="primary" @click="$router.push('/photo-classifier')">返回列表</el-button>
+        <el-button @click="goToBatchMode">批量管理</el-button>
         <el-button @click="goPrevGroup">上一组</el-button>
         <el-button @click="goNextGroup">下一组</el-button>
         <el-button @click="markAllNormal">Mark All Normal</el-button>

@@ -69,6 +69,10 @@ export default defineComponent({
       }
     }
 
+    const goToBatchMode = () => {
+      router.push(`/photo-classifier/group/${props.groupId}/batch`)
+    }
+
     const setCategory = (category: FileCategory) => {
       if (currentFile.value) {
         currentFile.value.categoryTag = category
@@ -122,6 +126,7 @@ export default defineComponent({
       goPrevImage,
       goNextGroup,
       goPrevGroup,
+      goToBatchMode,
       applyGroup,
       markAllNormal,
     }
