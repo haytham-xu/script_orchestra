@@ -1,13 +1,19 @@
 <template>
   <div class="dashboard-wrapper">
-    <!-- Settings Button -->
-    <div class="header-bar">
-      <el-button
-        type="primary"
-        :icon="Setting"
-        @click="settingsDrawerVisible = true"
-        circle
-      />
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <span class="header-title">Photo Classifier</span>
+      </div>
+      <div class="header-right">
+        <el-button
+          type="primary"
+          :icon="Setting"
+          @click="settingsDrawerVisible = true"
+        >
+          Settings
+        </el-button>
+      </div>
     </div>
 
     <!-- Dashboard Content -->
@@ -54,22 +60,44 @@
 
 <style scoped>
 .dashboard-wrapper {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100%;
 }
 
-.header-bar {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  z-index: 10;
+.header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  border-bottom: 1px solid #ddd;
+  background: #fff;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.header-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #333;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
 }
 
 .dashboard-container {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 20px;
   padding: 20px;
+  overflow-y: auto;
 }
 
 .group-card {

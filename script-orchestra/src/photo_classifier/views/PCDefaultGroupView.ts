@@ -5,10 +5,11 @@ import { useRouter } from 'vue-router'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import { FileCategory, FileStatus } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
+import PCSettingsDrawer from '@/photo_classifier/components/PCSettingsDrawer.vue'
 
 export default defineComponent({
   name: 'PCDefaultGroupView',
-  components: { MediaComponment },
+  components: { MediaComponment, PCSettingsDrawer },
   setup() {
     const currentIndex = ref(0)
     const isEditing = ref(false)
@@ -33,6 +34,7 @@ export default defineComponent({
 
     const showFiltered = ref(false)
     const drawerVisible = ref(false)
+    const settingsVisible = ref(false)
 
     const displayFileList = computed<FileModel[]>(() => {
       const files = photoClassifierStore.defaultGroup.files
@@ -119,6 +121,9 @@ export default defineComponent({
         case 'KeyC':
           currentDisplayFile.value.categoryTag = FileCategory.NORMAL
           break
+        case 'Enter':
+          applyGroup()
+          break
       }
     }
 
@@ -149,6 +154,13 @@ export default defineComponent({
       router.push(`/photo-classifier/group/${index}`)
     }
 
+    function markAllNormal() {
+      for (const file of displayFileList.value) {
+        file.categoryTag = FileCategory.NORMAL
+      }
+      ElMessage.success('All files marked as Normal')
+    }
+
     onMounted(() => {
       window.addEventListener('keydown', handleKeyDown)
     })
@@ -162,6 +174,7 @@ export default defineComponent({
       currentIndex,
       showFiltered,
       drawerVisible,
+      settingsVisible,
       displayFileList,
       currentFile: currentDisplayFile,
       goBack,
@@ -169,6 +182,7 @@ export default defineComponent({
       addToGroup,
       updateDisplayFiles,
       applyGroup,
+      markAllNormal,
       isEditing,
       editValue,
       applyEdit,

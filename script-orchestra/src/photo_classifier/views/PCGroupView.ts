@@ -100,6 +100,9 @@ export default defineComponent({
         case 'Backspace':
           setCategory(FileCategory.DEL)
           break
+        case 'Enter':
+          applyGroup()
+          break
       }
     }
 

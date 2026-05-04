@@ -54,9 +54,13 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
       this.groupActionLock = true
 
       try {
-        if (file.fileStatus == FileStatus.IN_GROUP) {
-          ElMessage.warning('File already in group: ' + file.groupId)
-          return file.groupId ?? -1
+        // If file is already in a group, remove it from that group first
+        if (file.fileStatus == FileStatus.IN_GROUP && file.groupId !== null) {
+          const oldGroup = this.groupList.groupList[file.groupId]
+          if (oldGroup) {
+            oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
+            ElMessage.info(`Moved file from Group ${file.groupId} to new group`)
+          }
         }
 
         const newGroupId = this.groupList.groupList.length
@@ -95,19 +99,22 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           return
         }
 
-        // If file is already in a group, remove it from that group first
-        if (file.fileStatus == FileStatus.IN_GROUP && file.groupId !== null && file.groupId !== groupIndex) {
-          const oldGroup = this.groupList.groupList[file.groupId]
-          if (oldGroup) {
-            oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
-          }
-        }
-
+        // If file is already in the same group, do nothing
         if (file.fileStatus == FileStatus.IN_GROUP && file.groupId === groupIndex) {
           ElMessage.warning('File already in this group')
           return
         }
 
+        // If file is in a different group, remove it from that group first
+        if (file.fileStatus == FileStatus.IN_GROUP && file.groupId !== null && file.groupId !== groupIndex) {
+          const oldGroup = this.groupList.groupList[file.groupId]
+          if (oldGroup) {
+            oldGroup.files = oldGroup.files.filter(f => f.filePath !== file.filePath)
+            ElMessage.info(`Moved file from Group ${file.groupId} to Group ${groupIndex}`)
+          }
+        }
+
+        // Add file to target group
         file.fileStatus = FileStatus.IN_GROUP
         file.groupId = groupIndex
         targetGroup.files.push(file)

@@ -5,6 +5,7 @@
         <el-button type="primary" @click="goBack">返回</el-button>
         <el-button type="success" @click="applyGroup">Apply</el-button>
         <el-button @click="drawerVisible = true">显示Group</el-button>
+        <el-button @click="markAllNormal">Mark All Normal</el-button>
         <el-switch v-model="showFiltered" active-text="未标识" @change="updateDisplayFiles" />
       </div>
 
@@ -30,7 +31,8 @@
         <span v-if="currentFile?.categoryTag != null"
           >Category: {{ currentFile.categoryTag }} |
         </span>
-        <span v-if="currentFile?.groupId != null">Group: {{ currentFile.groupId }}</span>
+        <span v-if="currentFile?.groupId != null">Group: {{ currentFile.groupId }} | </span>
+        <el-button size="small" @click="settingsVisible = true">Settings</el-button>
       </div>
     </div>
 
@@ -73,6 +75,8 @@
         </div>
       </div>
     </el-drawer>
+
+    <PCSettingsDrawer v-model:visible="settingsVisible" />
   </div>
 </template>
 
