@@ -45,13 +45,19 @@ function goTo(path: string) {
 
 <style scoped>
 .el-container {
-  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 20px;
 }
 .el-card {
-  margin: 20px;
-  width: 400px;
-  height: 247px;
-  max-width: 480px;
+  width: 385px;
+  height: 240px;
   cursor: pointer;
+  transition: all 0.2s;
+}
+.el-card:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 </style>
