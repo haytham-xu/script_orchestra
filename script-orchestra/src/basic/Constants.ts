@@ -19,3 +19,5 @@ export const UNZIP_ENDPOINT_EXTRACT = '/unzip/extract'
 
 export const FILE_GIT_ENDPOINT_REPOS = '/file-git/repos'
 export const FILE_GIT_ENDPOINT_SETTINGS = '/file-git/settings'
+
+export const ROADMAP_ENDPOINT_TASKS = '/roadmap/tasks'
