@@ -16,3 +16,6 @@ backend/photo_classifier/user_settings.json
 backend/photo_classifier/.thumbnail_cache
 backend/duplicate_finder/delete/
 backend/duplicate_finder/settings.json
+
+# Roadmap user data
+backend/roadmap/tasks.json

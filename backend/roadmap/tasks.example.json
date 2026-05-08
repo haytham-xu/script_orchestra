@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "example-1",
+      "title": "Welcome to Roadmap Kanban!",
+      "description": "This is an example task. You can edit or delete it.",
+      "status": "todo",
+      "priority": "medium",
+      "createdAt": "2026-05-06T12:00:00",
+      "order": 0
+    },
+    {
+      "id": "example-2",
+      "title": "Try dragging this task",
+      "description": "Drag and drop tasks between columns to change their status.",
+      "status": "in_progress",
+      "priority": "high",
+      "createdAt": "2026-05-06T12:01:00",
+      "order": 0
+    },
+    {
+      "id": "example-3",
+      "title": "Create your first task",
+      "description": "Click the + button in any column to create a new task.",
+      "status": "done",
+      "priority": "low",
+      "createdAt": "2026-05-06T12:02:00",
+      "order": 0
+    }
+  ]
+}

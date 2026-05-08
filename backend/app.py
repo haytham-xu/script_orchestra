@@ -12,6 +12,9 @@ from photo_classifier import blueprint as photo_classifier_blueprint
 # Import duplicate_finder tool
 from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
 
+# Import roadmap tool
+from roadmap.blueprint import blueprint as roadmap_blueprint
+
 import manga_viewer.controller
 
 import pdf_converter.controller
@@ -23,6 +26,9 @@ import file_git.controller
 # Import websocket services from both tools
 from file_git import websocket_service as fg_websocket
 from duplicate_finder import websocket_service as df_websocket
+
+# Import test API for Cypress testing
+from test_api import test_api
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -36,6 +42,12 @@ def create_app() -> Flask:
 
     # Register duplicate_finder blueprint
     app.register_blueprint(duplicate_finder_blueprint)
+
+    # Register roadmap blueprint
+    app.register_blueprint(roadmap_blueprint)
+
+    # Register test API blueprint
+    app.register_blueprint(test_api)
 
     # Initialize WebSocket using duplicate_finder's init (both are identical)
     # This creates a single shared socketio instance for all tools
