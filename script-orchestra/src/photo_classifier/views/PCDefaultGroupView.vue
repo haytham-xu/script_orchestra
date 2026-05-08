@@ -6,6 +6,7 @@
         <el-button type="success" @click="applyGroup">Apply</el-button>
         <el-button @click="drawerVisible = true">显示Group</el-button>
         <el-button @click="markAllNormal">Mark All Normal</el-button>
+        <el-button @click="goToBatchSelect">批量选择</el-button>
         <el-switch v-model="showFiltered" active-text="未标识" @change="updateDisplayFiles" />
       </div>
 
@@ -32,7 +33,6 @@
           >Category: {{ currentFile.categoryTag }} |
         </span>
         <span v-if="currentFile?.groupId != null">Group: {{ currentFile.groupId }} | </span>
-        <el-button size="small" @click="settingsVisible = true">Settings</el-button>
       </div>
     </div>
 
@@ -75,8 +75,6 @@
         </div>
       </div>
     </el-drawer>
-
-    <PCSettingsDrawer v-model:visible="settingsVisible" />
   </div>
 </template>
 

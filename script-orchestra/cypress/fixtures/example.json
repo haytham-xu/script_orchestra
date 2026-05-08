@@ -1,0 +1,22 @@
+{
+  "example": {
+    "name": "Test User",
+    "email": "test@example.com"
+  },
+  "photoClassifier": {
+    "testImages": [
+      {
+        "fileName": "_1010014.JPG",
+        "expectedCategory": "best"
+      },
+      {
+        "fileName": "_1010015.JPG",
+        "expectedCategory": "better"
+      },
+      {
+        "fileName": "_1010016.JPG",
+        "expectedCategory": "normal"
+      }
+    ]
+  }
+}

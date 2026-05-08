@@ -73,18 +73,16 @@ export default defineComponent({
       router.push(`/photo-classifier/group/${props.groupId}/batch`)
     }
 
-    const setCategory = (category: FileCategory) => {
-      if (currentFile.value) {
-        currentFile.value.categoryTag = category
-      }
-    }
-
     const applyGroup = async () => {
       await photoClassifierStore.applyFiles(displayFileList.value)
       goNextGroup()
     }
 
     function handleKeydowna(e: KeyboardEvent) {
+      // Cache currentFile to avoid multiple computed recalculations
+      const file = currentFile.value
+      if (!file) return
+
       switch (e.code) {
         case 'ArrowRight':
           goNextImage()
@@ -93,16 +91,16 @@ export default defineComponent({
           goPrevImage()
           break
         case 'KeyZ':
-          setCategory(FileCategory.BEST)
+          file.categoryTag = FileCategory.BEST
           break
         case 'KeyX':
-          setCategory(FileCategory.BETTER)
+          file.categoryTag = FileCategory.BETTER
           break
         case 'KeyC':
-          setCategory(FileCategory.NORMAL)
+          file.categoryTag = FileCategory.NORMAL
           break
         case 'Backspace':
-          setCategory(FileCategory.DEL)
+          file.categoryTag = FileCategory.DEL
           break
         case 'Enter':
           applyGroup()

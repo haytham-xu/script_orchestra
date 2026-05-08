@@ -107,7 +107,7 @@
 }
 
 .group-card {
-  width: 200px;
+  width: 400px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -124,7 +124,7 @@
 
 .card-image {
   width: 100%;
-  height: 150px;
+  height: 300px;
   object-fit: cover;
   border-radius: 6px;
 }

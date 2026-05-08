@@ -1,15 +1,14 @@
-import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import { FileCategory, FileStatus } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
-import PCSettingsDrawer from '@/photo_classifier/components/PCSettingsDrawer.vue'
 
 export default defineComponent({
   name: 'PCDefaultGroupView',
-  components: { MediaComponment, PCSettingsDrawer },
+  components: { MediaComponment },
   setup() {
     const currentIndex = ref(0)
     const isEditing = ref(false)
@@ -34,7 +33,6 @@ export default defineComponent({
 
     const showFiltered = ref(false)
     const drawerVisible = ref(false)
-    const settingsVisible = ref(false)
 
     const displayFileList = computed<FileModel[]>(() => {
       const files = photoClassifierStore.defaultGroup.files
@@ -52,15 +50,31 @@ export default defineComponent({
       router.push('/photo-classifier')
     }
 
+    function goToBatchSelect() {
+      router.push('/photo-classifier/batch-select')
+    }
+
     function nextFile() {
       if (currentIndex.value < displayFileList.value.length - 1) {
         currentIndex.value++
+
+        // Debug: Log all files after switching
+        console.log('[DefaultGroup] nextFile - After switching to index', currentIndex.value)
+        displayFileList.value.forEach((file, index) => {
+          console.log(`  [${index}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+        })
       }
     }
 
     function prevFile() {
       if (currentIndex.value > 0) {
         currentIndex.value--
+
+        // Debug: Log all files after switching
+        console.log('[DefaultGroup] prevFile - After switching to index', currentIndex.value)
+        displayFileList.value.forEach((file, index) => {
+          console.log(`  [${index}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+        })
       }
     }
 
@@ -71,7 +85,16 @@ export default defineComponent({
     }
 
     const applyGroup = async () => {
-      await photoClassifierStore.applyFiles(displayFileList.value)
+      // Cache displayFileList to avoid multiple computed recalculations
+      const fileList = displayFileList.value
+
+      // Debug: Log all files and their categoryTags before applying
+      console.log('[DefaultGroup] Apply - Files to process:')
+      fileList.forEach((file, index) => {
+        console.log(`  [${index}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+      })
+
+      await photoClassifierStore.applyFiles(fileList)
 
       // 处理完成后，调整 currentIndex
       if (currentIndex.value >= displayFileList.value.length) {
@@ -84,7 +107,10 @@ export default defineComponent({
       if (event.repeat) {
         return
       }
-      if (!currentDisplayFile.value) {
+
+      // Cache currentDisplayFile to avoid multiple computed recalculations
+      const currentFile = currentDisplayFile.value
+      if (!currentFile) {
         return
       }
 
@@ -98,7 +124,7 @@ export default defineComponent({
         case 'KeyW':
           // W: Add to current group index
           if (photoClassifierStore.currentGroupIndex >= 0) {
-            photoClassifierStore.addFileToGroup(currentDisplayFile.value, photoClassifierStore.currentGroupIndex)
+            photoClassifierStore.addFileToGroup(currentFile, photoClassifierStore.currentGroupIndex)
             nextFile()
           } else {
             ElMessage.warning('No group selected. Press Q to create a new group first.')
@@ -106,20 +132,26 @@ export default defineComponent({
           break
         case 'KeyQ':
           // Q: Always create a new group
-          photoClassifierStore.createNewGroupWithFile(currentDisplayFile.value)
+          photoClassifierStore.createNewGroupWithFile(currentFile)
           nextFile()
           break
         case 'Backspace':
-          currentDisplayFile.value.categoryTag = FileCategory.DEL
+          currentFile.categoryTag = FileCategory.DEL
           break
         case 'KeyZ':
-          currentDisplayFile.value.categoryTag = FileCategory.BEST
+          console.log('[DefaultGroup] KeyZ - Setting to BEST:', currentFile.filePath)
+          currentFile.categoryTag = FileCategory.BEST
+          console.log('[DefaultGroup] KeyZ - New categoryTag:', currentFile.categoryTag)
           break
         case 'KeyX':
-          currentDisplayFile.value.categoryTag = FileCategory.BETTER
+          console.log('[DefaultGroup] KeyX - Setting to BETTER:', currentFile.filePath)
+          currentFile.categoryTag = FileCategory.BETTER
+          console.log('[DefaultGroup] KeyX - New categoryTag:', currentFile.categoryTag)
           break
         case 'KeyC':
-          currentDisplayFile.value.categoryTag = FileCategory.NORMAL
+          console.log('[DefaultGroup] KeyC - Setting to NORMAL:', currentFile.filePath)
+          currentFile.categoryTag = FileCategory.NORMAL
+          console.log('[DefaultGroup] KeyC - New categoryTag:', currentFile.categoryTag)
           break
         case 'Enter':
           applyGroup()
@@ -155,9 +187,23 @@ export default defineComponent({
     }
 
     function markAllNormal() {
-      for (const file of displayFileList.value) {
+      // Cache displayFileList to avoid multiple computed recalculations
+      const fileList = displayFileList.value
+
+      console.log('[DefaultGroup] markAllNormal - Before:')
+      fileList.forEach((file, index) => {
+        console.log(`  [${index}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+      })
+
+      for (const file of fileList) {
         file.categoryTag = FileCategory.NORMAL
       }
+
+      console.log('[DefaultGroup] markAllNormal - After:')
+      fileList.forEach((file, index) => {
+        console.log(`  [${index}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+      })
+
       ElMessage.success('All files marked as Normal')
     }
 
@@ -174,10 +220,10 @@ export default defineComponent({
       currentIndex,
       showFiltered,
       drawerVisible,
-      settingsVisible,
       displayFileList,
       currentFile: currentDisplayFile,
       goBack,
+      goToBatchSelect,
       goToGroup,
       addToGroup,
       updateDisplayFiles,

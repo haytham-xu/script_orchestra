@@ -182,12 +182,16 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     },
 
     async applyFile(a_file: FileModel): Promise<'success' | 'skip' | 'error'> {
+      console.log('[Store] applyFile:', a_file.filePath, '- Status:', a_file.fileStatus, '- CategoryTag:', a_file.categoryTag)
+
       if (a_file.fileStatus == FileStatus.Done) return 'skip'
       if (!a_file.categoryTag) return 'skip'
 
       try {
+        console.log('[Store] applyFile - Calling postMoveFolder:', a_file.filePath, '->', a_file.categoryTag)
         await postMoveFolder(a_file.filePath, a_file.categoryTag)
         a_file.fileStatus = FileStatus.Done
+        console.log('[Store] applyFile - Success:', a_file.filePath)
         return 'success'
       } catch (error) {
         console.error(`Failed to move file ${a_file.filePath}:`, error)
