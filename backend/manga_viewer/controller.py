@@ -178,14 +178,22 @@ class FolderUpdateResource(Resource):
 @api.route("/manga-viewer/delete")
 class FolderDeleteResource(Resource):
     def post(self):
-        """Delete folders permanently"""
+        """Move folders to delete_paths (soft delete)"""
         data = request.json or {}
         folder_ids = data.get('folderIds', [])
 
         if not isinstance(folder_ids, list):
             return {"error": "folderIds must be a list"}, 400
 
-        deleted_count = 0
+        # Get delete path from settings
+        delete_root = settings_manager.get_setting('paths.delete_paths', '')
+        if not delete_root:
+            return {"error": "delete_paths not configured in settings"}, 400
+
+        delete_root_abs = os.path.abspath(delete_root)
+        os.makedirs(delete_root_abs, exist_ok=True)
+
+        moved_count = 0
         errors = []
 
         for folder_id in folder_ids:
@@ -196,16 +204,28 @@ class FolderDeleteResource(Resource):
 
             folder_path = folder.path
 
-            # Delete from filesystem
+            # Move to delete_paths (soft delete)
             if os.path.exists(folder_path):
                 try:
-                    if os.path.isdir(folder_path):
-                        shutil.rmtree(folder_path)
-                    else:
-                        os.remove(folder_path)
-                    deleted_count += 1
+                    dst = os.path.join(delete_root_abs, os.path.basename(folder_path))
+
+                    # Handle name collision - add suffix
+                    if os.path.exists(dst):
+                        base_name = os.path.basename(folder_path)
+                        counter = 1
+                        while os.path.exists(dst):
+                            name_parts = os.path.splitext(base_name)
+                            if name_parts[1]:  # has extension
+                                new_name = f"{name_parts[0]}_deleted_{counter}{name_parts[1]}"
+                            else:
+                                new_name = f"{base_name}_deleted_{counter}"
+                            dst = os.path.join(delete_root_abs, new_name)
+                            counter += 1
+
+                    shutil.move(folder_path, dst)
+                    moved_count += 1
                 except Exception as e:
-                    errors.append(f"Failed to delete {folder_path}: {str(e)}")
+                    errors.append(f"Failed to move {folder_path}: {str(e)}")
                     continue
 
             # Remove from index
@@ -213,19 +233,19 @@ class FolderDeleteResource(Resource):
                 del Repository.manga_index.folders[folder_id]
 
         # Rebuild metadata and save
-        if deleted_count > 0:
+        if moved_count > 0:
             rebuildMeta()
             Repository.save_index()
 
         if errors:
             return {
-                "deleted": deleted_count,
+                "moved": moved_count,
                 "errors": errors
             }, 207  # Multi-status
 
         return {
-            "deleted": deleted_count,
-            "message": f"Successfully deleted {deleted_count} folder(s)"
+            "moved": moved_count,
+            "message": f"Successfully moved {moved_count} folder(s) to delete_paths"
         }, 200
 
 
