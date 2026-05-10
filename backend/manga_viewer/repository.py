@@ -1,39 +1,62 @@
 import os
 import json
 import uuid
-import config
 from basic.flex_sort import flex_natsort
 from manga_viewer.model.metadata import Metadata
 from manga_viewer.model.manga_index import MangaIndex
 from manga_viewer.model.folder import Folder
 from manga_viewer.model.tag import Tag
+from manga_viewer.settings_manager import settings_manager
+from manga_viewer import config
 from urllib.parse import quote
 
 class Repository:
     manga_index: MangaIndex = None
-    index_path = os.path.join(config.MANGA_VIEWER_INDEX_PATH, "manga_index.json")
-    scan_paths = config.MANGA_VIEWER_SCAN_FOLDER
-    ignore_scan_paths = config.MANGA_VIEWER_IGNORE_SCAN_FOLDER
+
+    @staticmethod
+    def get_index_path():
+        """Get index path from settings."""
+        index_path = settings_manager.get_setting('paths.index_path', '')
+        if not index_path:
+            raise ValueError("Index path not configured in settings")
+        return os.path.join(index_path, "manga_index.json")
+
+    @staticmethod
+    def get_scan_paths():
+        """Get scan paths from settings."""
+        return settings_manager.get_setting('paths.scan_folders', [])
+
+    @staticmethod
+    def get_ignore_scan_paths():
+        """Get ignore scan paths from settings."""
+        return settings_manager.get_setting('paths.ignore_scan_folders', [])
+
+    @staticmethod
+    def get_root_path():
+        """Get root path from settings."""
+        return settings_manager.get_setting('paths.root_path', '')
 
     @staticmethod
     def load_index():
-        if not os.path.exists(Repository.index_path):
+        index_path = Repository.get_index_path()
+        if not os.path.exists(index_path):
             Repository.manga_index = MangaIndex()
         try:
-            with open(Repository.index_path, "r", encoding="utf-8") as f:
+            with open(index_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             Repository.manga_index = MangaIndex.from_dict(data)
         except (json.JSONDecodeError, OSError):
             Repository.manga_index = MangaIndex()
-            with open(Repository.index_path, "w", encoding="utf-8") as f:
+            with open(index_path, "w", encoding="utf-8") as f:
                 json.dump(
                     Repository.manga_index.to_dict(), f, ensure_ascii=False, indent=2
                 )
 
     @staticmethod
     def save_index():
-        os.makedirs(os.path.dirname(Repository.index_path), exist_ok=True)
-        with open(Repository.index_path, "w", encoding="utf-8") as f:
+        index_path = Repository.get_index_path()
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
+        with open(index_path, "w", encoding="utf-8") as f:
             json.dump(Repository.manga_index.to_dict(), f, ensure_ascii=False, indent=2)
 
     @staticmethod
@@ -45,7 +68,7 @@ class Repository:
                 lower = a_file_name.lower()
                 if lower.endswith(config.IMAGE_EXTS) or lower.endswith(
                     config.VIDEO_EXTS
-                ):
+                ) or lower.endswith(config.PDF_EXTS):
                     a_file_path = os.path.join(base_path, a_file_name)
                     try:
                         a_file_stats = os.stat(a_file_path)
@@ -66,12 +89,12 @@ class Repository:
         except OSError:
             return file_list
 
-        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
+        root_abs = os.path.abspath(Repository.get_root_path())
 
         root_files = [f for f in entries if os.path.isfile(os.path.join(folder_path, f))]
         for fname in flex_natsort(root_files):
             lower = fname.lower()
-            if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS):
+            if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS) or lower.endswith(config.PDF_EXTS):
                 full_path = os.path.join(folder_path, fname)
                 try:
                     rel_path = os.path.relpath(full_path, root_abs)
@@ -93,7 +116,7 @@ class Repository:
             ]
             for sf in flex_natsort(sub_files):
                 lower = sf.lower()
-                if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS):
+                if lower.endswith(config.IMAGE_EXTS) or lower.endswith(config.VIDEO_EXTS) or lower.endswith(config.PDF_EXTS):
                     full_path = os.path.join(subdir_path, sf)
                     try:
                         rel_path = os.path.relpath(full_path, root_abs)
@@ -116,14 +139,14 @@ class Repository:
         }
 
         existing_paths = []
-        for to_scan_path in Repository.scan_paths:
+        for to_scan_path in Repository.get_scan_paths():
             if not to_scan_path or not os.path.isdir(to_scan_path):
                 continue
             for a_name in os.listdir(to_scan_path):
                 a_folder_path = os.path.join(to_scan_path, a_name)
                 if (
                     os.path.isdir(a_folder_path)
-                    and a_folder_path not in Repository.ignore_scan_paths
+                    and a_folder_path not in Repository.get_ignore_scan_paths()
                 ):
                     existing_paths.append(a_folder_path)
 

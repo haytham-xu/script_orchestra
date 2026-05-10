@@ -1,10 +1,11 @@
 from flask_restx import Namespace, Resource
 from flask import request, jsonify, send_file, make_response
 import os
-import config
 import shutil
+import random
 from extensions import restx_api
 from manga_viewer.repository import Repository
+from manga_viewer.settings_manager import settings_manager
 from urllib.parse import unquote
 
 api = Namespace("")
@@ -16,7 +17,7 @@ class MangaIndexResource(Resource):
         index_dict = Repository.manga_index.to_dict()
         for folder_id, folder_data in index_dict.get("folders", {}).items():
             folder_data["file_list"] = []
-        return jsonify(index_dict)
+        return index_dict
 
 
 @api.route("/manga-viewer/files-url-list")
@@ -24,16 +25,16 @@ class FolderScanResource(Resource):
     def get(self):
         folder_id = request.args.get("folderId", "").strip()
         if folder_id not in Repository.manga_index.folders:
-            return jsonify([])
+            return []
 
         file_url_list = Repository.manga_index.folders[folder_id].file_list
-        return jsonify(file_url_list)
+        return file_url_list
 
 
 @api.route("/manga-viewer/file/<path:filepath>")
 class FileResource(Resource):
     def get(self, filepath):
-        root_abs = os.path.abspath(config.MANGA_VIEWER_ROOT_PATH)
+        root_abs = os.path.abspath(Repository.get_root_path())
         rel_url_path = unquote(filepath).lstrip("/\\")
         first_seg = rel_url_path.split("/")[0]
         if os.path.isabs(rel_url_path) or (":" in first_seg):
@@ -46,12 +47,41 @@ class FileResource(Resource):
             return "Not Found", 404
         return make_response(send_file(safe_path))
 
+@api.route("/manga-viewer/index/random")
+class MangaIndexRandomResource(Resource):
+    def get(self):
+        """Get random folders from manga index."""
+        # Get count from settings, allow query param to override
+        default_count = settings_manager.get_setting('random.count', 10)
+        count = request.args.get('count', default=default_count, type=int)
+
+        Repository.load_index()
+        all_folders = list(Repository.manga_index.folders.values())
+
+        # Limit count to available folders
+        count = min(count, len(all_folders))
+
+        # Randomly select folders
+        random_folders = random.sample(all_folders, count) if count > 0 else []
+
+        # Convert to dict
+        folders_dict = {f.id: f.to_dict() for f in random_folders}
+        for folder_data in folders_dict.values():
+            folder_data["file_list"] = []
+
+        result = {
+            "folders": folders_dict,
+            "metadata": Repository.manga_index.metadata.to_dict() if Repository.manga_index.metadata else {}
+        }
+        return result
+
+
 @api.route("/manga-viewer/folders/<path:classifier_mode>")
 class FolderUpdateResource(Resource):
     def put(self, classifier_mode: bool=True):
         folder_models = request.json or {}
         if not isinstance(folder_models, dict):
-            return jsonify({"error": "invalid payload"}), 400
+            return {"error": "invalid payload"}, 400
 
         main_map = {"bou": "boutique", "arch": "archive"}
         invalid_chars = set('<>:"/\\|?*')
@@ -103,7 +133,7 @@ class FolderUpdateResource(Resource):
 
             if cat_main_changed or cat_sub_changed:
                 if cat_main_new == "del":
-                    delete_root = config.MANGA_VIEWER_DELETE_PATHS
+                    delete_root = settings_manager.get_setting('paths.delete_paths', '')
                     if delete_root:
                         delete_root_abs = os.path.abspath(delete_root)
                         os.makedirs(delete_root_abs, exist_ok=True)
@@ -117,7 +147,7 @@ class FolderUpdateResource(Resource):
                         del Repository.manga_index.folders[folder_id]
                     continue
                 else:
-                    base_root = config.MANGA_VIEWER_CATEGORY_PATHS
+                    base_root = settings_manager.get_setting('paths.category_paths', '')
                     if base_root:
                         base_root_abs = os.path.abspath(base_root)
                         main_folder_name = main_map.get(cat_main_new, cat_main_new)
@@ -145,6 +175,60 @@ class FolderUpdateResource(Resource):
         return '', 204
 
 
+@api.route("/manga-viewer/delete")
+class FolderDeleteResource(Resource):
+    def post(self):
+        """Delete folders permanently"""
+        data = request.json or {}
+        folder_ids = data.get('folderIds', [])
+
+        if not isinstance(folder_ids, list):
+            return {"error": "folderIds must be a list"}, 400
+
+        deleted_count = 0
+        errors = []
+
+        for folder_id in folder_ids:
+            folder = Repository.manga_index.folders.get(folder_id)
+            if not folder:
+                errors.append(f"Folder {folder_id} not found")
+                continue
+
+            folder_path = folder.path
+
+            # Delete from filesystem
+            if os.path.exists(folder_path):
+                try:
+                    if os.path.isdir(folder_path):
+                        shutil.rmtree(folder_path)
+                    else:
+                        os.remove(folder_path)
+                    deleted_count += 1
+                except Exception as e:
+                    errors.append(f"Failed to delete {folder_path}: {str(e)}")
+                    continue
+
+            # Remove from index
+            if folder_id in Repository.manga_index.folders:
+                del Repository.manga_index.folders[folder_id]
+
+        # Rebuild metadata and save
+        if deleted_count > 0:
+            rebuildMeta()
+            Repository.save_index()
+
+        if errors:
+            return {
+                "deleted": deleted_count,
+                "errors": errors
+            }, 207  # Multi-status
+
+        return {
+            "deleted": deleted_count,
+            "message": f"Successfully deleted {deleted_count} folder(s)"
+        }, 200
+
+
 def rebuildMeta():
     auth_set, cat_main_set, cat_sub_set = set(), set(), set()
     for f in Repository.manga_index.folders.values():
@@ -157,6 +241,54 @@ def rebuildMeta():
     Repository.manga_index.metadata.auth = sorted(auth_set)
     Repository.manga_index.metadata.category_main = sorted(cat_main_set)
     Repository.manga_index.metadata.category_sub = sorted(cat_sub_set)
+
+
+@api.route("/manga-viewer/open-folder")
+class OpenFolderResource(Resource):
+    def post(self):
+        """Open folder in system file manager"""
+        import subprocess
+        import platform
+
+        data = request.json or {}
+        folder_id = data.get('folderId', '')
+
+        if not folder_id:
+            return {"error": "folderId is required"}, 400
+
+        folder = Repository.manga_index.folders.get(folder_id)
+        if not folder:
+            return {"error": f"Folder {folder_id} not found"}, 404
+
+        folder_path = folder.path
+        if not os.path.exists(folder_path):
+            return {"error": f"Folder path does not exist: {folder_path}"}, 404
+
+        try:
+            system = platform.system()
+            if system == 'Darwin':
+                subprocess.Popen(['open', folder_path])
+            elif system == 'Windows':
+                subprocess.Popen(['explorer', folder_path])
+            elif system == 'Linux':
+                subprocess.Popen(['xdg-open', folder_path])
+            else:
+                return {"error": f"Unsupported operating system: {system}"}, 400
+
+            return {"message": "Folder opened successfully"}, 200
+        except Exception as e:
+            return {"error": f"Failed to open folder: {str(e)}"}, 500
+
+
+@api.route("/manga-viewer/refresh-index")
+class RefreshIndexResource(Resource):
+    def post(self):
+        """Refresh manga index by scanning folders"""
+        try:
+            Repository.refresh_index()
+            return {"message": "Index refreshed successfully"}, 200
+        except Exception as e:
+            return {"error": f"Failed to refresh index: {str(e)}"}, 500
 
 
 restx_api.add_namespace(api)

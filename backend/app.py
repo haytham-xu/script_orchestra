@@ -16,6 +16,7 @@ from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
 from roadmap.blueprint import blueprint as roadmap_blueprint
 
 import manga_viewer.controller
+import manga_viewer.settings_controller
 
 import pdf_converter.controller
 

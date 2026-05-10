@@ -51,7 +51,7 @@ function goTo(path: string) {
   padding: 20px;
 }
 .el-card {
-  width: 385px;
+  width: 375px;
   height: 240px;
   cursor: pointer;
   transition: all 0.2s;

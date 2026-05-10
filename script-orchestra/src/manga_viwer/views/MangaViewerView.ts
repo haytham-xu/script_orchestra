@@ -1,17 +1,45 @@
-
 import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick, toRefs } from 'vue'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
+import { useRouter } from 'vue-router'
 import type { FolderModel } from '../service/Model'
-import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading } from 'element-plus'
+import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading, ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, RefreshLeft, Folder } from '@element-plus/icons-vue'
+import { openFolder, refreshIndex } from '@/manga_viwer/service/Service'
+import * as pdfjsLib from 'pdfjs-dist'
+// Import worker as URL
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+
+// Configure PDF.js worker - use local worker file
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 export default defineComponent({
   name: 'MangaViewerView',
   components: { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup },
   setup() {
+    console.log('[MangaViewer] Component setup started')
+
     //  Basic
     // -------------------------------------------------------------------------------------------------------
     const store = useMangaIndexStore()
-    const { hotTags } = toRefs(store)
+    const router = useRouter()
+    const { hotTags, isRandomMode, orSearchKeywords } = toRefs(store)
+
+    // Navigation
+    // -------------------------------------------------------------------------------------------------------
+    function goToRandom() {
+      router.push('/manga-viewer/random')
+    }
+
+    function goToSettings() {
+      router.push('/manga-viewer/settings')
+    }
+
+    function goToBatch() {
+      router.push('/manga-viewer/batch')
+    }
+
+    // Random功能 (removed, now in separate view)
+    // -------------------------------------------------------------------------------------------------------
 
     // Lazy load on scroll
     // -------------------------------------------------------------------------------------------------------
@@ -106,6 +134,12 @@ export default defineComponent({
         if (!f.files || f.files.length === 0) {
           await store.fetchFolderFiles(f)
         }
+        // Pre-render PDF first pages for preview
+        const pdfs = (f.files || []).filter(isPdf)
+        for (const pdf of pdfs) {
+          if (loadingToken.value !== token) return
+          await renderPdfFirstPage(pdf)
+        }
       }
     }
 
@@ -117,17 +151,106 @@ export default defineComponent({
     // Preivew Imag/Video
     // -------------------------------------------------------------------------------------------------------
     function previewImages(f: FolderModel): string[] {
-      const exts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
+      const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
       const list: string[] = (f.files || []).filter((p: string) => {
         const e = p.split('.').pop()?.toLowerCase() || ''
-        return exts.includes(e)
+        return imageExts.includes(e) || e === 'pdf'
       })
       return list.slice(0, 3)
+    }
+
+    function getPreviewSrc(url: string): string {
+      if (isPdf(url)) {
+        return pdfFirstPages.value[url] || ''
+      }
+      return url
     }
 
     const dialogVisible = ref(false)
     const dialogFolder = ref<FolderModel | null>(null)
     const dialogFiles = computed(() => dialogFolder.value?.files || [])
+    const pdfPages = ref<Record<string, string[]>>({})
+    const pdfFirstPages = ref<Record<string, string>>({})
+
+    async function renderPdfFirstPage(pdfUrl: string) {
+      if (pdfFirstPages.value[pdfUrl]) {
+        return pdfFirstPages.value[pdfUrl]
+      }
+
+      try {
+        const loadingTask = pdfjsLib.getDocument(pdfUrl)
+        const pdf = await loadingTask.promise
+        const page = await pdf.getPage(1)
+        const viewport = page.getViewport({ scale: 1.5 })
+
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        if (!context) return ''
+
+        canvas.height = viewport.height
+        canvas.width = viewport.width
+
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise
+
+        const dataUrl = canvas.toDataURL()
+        pdfFirstPages.value[pdfUrl] = dataUrl
+        return dataUrl
+      } catch (e) {
+        console.error('Failed to render PDF first page:', pdfUrl, e)
+        return ''
+      }
+    }
+
+    async function renderPdfPages(pdfUrl: string) {
+      if (pdfPages.value[pdfUrl]) {
+        console.log(`PDF already rendered: ${pdfUrl}, pages: ${pdfPages.value[pdfUrl].length}`)
+        return pdfPages.value[pdfUrl]
+      }
+
+      try {
+        console.log(`Starting to render PDF: ${pdfUrl}`)
+        const loadingTask = pdfjsLib.getDocument(pdfUrl)
+        const pdf = await loadingTask.promise
+        console.log(`PDF loaded, total pages: ${pdf.numPages}`)
+
+        const pages: string[] = []
+
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          console.log(`Rendering page ${pageNum}/${pdf.numPages}`)
+          const page = await pdf.getPage(pageNum)
+          const viewport = page.getViewport({ scale: 1.5 })
+
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('2d')
+          if (!context) {
+            console.error(`Failed to get canvas context for page ${pageNum}`)
+            continue
+          }
+
+          canvas.height = viewport.height
+          canvas.width = viewport.width
+
+          await page.render({
+            canvasContext: context,
+            viewport: viewport
+          }).promise
+
+          const dataUrl = canvas.toDataURL()
+          pages.push(dataUrl)
+          console.log(`Page ${pageNum} rendered, data URL length: ${dataUrl.length}`)
+        }
+
+        console.log(`All ${pages.length} pages rendered for ${pdfUrl}`)
+        pdfPages.value[pdfUrl] = pages
+        return pages
+      } catch (e) {
+        console.error('Failed to render PDF:', pdfUrl, e)
+        return []
+      }
+    }
 
     function openModal(f: FolderModel) {
       dialogFolder.value = f
@@ -135,6 +258,13 @@ export default defineComponent({
       if (!f.files || f.files.length === 0) {
         store.fetchFolderFiles(f)
       }
+      // Pre-render PDFs
+      nextTick(async () => {
+        const pdfs = (f.files || []).filter(isPdf)
+        for (const pdf of pdfs) {
+          await renderPdfPages(pdf)
+        }
+      })
     }
     function closeModal() {
       dialogVisible.value = false
@@ -143,6 +273,7 @@ export default defineComponent({
 
     function isImage(p: string) { return /\.(jpe?g|png|gif|webp|bmp|tiff)$/i.test(p) }
     function isVideo(p: string) { return /\.(mp4|webm|mov|mkv|avi|flv)$/i.test(p) }
+    function isPdf(p: string) { return /\.pdf$/i.test(p) }
 
     // Code for Update
     // -------------------------------------------------------------------------------------------------------
@@ -180,6 +311,15 @@ export default defineComponent({
         }
         return
       }
+
+      // Validate that both category_main and category_sub are selected
+      if (field === 'category_main' || field === 'category_sub') {
+        if (!f.tags.category_main || !f.tags.category_sub) {
+          ElMessage.error('Please select both Main Category and Sub Category')
+          return
+        }
+      }
+
       f.initialized = true
       store.addChangeId(f.id)
       if (field === 'category_main' || field === 'category_sub') {
@@ -273,7 +413,66 @@ export default defineComponent({
     async function applyChanges() {
       const loading = ElLoading.service({ lock: true, text: 'Applying...', background: 'rgba(0,0,0,0.4)' })
       await store.applyChanges(classifierModeEnabled.value)
+
+      // Apply deletions if any
+      if (store.deleteIdSet.size > 0) {
+        try {
+          await ElMessageBox.confirm(
+            `确定要删除 ${store.deleteIdSet.size} 个文件夹吗？此操作不可恢复！`,
+            '确认删除',
+            { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+          )
+          await store.applyDeletion()
+          ElMessage.success(`已删除 ${store.deleteIdSet.size} 个文件夹`)
+        } catch {
+          ElMessage.info('已取消删除操作')
+        }
+      }
+
       loading.close()
+    }
+
+    // Deletion
+    // -------------------------------------------------------------------------------------------------------
+    function markForDeletion(folderId: string) {
+      store.markForDeletion(folderId)
+    }
+
+    function unmarkForDeletion(folderId: string) {
+      store.unmarkForDeletion(folderId)
+    }
+
+    // Open Folder
+    // -------------------------------------------------------------------------------------------------------
+    async function handleOpenFolder(folderId: string) {
+      try {
+        await openFolder(folderId)
+        // Silently succeed - folder is opened in background
+      } catch (e) {
+        // Silently ignore errors - the folder is likely already opened
+        // The backend subprocess opens the folder but may return before completion
+        console.debug('Open folder request sent:', folderId)
+      }
+    }
+
+    // Refresh Index
+    // -------------------------------------------------------------------------------------------------------
+    const refreshLoading = ref(false)
+    async function handleRefreshIndex() {
+      refreshLoading.value = true
+      try {
+        await refreshIndex()
+        ElMessage.success('索引刷新成功')
+        // Reload the index after refresh
+        await store.loadIndex()
+        currentPage.value = 1
+        fetchFilesForCurrentPage()
+      } catch (e) {
+        ElMessage.error('索引刷新失败')
+        console.error('Failed to refresh index:', e)
+      } finally {
+        refreshLoading.value = false
+      }
     }
 
     // Life Cycle
@@ -288,6 +487,10 @@ export default defineComponent({
     })
 
     return {
+      // Navigation
+      goToRandom,
+      goToSettings,
+      goToBatch,
       // Search with Hot Tags
       searchTokens,
       searchInput,
@@ -312,6 +515,7 @@ export default defineComponent({
       pagedFolders,
       canLoadMore,
       previewImages,
+      getPreviewSrc,
       openModal,
       closeModal,
       dialogVisible,
@@ -319,6 +523,9 @@ export default defineComponent({
       dialogFiles,
       isImage,
       isVideo,
+      isPdf,
+      pdfPages,
+      pdfFirstPages,
       // Switch Initialized
       showUninitializedOnly,
       sizeSortEnabled,
@@ -326,6 +533,20 @@ export default defineComponent({
       classifierModeEnabled,
       // Applying
       applyChanges,
+      // Deletion
+      markForDeletion,
+      unmarkForDeletion,
+      // Open Folder
+      handleOpenFolder,
+      // Refresh Index
+      handleRefreshIndex,
+      refreshLoading,
+      // Icons
+      Delete,
+      RefreshLeft,
+      Folder,
+      // Store (for checking deleteIdSet)
+      store,
     }
   }
 })

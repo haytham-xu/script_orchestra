@@ -8,6 +8,9 @@ import PCBatchSelectView from '@/photo_classifier/views/PCBatchSelectView.vue'
 import PCGroupBatchView from '@/photo_classifier/views/PCGroupBatchView.vue'
 import DuplicateFinderView from '@/duplicate_finder/views/DuplicateFinderView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
+import MangaViewerRandomView from '@/manga_viwer/views/RandomView.vue'
+import MangaViewerSettingsView from '@/manga_viwer/views/SettingsView.vue'
+import MangaViewerBatchView from '@/manga_viwer/views/BatchOperationView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
@@ -59,6 +62,21 @@ const router = createRouter({
       path: '/manga-viewer',
       name: 'manga-viewer',
       component: MangaViewerView
+    },
+    {
+      path: '/manga-viewer/random',
+      name: 'manga-viewer-random',
+      component: MangaViewerRandomView
+    },
+    {
+      path: '/manga-viewer/settings',
+      name: 'manga-viewer-settings',
+      component: MangaViewerSettingsView
+    },
+    {
+      path: '/manga-viewer/batch',
+      name: 'manga-viewer-batch',
+      component: MangaViewerBatchView
     },
     {
       path: '/roadmap',

@@ -4,6 +4,12 @@
 
     <div class="header-bar">
       <div class="search-area">
+        <div class="nav-buttons">
+          <el-button type="primary" size="small" @click="goToRandom">🎲 Random</el-button>
+          <el-button type="success" size="small" @click="goToBatch">🛠️ Batch</el-button>
+          <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
+          <el-button type="warning" size="small" @click="handleRefreshIndex" :loading="refreshLoading">🔄 Refresh</el-button>
+        </div>
         <div class="search-tags">
           <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
           <el-input v-model="searchInput" class="search-tag-input" @keyup.enter="addSearchToken" />
@@ -16,21 +22,58 @@
         <el-switch v-model="showUninitializedOnly" inactive-text="all" active-text="" />
         <el-switch v-model="nameSortEnabled" inactive-text="name" active-text="" />
         <el-switch v-model="classifierModeEnabled" inactive-text="classifier" active-text="" />
-        <el-button class="apply-button" type="primary" @click="applyChanges">Apply</el-button>
+        <el-button class="apply-button" type="primary" @click="applyChanges">
+          Apply
+          <span v-if="store.deleteIdSet.size > 0" style="margin-left: 5px;">
+            & 删除({{ store.deleteIdSet.size }})
+          </span>
+        </el-button>
       </div>
     </div>
 
     <div class="folder-list">
-      <div v-for="f in pagedFolders" :key="f.id" class="folder-line">
+      <div v-for="f in pagedFolders" :key="f.id" class="folder-line" :class="{ 'marked-for-deletion': store.deleteIdSet.has(f.id) }">
         <!-- Folder Line - Left -->
         <div class="line-left">
 
-          <!-- FolderName -->
-          <div v-if="editingNameFlag === f.id" class="edit-inline">
-            <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
-              @blur="commitEdit('name', f)" />
+          <!-- FolderName with Delete Icon -->
+          <div class="name-row">
+            <div v-if="editingNameFlag === f.id" class="edit-inline">
+              <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
+                @blur="commitEdit('name', f)" />
+            </div>
+            <div v-else class="name-cell" :title="f.name" @click="startEdit(f)">{{ f.name }}</div>
+
+            <!-- Delete Icon - Right of Name -->
+            <div class="delete-icon-wrapper">
+              <el-button
+                :icon="Folder"
+                circle
+                size="small"
+                type="default"
+                @click.stop="handleOpenFolder(f.id)"
+                title="Open Folder"
+              />
+              <el-button
+                v-if="!store.deleteIdSet.has(f.id)"
+                :icon="Delete"
+                circle
+                size="small"
+                type="danger"
+                @click.stop="markForDeletion(f.id)"
+                title="标记删除"
+              />
+              <el-button
+                v-else
+                :icon="RefreshLeft"
+                circle
+                size="small"
+                type="info"
+                @click.stop="unmarkForDeletion(f.id)"
+                title="取消删除"
+              />
+            </div>
           </div>
-          <div v-else class="name-cell" :title="f.name" @click="startEdit(f)">{{ f.name }}</div>
 
           <div class="tags-row">
             <!-- path /size / number -->
@@ -53,7 +96,6 @@
               <el-radio-group v-model="f.tags.category_main" @change="commitEdit('category_main', f)">
                 <el-radio size="small" label="bou">bou</el-radio>
                 <el-radio size="small" label="arch">arch</el-radio>
-                <el-radio size="small" label="del">del</el-radio>
               </el-radio-group>
             </div>
 
@@ -130,7 +172,7 @@
         <div class="line-right" @click="openModal(f)">
           <div v-if="previewImages(f).length" class="thumbs">
             <div v-for="(img, i) in previewImages(f)" :key="img + i" class="thumb" :title="img">
-              <img :src="img" />
+              <img :src="getPreviewSrc(img)" v-if="getPreviewSrc(img)" />
             </div>
           </div>
           <div v-else class="no-thumb">无图片预览</div>
@@ -142,11 +184,20 @@
     <el-dialog v-model="dialogVisible" :show-close="false" :close-on-click-modal="true" :close-on-press-escape="false"
       width="800px" :title="dialogFolder?.name || ''" destroy-on-close class="manga-center-dialog" top="0vh">
       <div class="dialog-body">
-        <div v-for="(p, i) in dialogFiles" :key="p + i" class="media-item">
-          <img v-if="isImage(p)" :src="p" :alt="p" />
-          <video v-else-if="isVideo(p)" :src="p" controls preload="metadata"></video>
-          <div v-else class="unknown">{{ p }}</div>
-        </div>
+        <template v-for="(p, i) in dialogFiles" :key="p + i">
+          <div v-if="isImage(p)" class="media-item">
+            <img :src="p" :alt="p" />
+          </div>
+          <div v-else-if="isPdf(p)" v-for="(pageUrl, pageIdx) in pdfPages[p]" :key="p + '-page-' + pageIdx" class="media-item">
+            <img :src="pageUrl" :alt="`${p} - Page ${pageIdx + 1}`" />
+          </div>
+          <div v-else-if="isVideo(p)" class="media-item">
+            <video :src="p" controls preload="metadata"></video>
+          </div>
+          <div v-else class="media-item">
+            <div class="unknown">{{ p }}</div>
+          </div>
+        </template>
       </div>
     </el-dialog>
   </div>
@@ -181,6 +232,14 @@
 .search-area {
   display: flex;
   flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .search-tags {
@@ -231,8 +290,29 @@
   box-shadow: 0 2px 6px -2px rgba(40, 48, 63, .12);
 }
 
+.folder-line.marked-for-deletion {
+  border: 2px solid #f56c6c;
+  background: #fef0f0;
+  opacity: 0.8;
+}
+
 .folder-line:hover {
   box-shadow: 0 4px 14px -4px rgba(40, 48, 63, .22);
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.name-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+.delete-icon-wrapper {
+  flex-shrink: 0;
 }
 
 .line-left {

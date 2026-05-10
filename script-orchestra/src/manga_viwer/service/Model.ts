@@ -34,3 +34,42 @@ export interface UpdateFolderPayload {
   name?: string
   tags?: Partial<TagData>
 }
+
+// Settings Models
+export interface CategoryOption {
+  id: string
+  label: string
+  target_folder?: string
+}
+
+export interface RandomSettings {
+  count: number
+  enabled: boolean
+}
+
+export interface CategoriesSettings {
+  main: CategoryOption[]
+  sub: CategoryOption[]
+}
+
+export interface DisplaySettings {
+  page_size: number
+  show_uninitialized_only: boolean
+  default_sort: string
+}
+
+export interface PathsSettings {
+  root_path: string
+  index_path: string
+  scan_folders: string[]
+  ignore_scan_folders: string[]
+  category_paths: string
+  delete_paths: string
+}
+
+export interface MangaViewerSettings {
+  random: RandomSettings
+  categories: CategoriesSettings
+  display: DisplaySettings
+  paths: PathsSettings
+}
