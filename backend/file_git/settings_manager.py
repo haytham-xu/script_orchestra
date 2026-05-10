@@ -11,6 +11,7 @@ class SettingsManager:
     """Manages global file-git settings"""
 
     SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'settings.json')
+    DEFAULT_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'default_settings.json')
 
     @staticmethod
     def _load_settings() -> Dict:
@@ -28,20 +29,26 @@ class SettingsManager:
 
     @staticmethod
     def _get_default_settings() -> Dict:
-        """Get default settings"""
-        return {
-            "baidu_cloud": {
-                "app_id": "",
-                "secret_key": "",
-                "app_key": "",
-                "sign_code": "",
-                "expires_in": "",
-                "refresh_token": "",
-                "access_token": ""
-            },
-            "use_mock_baidu": True,  # Default to mock for testing
-            "default_password": ""  # Default encryption password
-        }
+        """Get default settings from JSON file"""
+        try:
+            with open(SettingsManager.DEFAULT_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading default settings: {e}")
+            # Minimal fallback
+            return {
+                "baidu_cloud": {
+                    "app_id": "",
+                    "secret_key": "",
+                    "app_key": "",
+                    "sign_code": "",
+                    "expires_in": "",
+                    "refresh_token": "",
+                    "access_token": ""
+                },
+                "use_mock_baidu": True,
+                "default_password": ""
+            }
 
     @staticmethod
     def get_settings() -> Dict:
