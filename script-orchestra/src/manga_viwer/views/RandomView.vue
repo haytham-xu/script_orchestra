@@ -1,68 +1,218 @@
 <template>
-  <div class="viewer-root">
-    <div class="header-bar">
-      <div class="header-left">
-        <el-button type="default" size="small" @click="goBack">← Back</el-button>
-        <el-button type="primary" size="small" @click="loadRandomFolders" style="margin-left: 12px;">
-          🎲 Random
-        </el-button>
-        <span v-if="isRandomMode" style="margin-left: 12px; color: #606266;">
-          Base: {{ baseFolderCount }} | Total: {{ totalFolderCount }}
-        </span>
-      </div>
 
+  <div class="viewer-root">
+
+    <div class="header-bar">
+      <div class="search-area">
+        <div class="nav-buttons">
+          <el-button type="default" size="small" @click="goBack">← Back</el-button>
+          <el-button type="primary" size="small" @click="loadRandomFolders">
+            🎲 Random
+          </el-button>
+        </div>
+        <div class="or-search-section">
+          <el-input
+            v-model="orSearchInput"
+            placeholder="OR keyword"
+            size="small"
+            @keyup.enter="addOrSearchKeyword"
+            style="width: 200px;"
+          >
+            <template #append>
+              <el-button @click="addOrSearchKeyword">Add</el-button>
+            </template>
+          </el-input>
+          <el-button
+            v-if="orSearchKeywords.length > 0"
+            size="small"
+            @click="clearOrSearch"
+          >
+            Clear ({{ orSearchKeywords.length }})
+          </el-button>
+          <span v-if="isRandomMode" style="margin-left: 12px; color: #606266; font-size: 12px;">
+            Base: {{ baseFolderCount }} | Total: {{ pagedFolders.length }}
+          </span>
+        </div>
+      </div>
       <div class="header-right">
-        <el-input
-          v-model="orSearchInput"
-          placeholder="OR keyword"
-          size="small"
-          @keyup.enter="addOrSearchKeyword"
-          style="width: 200px; margin-right: 8px;"
-        >
-          <template #append>
-            <el-button @click="addOrSearchKeyword">Add</el-button>
-          </template>
-        </el-input>
-        <el-button
-          v-if="orSearchKeywords.length > 0"
-          size="small"
-          @click="clearOrSearch"
-        >
-          Clear ({{ orSearchKeywords.length }})
+        <el-switch v-model="sizeSortEnabled" inactive-text="size" active-text="" />
+        <el-switch v-model="showUninitializedOnly" inactive-text="all" active-text="" />
+        <el-switch v-model="nameSortEnabled" inactive-text="name" active-text="" />
+        <el-switch v-model="classifierModeEnabled" inactive-text="classifier" active-text="" />
+        <el-button class="apply-button" type="primary" @click="applyChanges">
+          Apply
+          <span v-if="store.deleteIdSet.size > 0" style="margin-left: 5px;">
+            & 删除({{ store.deleteIdSet.size }})
+          </span>
         </el-button>
       </div>
     </div>
 
     <div class="folder-list">
-      <div v-for="f in pagedFolders" :key="f.id" class="folder-line">
+      <div v-for="f in pagedFolders" :key="f.id" class="folder-line" :class="{ 'marked-for-deletion': store.deleteIdSet.has(f.id) }">
+        <!-- Folder Line - Left -->
         <div class="line-left">
-          <div class="name-cell" :title="f.name">{{ f.name }}</div>
+
+          <!-- FolderName with Delete Icon -->
+          <div class="name-row">
+            <div v-if="editingNameFlag === f.id" class="edit-inline">
+              <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
+                @blur="commitEdit('name', f)" />
+            </div>
+            <div v-else class="name-cell" :title="f.name" @click="startEdit(f)">{{ f.name }}</div>
+
+            <!-- Delete Icon - Right of Name -->
+            <div class="delete-icon-wrapper">
+              <el-button
+                :icon="Folder"
+                circle
+                size="small"
+                type="default"
+                @click.stop="handleOpenFolder(f.id)"
+                title="Open Folder"
+              />
+              <el-button
+                v-if="!store.deleteIdSet.has(f.id)"
+                :icon="Delete"
+                circle
+                size="small"
+                type="danger"
+                @click.stop="markForDeletion(f.id)"
+                title="标记删除"
+              />
+              <el-button
+                v-else
+                :icon="RefreshLeft"
+                circle
+                size="small"
+                type="info"
+                @click.stop="unmarkForDeletion(f.id)"
+                title="取消删除"
+              />
+            </div>
+          </div>
+
           <div class="tags-row">
+            <!-- path /size / number -->
             <div class="tags-group"><span class="label">Path:</span> <span class="label">{{ f.path }}</span></div>
             <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024/ 1024) }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
+
+            <!-- mosaic -->
+            <div class="tags-group">
+              <span class="label">Mosaic:</span>
+              <el-radio-group v-model="f.tags.mosaic" @change="commitEdit('mosaic', f)">
+                <el-radio size="small" label="true">true</el-radio>
+                <el-radio size="small" label="false">false</el-radio>
+              </el-radio-group>
+            </div>
+
+            <!-- category_main -->
+            <div class="tags-group">
+              <span class="label">Category Main:</span>
+              <el-radio-group v-model="f.tags.category_main" @change="commitEdit('category_main', f)">
+                <el-radio size="small" label="bou">bou</el-radio>
+                <el-radio size="small" label="arch">arch</el-radio>
+              </el-radio-group>
+            </div>
+
+            <!-- category_sub -->
+            <div class="tags-group">
+              <span class="label">Category Sub:</span>
+              <el-radio-group v-model="f.tags.category_sub" @change="commitEdit('category_sub', f)">
+                <el-radio size="small" label="hf">hf</el-radio>
+                <el-radio size="small" label="ntr">ntr</el-radio>
+                <el-radio size="small" label="3d">3d</el-radio>
+                <el-radio size="small" label="hm">hm</el-radio>
+                <el-radio size="small" label="q">q</el-radio>
+                <el-radio size="small" label="m">m</el-radio>
+                <el-radio size="small" label="ll">ll</el-radio>
+                <el-radio size="small" label="lo">lo</el-radio>
+                <el-radio size="small" label="xz">xz</el-radio>
+                <el-radio size="small" label="zr">zr</el-radio>
+                <el-radio size="small" label="sp">sp</el-radio>
+                <el-radio size="small" label="tr">tr</el-radio>
+              </el-radio-group>
+            </div>
+
+            <!-- 动态标签组: auth / name(tags.name) / custom / others -->
+            <div class="tags-group">
+              <span class="label">Auth:</span>
+              <el-tag type="primary" v-for="(t, i) in f.tags.auth" :key="f.id + 'auth' + i" closable
+                @close="removeTag(f, 'auth', i)">{{ t
+                }}</el-tag>
+
+              <el-input v-if="isTagInputVisible(f, 'auth')" :ref="setTagInputRef(f.id, 'auth')"
+                v-model="tagInputValues[f.id].auth" size="small" class="tag-input"
+                @keyup.enter="handleTagInputConfirm(f, 'auth')" @blur="handleTagInputConfirm(f, 'auth')" />
+              <span v-else class="tag placeholder" @click="showTagInput(f, 'auth')">+</span>
+            </div>
+
+            <!-- Name -->
+            <div class="tags-group">
+              <span class="label">Name:</span>
+              <el-tag type="success" v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable
+                @close="removeTag(f, 'name', i)">{{ t }}</el-tag>
+              <el-input v-if="isTagInputVisible(f, 'name')" :ref="setTagInputRef(f.id, 'name')"
+                v-model="tagInputValues[f.id].name" size="small" class="tag-input"
+                @keyup.enter="handleTagInputConfirm(f, 'name')" @blur="handleTagInputConfirm(f, 'name')" />
+              <span v-else class="tag placeholder" @click="showTagInput(f, 'name')">+</span>
+            </div>
+
+            <!-- Custom -->
+            <div class="tags-group">
+              <span class="label">Custom:</span>
+              <el-tag type="warning" v-for="(t, i) in f.tags.custom" :key="f.id + 'custom' + i" closable
+                @close="removeTag(f, 'custom', i)">{{ t }}</el-tag>
+              <el-input v-if="isTagInputVisible(f, 'custom')" :ref="setTagInputRef(f.id, 'custom')"
+                v-model="tagInputValues[f.id].custom" size="small" class="tag-input"
+                @keyup.enter="handleTagInputConfirm(f, 'custom')" @blur="handleTagInputConfirm(f, 'custom')" />
+              <span v-else class="tag placeholder" @click="showTagInput(f, 'custom')">+</span>
+            </div>
+
+            <!-- Others -->
+            <div class="tags-group">
+              <span class="label">Others:</span>
+              <el-tag v-for="(t, i) in f.tags.others" :key="f.id + 'others' + i" type="danger" closable
+                @close="removeTag(f, 'others', i)">{{ t }}</el-tag>
+              <el-input v-if="isTagInputVisible(f, 'others')" :ref="setTagInputRef(f.id, 'others')"
+                v-model="tagInputValues[f.id].others" size="small" class="tag-input"
+                @keyup.enter="handleTagInputConfirm(f, 'others')" @blur="handleTagInputConfirm(f, 'others')" />
+              <span v-else class="tag placeholder" @click="showTagInput(f, 'others')">+</span>
+            </div>
           </div>
         </div>
 
+        <!-- Preview -->
         <div class="line-right" @click="openModal(f)">
           <div v-if="previewImages(f).length" class="thumbs">
             <div v-for="(img, i) in previewImages(f)" :key="img + i" class="thumb" :title="img">
-              <img :src="img" />
+              <img :src="getPreviewSrc(img)" v-if="getPreviewSrc(img)" />
             </div>
           </div>
           <div v-else class="no-thumb">无图片预览</div>
         </div>
       </div>
+
     </div>
 
-    <el-dialog v-model="dialogVisible" :show-close="false" :close-on-click-modal="true" width="800px" :title="dialogFolder?.name || ''" destroy-on-close class="manga-center-dialog" top="0vh">
+    <el-dialog v-model="dialogVisible" :show-close="false" :close-on-click-modal="true" :close-on-press-escape="false"
+      width="800px" :title="dialogFolder?.name || ''" destroy-on-close class="manga-center-dialog" top="0vh">
       <div class="dialog-body">
-        <div v-for="(p, i) in dialogFiles" :key="p + i" class="media-item">
-          <img v-if="isImage(p)" :src="p" :alt="p" />
-          <video v-else-if="isVideo(p)" :src="p" controls preload="metadata"></video>
-          <embed v-else-if="isPdf(p)" :src="p" type="application/pdf" class="pdf-embed" />
-          <div v-else class="unknown">{{ p }}</div>
-        </div>
+        <template v-for="(p, i) in dialogFiles" :key="p + i">
+          <div v-if="isImage(p)" class="media-item">
+            <img :src="p" :alt="p" />
+          </div>
+          <div v-else-if="isPdf(p)" v-for="(pageUrl, pageIdx) in pdfPages[p]" :key="p + '-page-' + pageIdx" class="media-item">
+            <img :src="pageUrl" :alt="`${p} - Page ${pageIdx + 1}`" />
+          </div>
+          <div v-else-if="isVideo(p)" class="media-item">
+            <video :src="p" controls preload="metadata"></video>
+          </div>
+          <div v-else class="media-item">
+            <div class="unknown">{{ p }}</div>
+          </div>
+        </template>
       </div>
     </el-dialog>
   </div>
@@ -78,6 +228,26 @@
   padding: 16px;
 }
 
+.search-area {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.or-search-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .header-bar {
   position: sticky;
   top: 0;
@@ -88,20 +258,18 @@
   z-index: 5;
   display: flex;
   justify-content: space-between;
-  align-items: center;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
+  align-items: flex-start;
 }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-top: 4px;
   flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #5a636d;
 }
 
 .folder-list {
@@ -120,8 +288,36 @@
   box-shadow: 0 2px 6px -2px rgba(40, 48, 63, .12);
 }
 
+.folder-line.marked-for-deletion {
+  border: 2px solid #f56c6c;
+  background: #fef0f0;
+  opacity: 0.8;
+}
+
 .folder-line:hover {
   box-shadow: 0 4px 14px -4px rgba(40, 48, 63, .22);
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.name-cell {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #313c4c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 12px;
+}
+
+.delete-icon-wrapper {
+  flex-shrink: 0;
 }
 
 .line-left {
@@ -131,7 +327,8 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 15px;
+  padding: 15px 15px 15px;
+  margin: 0;
 }
 
 .line-right {
@@ -143,16 +340,6 @@
   min-width: 0;
   margin-right: 15px;
   cursor: pointer;
-}
-
-.name-cell {
-  font-size: 15px;
-  font-weight: 600;
-  color: #313c4c;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 12px;
 }
 
 .tags-row {
@@ -173,19 +360,47 @@
   color: #66717d;
 }
 
+.tag {
+  font-size: 11px;
+  padding: 3px 8px 4px;
+  background: #f0f4f8;
+  border: 1px solid #d9e1e8;
+  border-radius: 16px;
+  color: #3f4c5a;
+  line-height: 1.3;
+}
+
+.tag.placeholder {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px 3px;
+  line-height: 1;
+  min-width: 22px;
+  text-align: center;
+  cursor: pointer;
+  background: #f7f9fb;
+  border: 1px dashed #cfd6dd;
+  color: #54606c;
+}
+
+.tag.placeholder:hover {
+  background: #eef3f6;
+  border-color: #b6c1c9;
+}
+
 .thumbs {
   display: flex;
   flex-direction: row;
   gap: 12px;
   align-items: center;
-  height: 180px;
+  height: 250px;
   max-width: 520px;
 }
 
 .thumb {
-  height: 180px;
+  height: 250px;
   width: auto;
-  max-width: 140px;
+  max-width: 160px;
   flex: 0 0 auto;
   border: 1px solid #d9e1e8;
   border-radius: 10px;
@@ -197,7 +412,7 @@
 }
 
 .thumb img {
-  max-height: 180px;
+  max-height: 250px;
   max-width: 100%;
   width: auto;
   height: auto;
@@ -214,12 +429,34 @@
   border-radius: 8px;
 }
 
+.manga-center-dialog {
+  padding: 0;
+}
+
 .dialog-body {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   scrollbar-width: thin;
+}
+
+.dialog-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dialog-body::-webkit-scrollbar-track {
+  background: #f1f3f5;
+  border-radius: 4px;
+}
+
+.dialog-body::-webkit-scrollbar-thumb {
+  background: #bfc6cc;
+  border-radius: 4px;
+}
+
+.dialog-body::-webkit-scrollbar-thumb:hover {
+  background: #a5adb4;
 }
 
 .media-item {
@@ -253,9 +490,8 @@
   word-break: break-all;
 }
 
-.pdf-embed {
-  width: 100%;
-  height: 800px;
-  border: none;
+.apply-button {
+  margin-left: 20px;
+  width: 120px;
 }
 </style>
