@@ -197,11 +197,28 @@ class TestDataInitializer:
             draw = ImageDraw.Draw(img)
 
             # Try system fonts, otherwise use default
+            # Try to load fonts (cross-platform)
             try:
-                font_huge = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 120)
-                font_title = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 48)
-                font_normal = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 32)
-                font_small = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 24)
+                # Try macOS fonts first
+                if os.path.exists('/System/Library/Fonts/Helvetica.ttc'):
+                    font_huge = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 120)
+                    font_title = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 48)
+                    font_normal = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 32)
+                    font_small = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 24)
+                # Try Windows fonts
+                elif os.path.exists('C:\\Windows\\Fonts\\arial.ttf'):
+                    font_huge = ImageFont.truetype('C:\\Windows\\Fonts\\arial.ttf', 120)
+                    font_title = ImageFont.truetype('C:\\Windows\\Fonts\\arial.ttf', 48)
+                    font_normal = ImageFont.truetype('C:\\Windows\\Fonts\\arial.ttf', 32)
+                    font_small = ImageFont.truetype('C:\\Windows\\Fonts\\arial.ttf', 24)
+                # Try Linux fonts
+                elif os.path.exists('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'):
+                    font_huge = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 120)
+                    font_title = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 48)
+                    font_normal = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 32)
+                    font_small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
+                else:
+                    raise Exception("No system fonts found")
             except:
                 font_huge = ImageFont.load_default()
                 font_title = ImageFont.load_default()

@@ -269,7 +269,12 @@ class OpenFolderResource(Resource):
             if system == 'Darwin':
                 subprocess.Popen(['open', folder_path])
             elif system == 'Windows':
-                subprocess.Popen(['explorer', folder_path])
+                # Windows: use os.startfile for better path handling, or explorer with proper quoting
+                try:
+                    os.startfile(folder_path)
+                except AttributeError:
+                    # os.startfile only exists on Windows, fallback to subprocess
+                    subprocess.Popen(['explorer', os.path.normpath(folder_path)])
             elif system == 'Linux':
                 subprocess.Popen(['xdg-open', folder_path])
             else:
