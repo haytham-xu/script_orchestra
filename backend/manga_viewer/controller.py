@@ -7,6 +7,8 @@ from extensions import restx_api
 from manga_viewer.repository import Repository
 from manga_viewer.settings_manager import settings_manager
 from urllib.parse import unquote
+from natsort import natsorted
+import uuid
 
 api = Namespace("")
 
@@ -167,8 +169,8 @@ class FolderUpdateResource(Resource):
                                 pass
                     old_folder.tags.category_main = cat_main_new
                     old_folder.tags.category_sub = cat_sub_new
-                    if classifier_mode:
-                        del Repository.manga_index.folders[folder_id]
+                    # Don't delete from index - just update the path and tags
+                    # The folder should remain in the index with the same ID
 
         rebuildMeta()
         Repository.save_index()
@@ -314,6 +316,177 @@ class RefreshIndexResource(Resource):
             return {"message": "Index refreshed successfully"}, 200
         except Exception as e:
             return {"error": f"Failed to refresh index: {str(e)}"}, 500
+
+
+@api.route("/manga-viewer/import/scan")
+class ImportScanResource(Resource):
+    def post(self):
+        """Scan a path for manga folders to import"""
+        data = request.json or {}
+        scan_path = data.get('path', '')
+
+        if not scan_path:
+            return {"error": "path is required"}, 400
+
+        scan_path_abs = os.path.abspath(scan_path)
+
+        if not os.path.exists(scan_path_abs):
+            return {"error": f"Path does not exist: {scan_path}"}, 404
+
+        if not os.path.isdir(scan_path_abs):
+            return {"error": f"Path is not a directory: {scan_path}"}, 400
+
+        try:
+            # Get all subdirectories (one level only)
+            entries = os.listdir(scan_path_abs)
+            folders = []
+
+            for entry in entries:
+                entry_path = os.path.join(scan_path_abs, entry)
+                if os.path.isdir(entry_path):
+                    # Get all image files recursively
+                    image_files = []
+                    for root, _, files in os.walk(entry_path):
+                        for file in files:
+                            ext = os.path.splitext(file)[1].lower()
+                            if ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.pdf']:
+                                file_path = os.path.join(root, file)
+                                # Convert to relative URL path
+                                rel_path = os.path.relpath(file_path, Repository.get_root_path())
+                                url_path = '/' + rel_path.replace(os.sep, '/')
+                                image_files.append(url_path)
+
+                    # Natural sort the files
+                    image_files = natsorted(image_files)
+
+                    # Calculate folder size
+                    folder_size = 0
+                    for root, _, files in os.walk(entry_path):
+                        for file in files:
+                            try:
+                                folder_size += os.path.getsize(os.path.join(root, file))
+                            except:
+                                pass
+
+                    folders.append({
+                        'id': str(uuid.uuid4()),
+                        'name': entry,
+                        'path': entry_path,
+                        'files': image_files,
+                        'size': folder_size,
+                        'number': len(image_files)
+                    })
+
+            # Sort folders by name
+            folders = natsorted(folders, key=lambda x: x['name'])
+
+            return {
+                'folders': folders,
+                'count': len(folders)
+            }, 200
+
+        except Exception as e:
+            return {"error": f"Failed to scan path: {str(e)}"}, 500
+
+
+@api.route("/manga-viewer/import/move")
+class ImportMoveResource(Resource):
+    def post(self):
+        """Move/import a folder to manga viewer managed directory"""
+        data = request.json or {}
+        source_path = data.get('sourcePath', '')
+        folder_data = data.get('folderData', {})
+
+        if not source_path:
+            return {"error": "sourcePath is required"}, 400
+
+        if not os.path.exists(source_path):
+            return {"error": f"Source path does not exist: {source_path}"}, 404
+
+        # Get target path from settings
+        category_paths = settings_manager.get_setting('paths.category_paths', '')
+        if not category_paths:
+            # Fallback to root_path
+            category_paths = settings_manager.get_setting('paths.root_path', '')
+
+        if not category_paths:
+            return {"error": "category_paths not configured in settings"}, 400
+
+        category_paths_abs = os.path.abspath(category_paths)
+
+        # Get category info
+        category_main = folder_data.get('category_main', '')
+        category_sub = folder_data.get('category_sub', '')
+        new_name = folder_data.get('name', os.path.basename(source_path))
+
+        if not category_main or not category_sub:
+            return {"error": "category_main and category_sub are required"}, 400
+
+        # Build target path
+        main_map = {"bou": "boutique", "arch": "archive"}
+        main_folder_name = main_map.get(category_main, category_main)
+        main_folder_path = os.path.join(category_paths_abs, main_folder_name)
+        sub_folder_name = f"{category_main}_{category_sub}"
+        target_sub_path = os.path.join(main_folder_path, sub_folder_name)
+        os.makedirs(target_sub_path, exist_ok=True)
+
+        target_path = os.path.join(target_sub_path, new_name)
+
+        # Handle name collision
+        if os.path.exists(target_path):
+            base_name = new_name
+            counter = 1
+            while os.path.exists(target_path):
+                new_name_with_suffix = f"{base_name}_{counter}"
+                target_path = os.path.join(target_sub_path, new_name_with_suffix)
+                counter += 1
+            new_name = new_name_with_suffix
+
+        try:
+            # Move folder
+            shutil.move(source_path, target_path)
+
+            # Create folder entry in index
+            folder_id = str(uuid.uuid4())
+            from manga_viewer.model.folder import Folder
+            from manga_viewer.model.tag import Tag
+
+            # Get file list for the newly moved folder
+            file_list = Repository.get_files_url_list(target_path)
+
+            new_folder = Folder(
+                id_=folder_id,
+                name=new_name,
+                path=target_path,
+                size=folder_data.get('size', 0),
+                number=folder_data.get('number', 0),
+                initialized=True,
+                tags=Tag(
+                    auth=folder_data.get('auth', []),
+                    name=folder_data.get('name_tags', []),
+                    custom=folder_data.get('custom', []),
+                    others=folder_data.get('others', []),
+                    category_main=category_main,
+                    category_sub=category_sub,
+                    mosaic=folder_data.get('mosaic', '')
+                ),
+                file_list=file_list
+            )
+
+            Repository.manga_index.folders[folder_id] = new_folder
+
+            # Rebuild metadata and save
+            rebuildMeta()
+            Repository.save_index()
+
+            return {
+                "message": "Folder imported successfully",
+                "folderId": folder_id,
+                "targetPath": target_path
+            }, 200
+
+        except Exception as e:
+            return {"error": f"Failed to import folder: {str(e)}"}, 500
 
 
 restx_api.add_namespace(api)

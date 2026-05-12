@@ -7,6 +7,7 @@
         <div class="nav-buttons">
           <el-button type="primary" size="small" @click="goToRandom">🎲 Random</el-button>
           <el-button type="success" size="small" @click="goToBatch">🛠️ Batch</el-button>
+          <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>
           <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
           <el-button type="warning" size="small" @click="handleRefreshIndex" :loading="refreshLoading">🔄 Refresh</el-button>
         </div>
@@ -21,7 +22,6 @@
         <el-switch v-model="sizeSortEnabled" inactive-text="size" active-text="" />
         <el-switch v-model="showUninitializedOnly" inactive-text="all" active-text="" />
         <el-switch v-model="nameSortEnabled" inactive-text="name" active-text="" />
-        <el-switch v-model="classifierModeEnabled" inactive-text="classifier" active-text="" />
         <el-button class="apply-button" type="primary" @click="applyChanges">
           Apply
           <span v-if="store.deleteIdSet.size > 0" style="margin-left: 5px;">

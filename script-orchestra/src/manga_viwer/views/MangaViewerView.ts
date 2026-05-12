@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import type { FolderModel } from '../service/Model'
 import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, RefreshLeft, Folder } from '@element-plus/icons-vue'
-import { openFolder, refreshIndex } from '@/manga_viwer/service/Service'
+import { openFolder, refreshIndex, fetchSettings } from '@/manga_viwer/service/Service'
 import * as pdfjsLib from 'pdfjs-dist'
 // Import worker as URL
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -38,6 +38,10 @@ export default defineComponent({
       router.push('/manga-viewer/batch')
     }
 
+    function goToImport() {
+      router.push('/manga-viewer/import')
+    }
+
     // Random功能 (removed, now in separate view)
     // -------------------------------------------------------------------------------------------------------
 
@@ -61,7 +65,6 @@ export default defineComponent({
     const showUninitializedOnly = ref(false)
     const sizeSortEnabled = ref(false)
     const nameSortEnabled = ref(true)
-    const classifierModeEnabled = ref(true)
 
     function addSearchToken() {
       const v = searchInput.value.trim()
@@ -76,6 +79,12 @@ export default defineComponent({
     function addHotTag(tag: string) {
       store.recordHotTag(tag)
       if (!searchTokens.value.includes(tag)) searchTokens.value.push(tag)
+    }
+    function addSearchTokenFromImport(token: string) {
+      if (!searchTokens.value.includes(token)) {
+        searchTokens.value.push(token)
+        store.recordHotTag(token)
+      }
     }
 
     const folders = computed(() => Object.values(store.mangaIndex.folders))
@@ -312,14 +321,8 @@ export default defineComponent({
         return
       }
 
-      // Validate that both category_main and category_sub are selected
-      if (field === 'category_main' || field === 'category_sub') {
-        if (!f.tags.category_main || !f.tags.category_sub) {
-          ElMessage.error('Please select both Main Category and Sub Category')
-          return
-        }
-      }
-
+      // Don't validate here - just mark as changed
+      // Validation will happen when Apply is clicked
       f.initialized = true
       store.addChangeId(f.id)
       if (field === 'category_main' || field === 'category_sub') {
@@ -411,25 +414,38 @@ export default defineComponent({
     // Appying
     // -------------------------------------------------------------------------------------------------------
     async function applyChanges() {
-      const loading = ElLoading.service({ lock: true, text: 'Applying...', background: 'rgba(0,0,0,0.4)' })
-      await store.applyChanges(classifierModeEnabled.value)
-
-      // Apply deletions if any
-      if (store.deleteIdSet.size > 0) {
-        try {
-          await ElMessageBox.confirm(
-            `确定要删除 ${store.deleteIdSet.size} 个文件夹吗？此操作不可恢复！`,
-            '确认删除',
-            { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
-          )
-          await store.applyDeletion()
-          ElMessage.success(`已删除 ${store.deleteIdSet.size} 个文件夹`)
-        } catch {
-          ElMessage.info('已取消删除操作')
+      // Validate all changed folders before applying
+      for (const folderId of store.changeIdList) {
+        const folder = store.mangaIndex.folders[folderId]
+        if (folder) {
+          // If category_main or category_sub is set, both must be set
+          const hasMainCat = folder.tags.category_main && folder.tags.category_main.trim()
+          const hasSubCat = folder.tags.category_sub && folder.tags.category_sub.trim()
+          if ((hasMainCat || hasSubCat) && !(hasMainCat && hasSubCat)) {
+            ElMessage.error(`Folder "${folder.name}": Both Main Category and Sub Category must be selected together`)
+            return
+          }
         }
       }
 
+      const loading = ElLoading.service({ lock: true, text: 'Applying...', background: 'rgba(0,0,0,0.4)' })
+
+      // Apply deletions first if any (no confirmation dialog - marking for deletion is already a confirmation)
+      if (store.deleteIdSet.size > 0) {
+        await store.applyDeletion()
+        ElMessage.success(`已删除 ${store.deleteIdSet.size} 个文件夹`)
+      }
+
+      // Apply other changes (classifier_mode is now always false)
+      await store.applyChanges(false)
+
+      // Reload index to get updated file paths and folders
+      await store.loadIndex()
+      currentPage.value = 1
+      fetchFilesForCurrentPage()
+
       loading.close()
+      ElMessage.success('Changes applied successfully')
     }
 
     // Deletion
@@ -475,9 +491,25 @@ export default defineComponent({
       }
     }
 
+    // Import Sidebar
+    // -------------------------------------------------------------------------------------------------------
+    // Removed - now a separate page at /manga-viewer/import
+
     // Life Cycle
     // -------------------------------------------------------------------------------------------------------
     onMounted(async () => {
+      // Load settings to get default values
+      try {
+        const settingsData = await fetchSettings()
+        if (settingsData && settingsData.display) {
+          showUninitializedOnly.value = settingsData.display.show_uninitialized_only ?? false
+          sizeSortEnabled.value = settingsData.display.size_sort_enabled ?? false
+          nameSortEnabled.value = settingsData.display.name_sort_enabled ?? true
+        }
+      } catch (e) {
+        console.warn('Failed to load settings, using default values:', e)
+      }
+
       await store.loadIndex()
       fetchFilesForCurrentPage()
       window.addEventListener('scroll', onScroll)
@@ -491,6 +523,7 @@ export default defineComponent({
       goToRandom,
       goToSettings,
       goToBatch,
+      goToImport,
       // Search with Hot Tags
       searchTokens,
       searchInput,
@@ -530,7 +563,6 @@ export default defineComponent({
       showUninitializedOnly,
       sizeSortEnabled,
       nameSortEnabled,
-      classifierModeEnabled,
       // Applying
       applyChanges,
       // Deletion

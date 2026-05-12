@@ -34,6 +34,8 @@ class SettingsManager:
             "display": {
                 "page_size": 10,
                 "show_uninitialized_only": False,
+                "size_sort_enabled": False,
+                "name_sort_enabled": True,
                 "default_sort": "name"
             },
             "paths": {
@@ -42,7 +44,8 @@ class SettingsManager:
                 "scan_folders": [],
                 "ignore_scan_folders": [],
                 "category_paths": "",
-                "delete_paths": ""
+                "delete_paths": "",
+                "import_path": ""
             }
         }
 

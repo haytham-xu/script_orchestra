@@ -62,14 +62,32 @@
             <span>🖥️ Display Settings</span>
           </div>
         </template>
-        <el-form label-width="200px">
+        <el-form label-width="220px">
           <el-form-item label="Page Size">
             <el-input-number v-model="settings.display.page_size" :min="5" :max="100" />
             <span class="form-hint">Items per page</span>
           </el-form-item>
+
+          <el-divider />
+          <h4 style="margin: 10px 0;">Manga Viewer Default Filters</h4>
+
           <el-form-item label="Show Uninitialized Only">
             <el-switch v-model="settings.display.show_uninitialized_only" />
+            <span class="form-hint">Show only folders without tags (uninitialized)</span>
           </el-form-item>
+
+          <el-form-item label="Size Sort Enabled">
+            <el-switch v-model="settings.display.size_sort_enabled" />
+            <span class="form-hint">Sort folders by size (largest first)</span>
+          </el-form-item>
+
+          <el-form-item label="Name Sort Enabled">
+            <el-switch v-model="settings.display.name_sort_enabled" />
+            <span class="form-hint">Sort folders by name (alphabetical)</span>
+          </el-form-item>
+
+          <el-divider />
+
           <el-form-item label="Default Sort">
             <el-select v-model="settings.display.default_sort">
               <el-option label="Name" value="name" />
@@ -103,6 +121,10 @@
           <el-form-item label="Delete Paths">
             <el-input v-model="settings.paths.delete_paths" placeholder="/path/to/deleted" />
             <span class="form-hint">Directory for deleted folders</span>
+          </el-form-item>
+          <el-form-item label="Import Path">
+            <el-input v-model="settings.paths.import_path" placeholder="/path/to/import" />
+            <span class="form-hint">Default path for importing new manga folders</span>
           </el-form-item>
 
           <el-form-item label="Scan Folders">

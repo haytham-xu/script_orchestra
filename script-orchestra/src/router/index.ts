@@ -11,6 +11,7 @@ import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import MangaViewerRandomView from '@/manga_viwer/views/RandomView.vue'
 import MangaViewerSettingsView from '@/manga_viwer/views/SettingsView.vue'
 import MangaViewerBatchView from '@/manga_viwer/views/BatchOperationView.vue'
+import MangaImportView from '@/manga_viwer/views/MangaImportView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
@@ -77,6 +78,11 @@ const router = createRouter({
       path: '/manga-viewer/batch',
       name: 'manga-viewer-batch',
       component: MangaViewerBatchView
+    },
+    {
+      path: '/manga-viewer/import',
+      name: 'manga-viewer-import',
+      component: MangaImportView
     },
     {
       path: '/roadmap',
