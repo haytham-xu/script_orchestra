@@ -145,8 +145,17 @@ export default defineComponent({
         // Scroll to top
         window.scrollTo(0, 0)
 
-        // Don't pre-render PDFs - let them render on-demand when scrolled into view
-        // This makes folder switching instant even for large folders
+        // Render PDFs in background (non-blocking)
+        nextTick(async () => {
+          const files = newFolder.files || []
+          for (const file of files) {
+            if (isPdf(file)) {
+              const url = `http://localhost:5001/manga-viewer/file/${encodeURIComponent(file)}`
+              // Render PDFs asynchronously without blocking
+              renderPdfPages(url).catch(err => console.error('Failed to render PDF:', err))
+            }
+          }
+        })
       }
     })
 
@@ -457,13 +466,15 @@ export default defineComponent({
     )
 
     function rightPreviewImages(folder: any): Array<{url: string; type: 'image' | 'pdf'}> {
-      if (!folder.file_list || folder.file_list.length === 0) return []
+      if (!folder.files || folder.files.length === 0) {
+        return []
+      }
 
       const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
       const result: Array<{url: string; type: 'image' | 'pdf'}> = []
 
       // First, collect images
-      const images = folder.file_list.filter((file: string) => {
+      const images = folder.files.filter((file: string) => {
         const lower = file.toLowerCase()
         return imageExts.some(ext => lower.endsWith(ext))
       })
@@ -475,7 +486,7 @@ export default defineComponent({
 
       // If less than 3 images, add PDF first pages
       if (result.length < 3) {
-        const pdfs = folder.file_list.filter((file: string) => isPdf(file))
+        const pdfs = folder.files.filter((file: string) => isPdf(file))
         for (const pdf of pdfs) {
           result.push({ url: pdf, type: 'pdf' })
           if (result.length >= 3) break

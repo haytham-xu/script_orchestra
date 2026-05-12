@@ -26,7 +26,7 @@ class Folder:
             "id": self.id,
             "name": self.name,
             "path": self.path,
-            "file_list": self.file_list,
+            "files": self.file_list,  # Frontend expects 'files', not 'file_list'
             "size": self.size,
             "number": self.number,
             "initialized": self.initialized,
@@ -39,7 +39,7 @@ class Folder:
             d.get("id", ""),
             d.get("name", ""),
             d.get("path", ""),
-            d.get("file_list", []),
+            d.get("file_list") or d.get("files", []),  # Support both 'file_list' and 'files'
             d.get("size", 0),
             d.get("number", 0),
             d.get("initialized", False),

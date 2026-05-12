@@ -202,7 +202,7 @@
 
         <!-- Full images display (scrollable) -->
         <div class="images-container">
-          <template v-for="(item, i) in currentFolderImagesWithPdf" :key="i">
+          <template v-for="(item, i) in currentFolderImagesWithPdf" :key="item.url">
             <!-- Regular Image -->
             <img
               v-if="item.type === 'image'"
@@ -210,13 +210,21 @@
               class="full-image"
             />
             <!-- PDF Pages -->
-            <template v-else-if="item.type === 'pdf' && item.pdfPages && item.pdfPages.length > 0">
-              <img
-                v-for="(page, pageIdx) in item.pdfPages"
-                :key="`${i}-page-${pageIdx}`"
-                :src="page"
-                class="full-image"
-              />
+            <template v-else-if="item.type === 'pdf'">
+              <!-- Show rendered pages if available -->
+              <template v-if="item.pdfPages && item.pdfPages.length > 0">
+                <img
+                  v-for="(page, pageIdx) in item.pdfPages"
+                  :key="`${item.url}-page-${pageIdx}`"
+                  :src="page"
+                  class="full-image"
+                />
+              </template>
+              <!-- Show placeholder while loading or if not rendered yet -->
+              <div v-else class="pdf-placeholder">
+                <div class="pdf-icon">📄</div>
+                <div class="pdf-text">PDF - Rendering...</div>
+              </div>
             </template>
             <!-- Video -->
             <video
@@ -251,7 +259,7 @@
 
         <!-- Full images display (scrollable) -->
         <div class="images-container">
-          <template v-for="(item, i) in middleFilesWithPdf" :key="i">
+          <template v-for="(item, i) in middleFilesWithPdf" :key="item.url">
             <!-- Regular Image -->
             <img
               v-if="item.type === 'image'"
@@ -259,13 +267,21 @@
               class="full-image"
             />
             <!-- PDF Pages -->
-            <template v-else-if="item.type === 'pdf' && item.pdfPages && item.pdfPages.length > 0">
-              <img
-                v-for="(page, pageIdx) in item.pdfPages"
-                :key="`${i}-page-${pageIdx}`"
-                :src="page"
-                class="full-image"
-              />
+            <template v-else-if="item.type === 'pdf'">
+              <!-- Show rendered pages if available -->
+              <template v-if="item.pdfPages && item.pdfPages.length > 0">
+                <img
+                  v-for="(page, pageIdx) in item.pdfPages"
+                  :key="`${item.url}-page-${pageIdx}`"
+                  :src="page"
+                  class="full-image"
+                />
+              </template>
+              <!-- Show placeholder while loading or if not rendered yet -->
+              <div v-else class="pdf-placeholder">
+                <div class="pdf-icon">📄</div>
+                <div class="pdf-text">PDF - Rendering...</div>
+              </div>
             </template>
             <!-- Video -->
             <video
@@ -541,6 +557,29 @@
   display: block;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.pdf-placeholder {
+  width: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+  border: 2px dashed #dcdfe6;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+
+.pdf-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.pdf-text {
+  color: #909399;
+  font-size: 14px;
 }
 
 .full-video {
