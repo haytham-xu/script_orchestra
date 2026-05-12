@@ -19,188 +19,7 @@
       </div>
 
       <div v-else class="folder-display">
-        <!-- Classify Panel -->
-        <div class="classify-panel">
-          <!-- First row: Folder Name, Files, Size -->
-          <div class="classify-row top-info">
-            <div class="classify-section compact" style="flex: 1;">
-              <div class="classify-label">Folder Name</div>
-              <el-input v-model="formData.name" size="small" />
-            </div>
-            <div class="classify-section compact" style="width: 70px;">
-              <div class="classify-label">Files</div>
-              <div class="info-value">{{ currentFolder.number }}</div>
-            </div>
-            <div class="classify-section compact" style="width: 70px;">
-              <div class="classify-label">Size</div>
-              <div class="info-value">{{ currentFolder.size ? Math.round(currentFolder.size / 1024 / 1024) : 0 }}MB</div>
-            </div>
-            <div class="classify-section compact" style="width: 60px;">
-              <div class="classify-label">Progress</div>
-              <div class="info-value">{{ currentIndex + 1 }}/{{ folders.length }}</div>
-            </div>
-          </div>
-
-          <!-- Category Main & Mosaic (one row) -->
-          <div class="classify-row">
-            <div class="classify-section-inline" style="flex: 1;">
-              <span class="classify-label">Category Main:</span>
-              <el-radio-group v-model="formData.category_main" size="small">
-                <el-radio v-for="cat in categoryMainOptions" :key="cat.id" :label="cat.id">{{ cat.label || cat.id }}</el-radio>
-              </el-radio-group>
-            </div>
-            <div class="classify-section-inline" style="width: 150px;">
-              <span class="classify-label">Mosaic:</span>
-              <el-radio-group v-model="formData.mosaic" size="small">
-                <el-radio label="true">✓</el-radio>
-                <el-radio label="false">✗</el-radio>
-              </el-radio-group>
-            </div>
-          </div>
-
-          <!-- Category Sub -->
-          <div class="classify-section-inline">
-            <span class="classify-label">Category Sub:</span>
-            <el-radio-group v-model="formData.category_sub" size="small" class="category-sub-radio-group">
-              <el-radio v-for="cat in categorySubOptions" :key="cat.id" :label="cat.id">{{ cat.label || cat.id }}</el-radio>
-            </el-radio-group>
-          </div>
-
-          <!-- Tags: inline layout (label + tags in same row) -->
-          <div class="tags-section">
-            <div class="classify-section-inline">
-              <span class="classify-label">Auth:</span>
-              <div class="tags-list-mini">
-                <el-tag
-                  v-for="(t, i) in formData.auth"
-                  :key="i"
-                  closable
-                  @close="formData.auth.splice(i, 1)"
-                  size="small"
-                  type="primary"
-                >
-                  {{ t }}
-                </el-tag>
-                <el-input
-                  v-if="showAuthInput"
-                  v-model="authInput"
-                  size="small"
-                  @keyup.enter="addAuth"
-                  @blur="addAuth"
-                  style="width: 60px;"
-                />
-                <el-button v-else size="small" @click="showAuthInput = true">+</el-button>
-              </div>
-            </div>
-
-            <div class="classify-section-inline">
-              <span class="classify-label">Name:</span>
-              <div class="tags-list-mini">
-                <el-tag
-                  v-for="(t, i) in formData.name_tags"
-                  :key="i"
-                  closable
-                  @close="formData.name_tags.splice(i, 1)"
-                  size="small"
-                  type="success"
-                >
-                  {{ t }}
-                </el-tag>
-                <el-input
-                  v-if="showNameInput"
-                  v-model="nameInput"
-                  size="small"
-                  @keyup.enter="addName"
-                  @blur="addName"
-                  style="width: 60px;"
-                />
-                <el-button v-else size="small" @click="showNameInput = true">+</el-button>
-              </div>
-            </div>
-
-            <div class="classify-section-inline">
-              <span class="classify-label">Custom:</span>
-              <div class="tags-list-mini">
-                <el-tag
-                  v-for="(t, i) in formData.custom"
-                  :key="i"
-                  closable
-                  @close="formData.custom.splice(i, 1)"
-                  size="small"
-                  type="warning"
-                >
-                  {{ t }}
-                </el-tag>
-                <el-input
-                  v-if="showCustomInput"
-                  v-model="customInput"
-                  size="small"
-                  @keyup.enter="addCustom"
-                  @blur="addCustom"
-                  style="width: 60px;"
-                />
-                <el-button v-else size="small" @click="showCustomInput = true">+</el-button>
-              </div>
-            </div>
-
-            <div class="classify-section-inline">
-              <span class="classify-label">Others:</span>
-              <div class="tags-list-mini">
-                <el-tag
-                  v-for="(t, i) in formData.others"
-                  :key="i"
-                  closable
-                  @close="formData.others.splice(i, 1)"
-                  size="small"
-                  type="danger"
-                >
-                  {{ t }}
-                </el-tag>
-                <el-input
-                  v-if="showOthersInput"
-                  v-model="othersInput"
-                  size="small"
-                  @keyup.enter="addOthers"
-                  @blur="addOthers"
-                  style="width: 60px;"
-                />
-                <el-button v-else size="small" @click="showOthersInput = true">+</el-button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Action Buttons at bottom -->
-          <div class="action-buttons-row">
-            <el-button
-              @click="prevFolder"
-              :disabled="currentIndex === 0"
-              size="small"
-              style="flex: 1;"
-            >
-              ← Prev
-            </el-button>
-            <el-button
-              @click="nextFolder"
-              :disabled="currentIndex === folders.length - 1"
-              size="small"
-              style="flex: 1;"
-            >
-              Next →
-            </el-button>
-            <el-button
-              type="primary"
-              @click="handleImport"
-              :loading="importing"
-              :disabled="!formData.category_main || !formData.category_sub"
-              size="small"
-              style="flex: 2;"
-            >
-              Import
-            </el-button>
-          </div>
-        </div>
-
-        <!-- Full images display (scrollable) -->
+        <!-- Full images display (scrollable) - Pure preview -->
         <div class="images-container">
           <template v-for="(item, i) in currentFolderImagesWithPdf" :key="item.url">
             <!-- Regular Image -->
@@ -239,24 +58,202 @@
       </div>
     </div>
 
-    <!-- Middle Panel: Selected folder for comparison (1/3) -->
+    <!-- Middle Panel: Current folder info + comparison (1/3) -->
     <div class="middle-panel">
-      <div v-if="!middleFolder" class="empty-state">
-        <p>👈 Click a folder from the right panel to compare</p>
-      </div>
-
-      <div v-else class="folder-display">
-        <!-- Header -->
-        <div class="folder-header">
-          <div class="folder-title">
-            <h2>{{ middleFolder.name }}</h2>
-            <div class="folder-meta">
-              <span>{{ middleFolder.number }} files</span>
-              <span>{{ Math.round(middleFolder.size / 1024 / 1024) }} MB</span>
+      <!-- Fixed Header Section -->
+      <div v-if="currentFolder" class="middle-panel-header">
+        <!-- Current folder header (moved from left panel) -->
+        <div class="current-folder-header">
+          <div class="classify-row top-info">
+            <div class="classify-section compact" style="flex: 1;">
+              <div class="classify-label">Folder Name</div>
+              <el-input v-model="formData.name" size="small" />
+            </div>
+            <div class="classify-section compact" style="width: 70px;">
+              <div class="classify-label">Files</div>
+              <div class="info-value">{{ currentFolder.number }}</div>
+            </div>
+            <div class="classify-section compact" style="width: 70px;">
+              <div class="classify-label">Size</div>
+              <div class="info-value">{{ currentFolder.size ? Math.round(currentFolder.size / 1024 / 1024) : 0 }}MB</div>
+            </div>
+            <div class="classify-section compact" style="width: 60px;">
+              <div class="classify-label">Progress</div>
+              <div class="info-value">{{ currentIndex + 1 }}/{{ folders.length }}</div>
             </div>
           </div>
         </div>
 
+        <!-- Classify Panel (moved from left panel) -->
+        <div class="classify-panel">
+        <!-- Category Main & Mosaic (one row) -->
+        <div class="classify-row">
+          <div class="classify-section-inline" style="flex: 1;">
+            <span class="classify-label">Category Main:</span>
+            <el-radio-group v-model="formData.category_main" size="small">
+              <el-radio v-for="cat in categoryMainOptions" :key="cat.id" :label="cat.id">{{ cat.label || cat.id }}</el-radio>
+            </el-radio-group>
+          </div>
+          <div class="classify-section-inline" style="width: 150px;">
+            <span class="classify-label">Mosaic:</span>
+            <el-radio-group v-model="formData.mosaic" size="small">
+              <el-radio label="true">✓</el-radio>
+              <el-radio label="false">✗</el-radio>
+            </el-radio-group>
+          </div>
+        </div>
+
+        <!-- Category Sub -->
+        <div class="classify-section-inline">
+          <span class="classify-label">Category Sub:</span>
+          <el-radio-group v-model="formData.category_sub" size="small" class="category-sub-radio-group">
+            <el-radio v-for="cat in categorySubOptions" :key="cat.id" :label="cat.id">{{ cat.label || cat.id }}</el-radio>
+          </el-radio-group>
+        </div>
+
+        <!-- Tags: inline layout (label + tags in same row) -->
+        <div class="tags-section">
+          <div class="classify-section-inline">
+            <span class="classify-label">Auth:</span>
+            <div class="tags-list-mini">
+              <el-tag
+                v-for="(t, i) in formData.auth"
+                :key="i"
+                closable
+                @close="formData.auth.splice(i, 1)"
+                size="small"
+                type="primary"
+              >
+                {{ t }}
+              </el-tag>
+              <el-input
+                v-if="showAuthInput"
+                v-model="authInput"
+                size="small"
+                @keyup.enter="addAuth"
+                @blur="addAuth"
+                style="width: 60px;"
+              />
+              <el-button v-else size="small" @click="showAuthInput = true">+</el-button>
+            </div>
+          </div>
+
+          <div class="classify-section-inline">
+            <span class="classify-label">Name:</span>
+            <div class="tags-list-mini">
+              <el-tag
+                v-for="(t, i) in formData.name_tags"
+                :key="i"
+                closable
+                @close="formData.name_tags.splice(i, 1)"
+                size="small"
+                type="success"
+              >
+                {{ t }}
+              </el-tag>
+              <el-input
+                v-if="showNameInput"
+                v-model="nameInput"
+                size="small"
+                @keyup.enter="addName"
+                @blur="addName"
+                style="width: 60px;"
+              />
+              <el-button v-else size="small" @click="showNameInput = true">+</el-button>
+            </div>
+          </div>
+
+          <div class="classify-section-inline">
+            <span class="classify-label">Custom:</span>
+            <div class="tags-list-mini">
+              <el-tag
+                v-for="(t, i) in formData.custom"
+                :key="i"
+                closable
+                @close="formData.custom.splice(i, 1)"
+                size="small"
+                type="warning"
+              >
+                {{ t }}
+              </el-tag>
+              <el-input
+                v-if="showCustomInput"
+                v-model="customInput"
+                size="small"
+                @keyup.enter="addCustom"
+                @blur="addCustom"
+                style="width: 60px;"
+              />
+              <el-button v-else size="small" @click="showCustomInput = true">+</el-button>
+            </div>
+          </div>
+
+          <div class="classify-section-inline">
+            <span class="classify-label">Others:</span>
+            <div class="tags-list-mini">
+              <el-tag
+                v-for="(t, i) in formData.others"
+                :key="i"
+                closable
+                @close="formData.others.splice(i, 1)"
+                size="small"
+                type="danger"
+              >
+                {{ t }}
+              </el-tag>
+              <el-input
+                v-if="showOthersInput"
+                v-model="othersInput"
+                size="small"
+                @keyup.enter="addOthers"
+                @blur="addOthers"
+                style="width: 60px;"
+              />
+              <el-button v-else size="small" @click="showOthersInput = true">+</el-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons at bottom -->
+        <div class="action-buttons-row">
+          <el-button
+            @click="prevFolder"
+            :disabled="currentIndex === 0"
+            size="small"
+            style="flex: 1;"
+          >
+            ← Prev
+          </el-button>
+          <el-button
+            @click="nextFolder"
+            :disabled="currentIndex === folders.length - 1"
+            size="small"
+            style="flex: 1;"
+          >
+            Next →
+          </el-button>
+          <el-button
+            type="primary"
+            @click="handleImport"
+            :loading="importing"
+            :disabled="!formData.category_main || !formData.category_sub"
+            size="small"
+            style="flex: 2;"
+          >
+            Import
+          </el-button>
+        </div>
+      </div>
+      </div>
+
+      <!-- Scrollable Content Section -->
+      <div class="middle-panel-content">
+        <!-- Comparison folder section -->
+        <div v-if="!middleFolder" class="empty-state">
+        <p>👈 Click a folder from the right panel to compare</p>
+      </div>
+
+      <div v-else class="folder-display">
         <!-- Full images display (scrollable) -->
         <div class="images-container">
           <template v-for="(item, i) in middleFilesWithPdf" :key="item.url">
@@ -294,64 +291,70 @@
           </template>
         </div>
       </div>
+      </div>
     </div>
 
     <!-- Right Panel: Manga Viewer (browsable) (1/3) -->
-    <div class="right-panel" @scroll="onRightScroll">
-      <div class="viewer-header">
-        <div class="header-left">
-          <el-button type="default" size="small" @click="goBack">← Back</el-button>
-          <!-- Name Parts (clickable) -->
-          <div class="name-parts-inline" v-if="currentFolder && nameParts.length > 0">
-            <el-tag
-              v-for="(part, i) in nameParts"
-              :key="i"
-              @click="addToRightSearch(part)"
-              size="small"
-              style="cursor: pointer;"
-            >
-              {{ part }}
-            </el-tag>
+    <div class="right-panel">
+      <!-- Fixed Header Section -->
+      <div class="right-panel-header">
+        <div class="viewer-header">
+          <div class="header-left">
+            <el-button type="default" size="small" @click="goBack">← Back</el-button>
+            <!-- Name Parts (clickable) -->
+            <div class="name-parts-inline" v-if="currentFolder && nameParts.length > 0">
+              <el-tag
+                v-for="(part, i) in nameParts"
+                :key="i"
+                @click="addToRightSearch(part)"
+                size="small"
+                style="cursor: pointer;"
+              >
+                {{ part }}
+              </el-tag>
+            </div>
           </div>
+          <el-button size="small" @click="refreshRightPanel">🔄</el-button>
         </div>
-        <el-button size="small" @click="refreshRightPanel">🔄</el-button>
+
+        <!-- Search Input & Tokens -->
+        <div class="search-section">
+          <el-input
+            v-model="rightSearchInput"
+            placeholder="Search..."
+            size="small"
+            @keyup.enter="addRightSearchToken"
+            style="flex: 1; max-width: 300px;"
+          >
+            <template #append>
+              <el-button @click="addRightSearchToken">Search</el-button>
+            </template>
+          </el-input>
+        </div>
+
+        <div class="search-tokens" v-if="rightSearchTokens.length > 0">
+          <el-tag
+            v-for="(token, i) in rightSearchTokens"
+            :key="i"
+            closable
+            @close="removeRightSearchToken(i)"
+            size="small"
+          >
+            {{ token }}
+          </el-tag>
+          <el-button
+            size="small"
+            @click="clearRightSearch"
+          >
+            Clear All
+          </el-button>
+        </div>
       </div>
 
-      <!-- Search Input & Tokens -->
-      <div class="search-section">
-        <el-input
-          v-model="rightSearchInput"
-          placeholder="Search..."
-          size="small"
-          @keyup.enter="addRightSearchToken"
-          style="flex: 1; max-width: 300px;"
-        >
-          <template #append>
-            <el-button @click="addRightSearchToken">Search</el-button>
-          </template>
-        </el-input>
-      </div>
-
-      <div class="search-tokens" v-if="rightSearchTokens.length > 0">
-        <el-tag
-          v-for="(token, i) in rightSearchTokens"
-          :key="i"
-          closable
-          @close="removeRightSearchToken(i)"
-          size="small"
-        >
-          {{ token }}
-        </el-tag>
-        <el-button
-          size="small"
-          @click="clearRightSearch"
-        >
-          Clear All
-        </el-button>
-      </div>
-
-      <!-- Folder cards (manga viewer style) -->
-      <div class="folder-list" v-loading="loadingRight">
+      <!-- Scrollable Content Section -->
+      <div class="right-panel-content" @scroll="onRightScroll">
+        <!-- Folder cards (manga viewer style) -->
+        <div class="folder-list" v-loading="loadingRight">
         <div
           v-for="f in rightDisplayedFolders"
           :key="f.id"
@@ -421,17 +424,18 @@
             <div v-else class="no-thumb">无图片预览</div>
           </div>
         </div>
-      </div>
+        </div>
 
-      <!-- Loading indicator for infinite scroll -->
-      <div v-if="loadingRight" class="loading-more">
-        Loading...
-      </div>
-      <div v-else-if="!rightCanLoadMore && rightDisplayedFolders.length > 0" class="no-more">
-        No more results
-      </div>
-      <div v-else-if="rightDisplayedFolders.length === 0 && !loadingRight" class="no-more">
-        No results found
+        <!-- Loading indicator for infinite scroll -->
+        <div v-if="loadingRight" class="loading-more">
+          Loading...
+        </div>
+        <div v-else-if="!rightCanLoadMore && rightDisplayedFolders.length > 0" class="no-more">
+          No more results
+        </div>
+        <div v-else-if="rightDisplayedFolders.length === 0 && !loadingRight" class="no-more">
+          No results found
+        </div>
       </div>
     </div>
   </div>
@@ -696,11 +700,40 @@
 .middle-panel {
   width: 33.33%;
   flex-shrink: 0;
-  overflow-y: auto;
   background: #f5f7fa;
   display: flex;
   flex-direction: column;
   border-right: 2px solid #e3e7ec;
+  overflow: hidden;
+}
+
+.middle-panel-header {
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 2px solid #e3e7ec;
+  z-index: 10;
+}
+
+.middle-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.current-folder-header {
+  background: #fff;
+  padding: 12px 15px;
+}
+
+.comparison-header {
+  border-top: 2px solid #409eff;
+}
+
+.comparison-header h3 {
+  font-size: 16px;
+  color: #409eff;
+  margin: 0;
 }
 
 .empty-state {
@@ -722,9 +755,27 @@
 .right-panel {
   width: 33.33%;
   flex-shrink: 0;
-  overflow-y: auto;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-panel-header {
+  flex-shrink: 0;
   padding: 15px;
   background: #fff;
+  border-bottom: 2px solid #e3e7ec;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+}
+
+.right-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
   display: flex;
   flex-direction: column;
   gap: 12px;
