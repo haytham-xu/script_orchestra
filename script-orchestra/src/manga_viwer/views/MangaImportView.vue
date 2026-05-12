@@ -281,7 +281,7 @@
     </div>
 
     <!-- Right Panel: Manga Viewer (browsable) (1/3) -->
-    <div class="right-panel">
+    <div class="right-panel" @scroll="onRightScroll">
       <div class="viewer-header">
         <div class="header-left">
           <el-button type="default" size="small" @click="goBack">← Back</el-button>
@@ -405,6 +405,14 @@
             <div v-else class="no-thumb">无图片预览</div>
           </div>
         </div>
+      </div>
+
+      <!-- Loading indicator for infinite scroll -->
+      <div v-if="loadingRight" class="loading-more">
+        Loading more...
+      </div>
+      <div v-else-if="!rightCanLoadMore && rightFilteredFolders.length > 0" class="no-more">
+        No more results
       </div>
     </div>
   </div>
@@ -720,6 +728,14 @@
   flex-direction: column;
   gap: 14px;
   min-height: 200px;
+}
+
+.loading-more,
+.no-more {
+  padding: 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
 }
 
 .folder-line {

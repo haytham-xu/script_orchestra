@@ -332,6 +332,12 @@ export default defineComponent({
     const rightFolders = ref<any[]>([])
     const rightPdfPreviews = ref<Record<string, string>>({}) // Store first page of PDFs for preview
 
+    // Pagination (for infinite scroll)
+    const rightCurrentPage = ref(1)
+    const rightPageSize = ref(20)
+    const rightTotal = ref(0)
+    const rightCanLoadMore = computed(() => rightFolders.value.length < rightTotal.value)
+
     async function renderPdfFirstPage(pdfUrl: string): Promise<string | null> {
       if (rightPdfPreviews.value[pdfUrl]) {
         return rightPdfPreviews.value[pdfUrl]
@@ -423,30 +429,16 @@ export default defineComponent({
         rightSearchTokens.value.push(trimmed)
         store.recordHotTag(trimmed)
         rightSearchInput.value = ''
+
+        // Reset and reload from beginning
+        rightFolders.value = []
+        rightCurrentPage.value = 1
+        loadRightPanel()
       }
     }
 
-    const rightFilteredFolders = computed(() => {
-      if (rightSearchTokens.value.length === 0) {
-        return rightFolders.value
-      }
-
-      return rightFolders.value.filter((folder) => {
-        const searchableText = [
-          folder.name,
-          ...(folder.tags?.auth || []),
-          ...(folder.tags?.name || []),
-          ...(folder.tags?.custom || []),
-          ...(folder.tags?.others || []),
-          folder.tags?.category_main,
-          folder.tags?.category_sub
-        ].join(' ').toLowerCase()
-
-        return rightSearchTokens.value.every((token) =>
-          searchableText.includes(token.toLowerCase())
-        )
-      })
-    })
+    // Right panel directly shows the folders from backend (already filtered)
+    const rightFilteredFolders = computed(() => rightFolders.value)
 
     function rightPreviewImages(folder: any): Array<{url: string; type: 'image' | 'pdf'}> {
       if (!folder.file_list || folder.file_list.length === 0) return []
@@ -478,38 +470,37 @@ export default defineComponent({
     }
 
     async function loadRightPanel() {
+      if (loadingRight.value) return // Prevent duplicate loading
+
       loadingRight.value = true
       try {
-        await store.loadIndex()
-        rightFolders.value = Object.values(store.mangaIndex.folders)
-
-        // Load file lists for preview
-        for (const folder of rightFolders.value) {
-          if (!folder.file_list || folder.file_list.length === 0) {
-            try {
-              const res = await axios.get('http://localhost:5001/manga-viewer/files-url-list', {
-                params: { folderId: folder.id }
-              })
-              folder.file_list = res.data
-            } catch (e) {
-              folder.file_list = []
-            }
-          }
+        // Build search params
+        const params: any = {
+          page: rightCurrentPage.value,
+          page_size: rightPageSize.value
         }
 
-        // Pre-render PDF first pages for preview (do it in background)
-        nextTick(async () => {
-          for (const folder of rightFolders.value) {
-            const previews = rightPreviewImages(folder)
-            for (const preview of previews) {
-              if (preview.type === 'pdf') {
-                await renderPdfFirstPage(preview.url)
-              }
-            }
-          }
-        })
+        // Add search tokens
+        if (rightSearchTokens.value.length > 0) {
+          params.keywords = rightSearchTokens.value.join(',')
+        }
+
+        // Call backend search API
+        const res = await axios.get('http://localhost:5001/manga-viewer/search', { params })
+
+        // Append new folders (for infinite scroll)
+        if (rightCurrentPage.value === 1) {
+          rightFolders.value = res.data.folders || []
+        } else {
+          rightFolders.value.push(...(res.data.folders || []))
+        }
+        rightTotal.value = res.data.total || 0
       } catch (e) {
         ElMessage.error('Failed to load manga viewer data')
+        if (rightCurrentPage.value === 1) {
+          rightFolders.value = []
+          rightTotal.value = 0
+        }
       } finally {
         loadingRight.value = false
       }
@@ -517,10 +508,34 @@ export default defineComponent({
 
     function removeRightSearchToken(index: number) {
       rightSearchTokens.value.splice(index, 1)
+      // Reset and reload
+      rightFolders.value = []
+      rightCurrentPage.value = 1
+      loadRightPanel()
     }
 
     function clearRightSearch() {
       rightSearchTokens.value = []
+      // Reset and reload
+      rightFolders.value = []
+      rightCurrentPage.value = 1
+      loadRightPanel()
+    }
+
+    function loadMoreRight() {
+      if (!loadingRight.value && rightCanLoadMore.value) {
+        rightCurrentPage.value++
+        loadRightPanel()
+      }
+    }
+
+    // Scroll handler for right panel
+    function onRightScroll(event: Event) {
+      const target = event.target as HTMLElement
+      const nearBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 300
+      if (nearBottom && rightCanLoadMore.value && !loadingRight.value) {
+        loadMoreRight()
+      }
     }
 
     async function selectMiddleFolder(folder: any) {
@@ -680,10 +695,12 @@ export default defineComponent({
       rightFilteredFolders,
       rightPreviewImages,
       rightPdfPreviews,
+      rightCanLoadMore,
       loadRightPanel,
       addRightSearchToken,
       removeRightSearchToken,
       clearRightSearch,
+      onRightScroll,
       selectMiddleFolder,
       refreshRightPanel,
       copyCardToForm

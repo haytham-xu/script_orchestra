@@ -307,6 +307,61 @@ class OpenFolderResource(Resource):
             return {"error": f"Failed to open folder: {str(e)}"}, 500
 
 
+@api.route("/manga-viewer/search")
+class MangaSearchResource(Resource):
+    def get(self):
+        """Search manga folders with pagination"""
+        try:
+            page = int(request.args.get('page', 1))
+            page_size = int(request.args.get('page_size', 20))
+            keywords = request.args.get('keywords', '').strip()
+
+            # Get all folders
+            all_folders = list(Repository.manga_index.folders.values())
+
+            # Filter by keywords if provided
+            if keywords:
+                keyword_list = [k.strip().lower() for k in keywords.split(',') if k.strip()]
+                if keyword_list:
+                    filtered = []
+                    for folder in all_folders:
+                        # Build searchable text
+                        searchable = ' '.join([
+                            folder.name.lower(),
+                            ' '.join(folder.tags.auth).lower() if folder.tags.auth else '',
+                            ' '.join(folder.tags.name).lower() if folder.tags.name else '',
+                            ' '.join(folder.tags.custom).lower() if folder.tags.custom else '',
+                            ' '.join(folder.tags.others).lower() if folder.tags.others else '',
+                            folder.tags.category_main.lower() if folder.tags.category_main else '',
+                            folder.tags.category_sub.lower() if folder.tags.category_sub else ''
+                        ])
+
+                        # Check if all keywords match
+                        if all(kw in searchable for kw in keyword_list):
+                            filtered.append(folder)
+
+                    all_folders = filtered
+
+            # Calculate pagination
+            total = len(all_folders)
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            paginated = all_folders[start_idx:end_idx]
+
+            # Convert to dict
+            folders_data = [folder.to_dict() for folder in paginated]
+
+            return {
+                "folders": folders_data,
+                "total": total,
+                "page": page,
+                "page_size": page_size
+            }, 200
+
+        except Exception as e:
+            return {"error": f"Failed to search: {str(e)}"}, 500
+
+
 @api.route("/manga-viewer/refresh-index")
 class RefreshIndexResource(Resource):
     def post(self):
