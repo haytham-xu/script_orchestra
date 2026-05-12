@@ -337,7 +337,7 @@
       <!-- Folder cards (manga viewer style) -->
       <div class="folder-list" v-loading="loadingRight">
         <div
-          v-for="f in rightFilteredFolders"
+          v-for="f in rightDisplayedFolders"
           :key="f.id"
           class="folder-line"
         >
@@ -409,10 +409,13 @@
 
       <!-- Loading indicator for infinite scroll -->
       <div v-if="loadingRight" class="loading-more">
-        Loading more...
+        Loading...
       </div>
-      <div v-else-if="!rightCanLoadMore && rightFilteredFolders.length > 0" class="no-more">
+      <div v-else-if="!rightCanLoadMore && rightDisplayedFolders.length > 0" class="no-more">
         No more results
+      </div>
+      <div v-else-if="rightDisplayedFolders.length === 0 && !loadingRight" class="no-more">
+        No results found
       </div>
     </div>
   </div>

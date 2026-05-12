@@ -135,26 +135,18 @@ export default defineComponent({
     watch(currentFolder, (newFolder) => {
       if (newFolder) {
         formData.value.name = newFolder.name
-        formData.value.auth = []
-        formData.value.name_tags = []
-        formData.value.custom = []
-        formData.value.others = []
-        formData.value.category_main = ''
-        formData.value.category_sub = ''
-        formData.value.mosaic = ''
+        formData.value.auth = newFolder.auth || []
+        formData.value.name_tags = newFolder.name_tags || []
+        formData.value.custom = newFolder.custom || []
+        formData.value.others = newFolder.others || []
+        formData.value.category_main = newFolder.category_main || ''
+        formData.value.category_sub = newFolder.category_sub || ''
+        formData.value.mosaic = newFolder.mosaic || ''
         // Scroll to top
         window.scrollTo(0, 0)
 
-        // Pre-render PDFs
-        nextTick(async () => {
-          const files = newFolder.files || []
-          for (const file of files) {
-            if (isPdf(file)) {
-              const url = `http://localhost:5001/manga-viewer/file/${encodeURIComponent(file)}`
-              await renderPdfPages(url)
-            }
-          }
-        })
+        // Don't pre-render PDFs - let them render on-demand when scrolled into view
+        // This makes folder switching instant even for large folders
       }
     })
 
@@ -329,14 +321,12 @@ export default defineComponent({
     const rightSearchInput = ref('')
     const rightSearchTokens = ref<string[]>([])
     const loadingRight = ref(false)
-    const rightFolders = ref<any[]>([])
+    const rightAllFolders = ref<any[]>([])  // All folders from index
     const rightPdfPreviews = ref<Record<string, string>>({}) // Store first page of PDFs for preview
 
-    // Pagination (for infinite scroll)
-    const rightCurrentPage = ref(1)
-    const rightPageSize = ref(20)
-    const rightTotal = ref(0)
-    const rightCanLoadMore = computed(() => rightFolders.value.length < rightTotal.value)
+    // Display control (for infinite scroll)
+    const rightDisplayCount = ref(20)
+    const rightPageSize = 20
 
     async function renderPdfFirstPage(pdfUrl: string): Promise<string | null> {
       if (rightPdfPreviews.value[pdfUrl]) {
@@ -430,15 +420,41 @@ export default defineComponent({
         store.recordHotTag(trimmed)
         rightSearchInput.value = ''
 
-        // Reset and reload from beginning
-        rightFolders.value = []
-        rightCurrentPage.value = 1
-        loadRightPanel()
+        // Reset display count when search changes
+        rightDisplayCount.value = rightPageSize
       }
     }
 
-    // Right panel directly shows the folders from backend (already filtered)
-    const rightFilteredFolders = computed(() => rightFolders.value)
+    // Filter folders based on search tokens (frontend filtering)
+    const rightFilteredFolders = computed(() => {
+      if (rightSearchTokens.value.length === 0) {
+        return rightAllFolders.value
+      }
+
+      const tokens = rightSearchTokens.value.map(t => t.toLowerCase())
+      return rightAllFolders.value.filter((folder) => {
+        const searchableText = [
+          folder.name,
+          ...(folder.tags?.auth || []),
+          ...(folder.tags?.name || []),
+          ...(folder.tags?.custom || []),
+          ...(folder.tags?.others || []),
+          folder.tags?.category_main,
+          folder.tags?.category_sub
+        ].join(' ').toLowerCase()
+
+        return tokens.every((token) => searchableText.includes(token))
+      })
+    })
+
+    // Display folders with lazy loading (only show first N folders)
+    const rightDisplayedFolders = computed(() =>
+      rightFilteredFolders.value.slice(0, rightDisplayCount.value)
+    )
+
+    const rightCanLoadMore = computed(() =>
+      rightDisplayedFolders.value.length < rightFilteredFolders.value.length
+    )
 
     function rightPreviewImages(folder: any): Array<{url: string; type: 'image' | 'pdf'}> {
       if (!folder.file_list || folder.file_list.length === 0) return []
@@ -470,37 +486,16 @@ export default defineComponent({
     }
 
     async function loadRightPanel() {
-      if (loadingRight.value) return // Prevent duplicate loading
+      if (loadingRight.value) return
 
       loadingRight.value = true
       try {
-        // Build search params
-        const params: any = {
-          page: rightCurrentPage.value,
-          page_size: rightPageSize.value
-        }
-
-        // Add search tokens
-        if (rightSearchTokens.value.length > 0) {
-          params.keywords = rightSearchTokens.value.join(',')
-        }
-
-        // Call backend search API
-        const res = await axios.get('http://localhost:5001/manga-viewer/search', { params })
-
-        // Append new folders (for infinite scroll)
-        if (rightCurrentPage.value === 1) {
-          rightFolders.value = res.data.folders || []
-        } else {
-          rightFolders.value.push(...(res.data.folders || []))
-        }
-        rightTotal.value = res.data.total || 0
+        // Load full index (like manga viewer)
+        await store.loadIndex()
+        rightAllFolders.value = Object.values(store.mangaIndex.folders)
       } catch (e) {
         ElMessage.error('Failed to load manga viewer data')
-        if (rightCurrentPage.value === 1) {
-          rightFolders.value = []
-          rightTotal.value = 0
-        }
+        rightAllFolders.value = []
       } finally {
         loadingRight.value = false
       }
@@ -508,24 +503,19 @@ export default defineComponent({
 
     function removeRightSearchToken(index: number) {
       rightSearchTokens.value.splice(index, 1)
-      // Reset and reload
-      rightFolders.value = []
-      rightCurrentPage.value = 1
-      loadRightPanel()
+      // Reset display count when search changes
+      rightDisplayCount.value = rightPageSize
     }
 
     function clearRightSearch() {
       rightSearchTokens.value = []
-      // Reset and reload
-      rightFolders.value = []
-      rightCurrentPage.value = 1
-      loadRightPanel()
+      // Reset display count when search changes
+      rightDisplayCount.value = rightPageSize
     }
 
     function loadMoreRight() {
-      if (!loadingRight.value && rightCanLoadMore.value) {
-        rightCurrentPage.value++
-        loadRightPanel()
+      if (rightCanLoadMore.value) {
+        rightDisplayCount.value += rightPageSize
       }
     }
 
@@ -692,7 +682,7 @@ export default defineComponent({
       rightSearchInput,
       rightSearchTokens,
       loadingRight,
-      rightFilteredFolders,
+      rightDisplayedFolders,
       rightPreviewImages,
       rightPdfPreviews,
       rightCanLoadMore,

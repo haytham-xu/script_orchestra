@@ -307,61 +307,6 @@ class OpenFolderResource(Resource):
             return {"error": f"Failed to open folder: {str(e)}"}, 500
 
 
-@api.route("/manga-viewer/search")
-class MangaSearchResource(Resource):
-    def get(self):
-        """Search manga folders with pagination"""
-        try:
-            page = int(request.args.get('page', 1))
-            page_size = int(request.args.get('page_size', 20))
-            keywords = request.args.get('keywords', '').strip()
-
-            # Get all folders
-            all_folders = list(Repository.manga_index.folders.values())
-
-            # Filter by keywords if provided
-            if keywords:
-                keyword_list = [k.strip().lower() for k in keywords.split(',') if k.strip()]
-                if keyword_list:
-                    filtered = []
-                    for folder in all_folders:
-                        # Build searchable text
-                        searchable = ' '.join([
-                            folder.name.lower(),
-                            ' '.join(folder.tags.auth).lower() if folder.tags.auth else '',
-                            ' '.join(folder.tags.name).lower() if folder.tags.name else '',
-                            ' '.join(folder.tags.custom).lower() if folder.tags.custom else '',
-                            ' '.join(folder.tags.others).lower() if folder.tags.others else '',
-                            folder.tags.category_main.lower() if folder.tags.category_main else '',
-                            folder.tags.category_sub.lower() if folder.tags.category_sub else ''
-                        ])
-
-                        # Check if all keywords match
-                        if all(kw in searchable for kw in keyword_list):
-                            filtered.append(folder)
-
-                    all_folders = filtered
-
-            # Calculate pagination
-            total = len(all_folders)
-            start_idx = (page - 1) * page_size
-            end_idx = start_idx + page_size
-            paginated = all_folders[start_idx:end_idx]
-
-            # Convert to dict
-            folders_data = [folder.to_dict() for folder in paginated]
-
-            return {
-                "folders": folders_data,
-                "total": total,
-                "page": page,
-                "page_size": page_size
-            }, 200
-
-        except Exception as e:
-            return {"error": f"Failed to search: {str(e)}"}, 500
-
-
 @api.route("/manga-viewer/refresh-index")
 class RefreshIndexResource(Resource):
     def post(self):
@@ -392,13 +337,40 @@ class ImportScanResource(Resource):
             return {"error": f"Path is not a directory: {scan_path}"}, 400
 
         try:
+            # Load cache
+            cache_file = os.path.join(scan_path_abs, 'import_cache.json')
+            cache = {}
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cache = json.load(f)
+                except Exception as e:
+                    print(f"Failed to load cache: {e}")
+                    cache = {}
+
             # Get all subdirectories (one level only)
             entries = os.listdir(scan_path_abs)
             folders = []
+            updated_cache = {}
 
             for entry in entries:
                 entry_path = os.path.join(scan_path_abs, entry)
                 if os.path.isdir(entry_path):
+                    # Calculate folder size first
+                    folder_size = 0
+                    for root, _, files in os.walk(entry_path):
+                        for file in files:
+                            try:
+                                folder_size += os.path.getsize(os.path.join(root, file))
+                            except:
+                                pass
+
+                    # Create cache key: folder_name + size
+                    cache_key = f"{entry}_{folder_size}"
+
+                    # Check if cache exists and is valid
+                    cached_data = cache.get(cache_key)
+
                     # Get all image files recursively
                     image_files = []
                     for root, _, files in os.walk(entry_path):
@@ -414,26 +386,55 @@ class ImportScanResource(Resource):
                     # Natural sort the files
                     image_files = natsorted(image_files)
 
-                    # Calculate folder size
-                    folder_size = 0
-                    for root, _, files in os.walk(entry_path):
-                        for file in files:
-                            try:
-                                folder_size += os.path.getsize(os.path.join(root, file))
-                            except:
-                                pass
-
-                    folders.append({
+                    folder_data = {
                         'id': str(uuid.uuid4()),
                         'name': entry,
                         'path': entry_path,
                         'files': image_files,
                         'size': folder_size,
                         'number': len(image_files)
-                    })
+                    }
+
+                    # If cache exists, use cached tags
+                    if cached_data:
+                        folder_data['auth'] = cached_data.get('auth', [])
+                        folder_data['name_tags'] = cached_data.get('name_tags', [])
+                        folder_data['custom'] = cached_data.get('custom', [])
+                        folder_data['others'] = cached_data.get('others', [])
+                        folder_data['category_main'] = cached_data.get('category_main', '')
+                        folder_data['category_sub'] = cached_data.get('category_sub', '')
+                        folder_data['mosaic'] = cached_data.get('mosaic', '')
+                    else:
+                        folder_data['auth'] = []
+                        folder_data['name_tags'] = []
+                        folder_data['custom'] = []
+                        folder_data['others'] = []
+                        folder_data['category_main'] = ''
+                        folder_data['category_sub'] = ''
+                        folder_data['mosaic'] = ''
+
+                    folders.append(folder_data)
+
+                    # Update cache (keep tags data)
+                    updated_cache[cache_key] = {
+                        'auth': folder_data.get('auth', []),
+                        'name_tags': folder_data.get('name_tags', []),
+                        'custom': folder_data.get('custom', []),
+                        'others': folder_data.get('others', []),
+                        'category_main': folder_data.get('category_main', ''),
+                        'category_sub': folder_data.get('category_sub', ''),
+                        'mosaic': folder_data.get('mosaic', '')
+                    }
 
             # Sort folders by name
             folders = natsorted(folders, key=lambda x: x['name'])
+
+            # Save updated cache
+            try:
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(updated_cache, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"Failed to save cache: {e}")
 
             return {
                 'folders': folders,
@@ -498,6 +499,37 @@ class ImportMoveResource(Resource):
             new_name = new_name_with_suffix
 
         try:
+            # Update cache before moving (so we can find import_cache.json in source dir)
+            import_path = os.path.dirname(source_path)
+            cache_file = os.path.join(import_path, 'import_cache.json')
+
+            # Calculate folder size for cache key
+            folder_size = folder_data.get('size', 0)
+            folder_name = os.path.basename(source_path)
+            cache_key = f"{folder_name}_{folder_size}"
+
+            # Update cache with user's tags
+            try:
+                cache = {}
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cache = json.load(f)
+
+                cache[cache_key] = {
+                    'auth': folder_data.get('auth', []),
+                    'name_tags': folder_data.get('name_tags', []),
+                    'custom': folder_data.get('custom', []),
+                    'others': folder_data.get('others', []),
+                    'category_main': category_main,
+                    'category_sub': category_sub,
+                    'mosaic': folder_data.get('mosaic', '')
+                }
+
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(cache, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"Failed to update cache: {e}")
+
             # Move folder
             shutil.move(source_path, target_path)
 
