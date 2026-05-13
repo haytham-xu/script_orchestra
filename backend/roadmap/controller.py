@@ -2,6 +2,7 @@
 Roadmap Kanban API Controller
 """
 import uuid
+from datetime import datetime, timedelta
 from flask import request
 from flask_restx import Namespace, Resource
 from .models import Task, TaskStatus, TaskPriority
@@ -14,13 +15,30 @@ ns = Namespace("")
 class TaskListResource(Resource):
     def get(self):
         """
-        Get all tasks
+        Get all tasks (auto-delete done tasks older than 7 days)
 
         Returns:
             List of all tasks
         """
         try:
             tasks = task_storage.get_all_tasks()
+
+            # Auto-delete done tasks older than 7 days
+            cutoff_date = datetime.now() - timedelta(days=7)
+            tasks_to_delete = []
+
+            for task in tasks:
+                if task.status == TaskStatus.DONE and task.created_at < cutoff_date:
+                    tasks_to_delete.append(task.id)
+
+            # Delete old tasks
+            for task_id in tasks_to_delete:
+                task_storage.delete_task(task_id)
+
+            # Reload tasks after deletion
+            if tasks_to_delete:
+                tasks = task_storage.get_all_tasks()
+
             return {"tasks": [task.to_dict() for task in tasks]}, 200
         except Exception as e:
             return {"error": str(e)}, 500
@@ -31,8 +49,7 @@ class TaskListResource(Resource):
 
         Body:
             {
-                "title": "Task title",
-                "description": "Task description (optional)",
+                "content": "Task content",
                 "priority": "medium",
                 "status": "todo"
             }
@@ -42,8 +59,8 @@ class TaskListResource(Resource):
         """
         try:
             data = request.json
-            if not data or "title" not in data:
-                return {"error": "Missing required field: title"}, 400
+            if not data or "content" not in data:
+                return {"error": "Missing required field: content"}, 400
 
             # Generate UUID
             task_id = str(uuid.uuid4())
@@ -57,8 +74,7 @@ class TaskListResource(Resource):
             # Create task
             task = Task(
                 id=task_id,
-                title=data["title"],
-                description=data.get("description", ""),
+                content=data["content"],
                 priority=data.get("priority", TaskPriority.MEDIUM),
                 status=status,
                 order=max_order + 1
@@ -93,8 +109,7 @@ class TaskResource(Resource):
 
         Body:
             {
-                "title": "Updated title",
-                "description": "Updated description",
+                "content": "Updated content",
                 "priority": "high",
                 "status": "in_progress"
             }

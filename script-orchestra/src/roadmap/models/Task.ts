@@ -17,8 +17,7 @@ export enum TaskPriority {
 
 export interface Task {
   id: string
-  title: string
-  description: string
+  content: string
   status: TaskStatus
   priority: TaskPriority
   createdAt: string

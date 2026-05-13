@@ -69,10 +69,8 @@ class TaskStorage:
         for i, task in enumerate(tasks):
             if task.id == task_id:
                 # Update fields
-                if "title" in updates:
-                    task.title = updates["title"]
-                if "description" in updates:
-                    task.description = updates["description"]
+                if "content" in updates:
+                    task.content = updates["content"]
                 if "status" in updates:
                     task.status = updates["status"]
                 if "priority" in updates:

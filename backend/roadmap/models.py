@@ -26,17 +26,15 @@ class Task:
     def __init__(
         self,
         id: str,
-        title: str,
+        content: str,
         status: TaskStatus = TaskStatus.TODO,
-        description: str = "",
         priority: TaskPriority = TaskPriority.MEDIUM,
         created_at: Optional[datetime] = None,
         order: int = 0
     ):
         self.id = id
-        self.title = title
+        self.content = content
         self.status = status
-        self.description = description
         self.priority = priority
         self.created_at = created_at or datetime.now()
         self.order = order
@@ -45,9 +43,8 @@ class Task:
         """Convert to dict for JSON serialization"""
         return {
             "id": self.id,
-            "title": self.title,
+            "content": self.content,
             "status": self.status,
-            "description": self.description,
             "priority": self.priority,
             "createdAt": self.created_at.isoformat(),
             "order": self.order
@@ -56,11 +53,18 @@ class Task:
     @staticmethod
     def from_dict(data: dict) -> 'Task':
         """Create Task from dict"""
+        # Support migration from old format
+        content = data.get("content")
+        if not content:
+            # Fallback to old title/description format
+            title = data.get("title", "")
+            description = data.get("description", "")
+            content = f"{title}\n{description}" if description else title
+
         return Task(
             id=data["id"],
-            title=data["title"],
+            content=content,
             status=data.get("status", TaskStatus.TODO),
-            description=data.get("description", ""),
             priority=data.get("priority", TaskPriority.MEDIUM),
             created_at=datetime.fromisoformat(data["createdAt"]) if "createdAt" in data else None,
             order=data.get("order", 0)

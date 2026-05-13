@@ -1,24 +1,17 @@
 <template>
   <el-card class="task-card" :class="priorityClass" shadow="hover">
-    <template #header>
-      <div class="task-header">
-        <span class="task-title">{{ task.title }}</span>
-        <el-tag :type="priorityTagType" size="small" class="priority-tag">{{ task.priority }}</el-tag>
+    <div class="task-container">
+      <div class="task-content" @click="$emit('edit', task)">
+        {{ task.content }}
+      </div>
+      <div class="task-footer">
+        <span class="task-date">{{ formatDate(task.createdAt) }}</span>
         <div class="task-actions">
-          <el-button text size="small" @click="$emit('edit', task)">
-            <el-icon><Edit /></el-icon>
-          </el-button>
-          <el-button text size="small" type="danger" @click="$emit('delete', task.id)">
+          <el-tag :type="priorityTagType" size="small" class="priority-tag">{{ task.priority }}</el-tag>
+          <el-button text size="small" type="danger" @click.stop="$emit('delete', task.id)" class="delete-btn">
             <el-icon><Delete /></el-icon>
           </el-button>
         </div>
-      </div>
-    </template>
-
-    <div class="task-body">
-      <p v-if="task.description" class="task-description">{{ task.description }}</p>
-      <div class="task-meta">
-        <span class="task-date">{{ formatDate(task.createdAt) }}</span>
       </div>
     </div>
   </el-card>
@@ -28,7 +21,7 @@
 import { computed } from 'vue'
 import type { Task } from '../models/Task'
 import { TaskPriority } from '../models/Task'
-import { Edit, Delete } from '@element-plus/icons-vue'
+import { Delete } from '@element-plus/icons-vue'
 
 interface Props {
   task: Task
@@ -87,26 +80,50 @@ function formatDate(dateStr: string): string {
   border-left: 3px solid var(--el-color-info);
 }
 
-.task-card :deep(.el-card__header) {
-  padding: 10px 12px;
-}
-
 .task-card :deep(.el-card__body) {
   padding: 12px;
 }
 
-.task-header {
+.task-container {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
 }
 
-.task-title {
-  font-weight: 500;
+.task-content {
   font-size: 14px;
-  flex: 1;
-  margin-right: 8px;
+  line-height: 1.5;
+  color: var(--el-text-color-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  min-height: 40px;
+}
+
+.task-content:hover {
+  background-color: var(--el-fill-color-light);
+}
+
+.task-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.task-date {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+}
+
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .priority-tag {
@@ -115,38 +132,9 @@ function formatDate(dateStr: string): string {
   height: 20px;
   line-height: 20px;
   font-size: 11px;
-  flex-shrink: 0;
 }
 
-.task-actions {
-  display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.task-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.task-description {
-  margin: 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.task-meta {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  margin-top: 2px;
-}
-
-.task-date {
-  font-size: 11px;
-  color: var(--el-text-color-placeholder);
+.delete-btn {
+  padding: 4px;
 }
 </style>

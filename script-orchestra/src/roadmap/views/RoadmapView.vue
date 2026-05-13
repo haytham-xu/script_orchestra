@@ -1,7 +1,11 @@
 <template>
-  <div class="roadmap-container">
+  <div class="roadmap-container" @click="handleClickOutside">
     <el-header class="header">
       <h1>Roadmap - Kanban Board</h1>
+      <el-button type="primary" @click="openCreateForm('todo')">
+        <el-icon><Plus /></el-icon>
+        Add Task
+      </el-button>
     </el-header>
 
     <el-main class="main-content">
@@ -17,6 +21,30 @@
           </div>
 
           <div class="column-body">
+            <!-- Inline Create Form (在Todo列顶部显示) -->
+            <div v-if="createFormColumn === column.id && column.id === 'todo'" class="inline-create-form" @click.stop>
+              <el-input
+                v-model="taskForm.content"
+                type="textarea"
+                placeholder="Task content..."
+                :rows="3"
+                class="content-input"
+                @keyup.esc="cancelCreate"
+                ref="contentInput"
+              />
+              <div class="form-actions">
+                <el-radio-group v-model="taskForm.priority" size="small">
+                  <el-radio-button :label="TaskPriority.LOW">Low</el-radio-button>
+                  <el-radio-button :label="TaskPriority.MEDIUM">Med</el-radio-button>
+                  <el-radio-button :label="TaskPriority.HIGH">High</el-radio-button>
+                </el-radio-group>
+                <div class="action-buttons">
+                  <el-button size="small" @click="cancelCreate">Cancel</el-button>
+                  <el-button size="small" type="primary" @click="saveTask">Add</el-button>
+                </div>
+              </div>
+            </div>
+
             <draggable
               :model-value="column.tasks"
               :group="{ name: 'tasks', pull: true, put: true }"
@@ -29,20 +57,14 @@
               <template #item="{ element }">
                 <div :data-task-id="element.id">
                   <!-- Edit Form -->
-                  <div v-if="editingTaskId === element.id" class="inline-edit-form">
+                  <div v-if="editingTaskId === element.id" class="inline-edit-form" @click.stop>
                     <el-input
-                      v-model="taskForm.title"
-                      placeholder="Task title..."
-                      class="title-input"
-                      @keyup.enter="saveTask"
-                      @keyup.esc="cancelEdit"
-                    />
-                    <el-input
-                      v-model="taskForm.description"
+                      v-model="taskForm.content"
                       type="textarea"
-                      placeholder="Description (optional)..."
-                      :rows="2"
-                      class="desc-input"
+                      placeholder="Task content..."
+                      :rows="3"
+                      class="content-input"
+                      ref="editContentInput"
                     />
                     <div class="form-actions">
                       <el-radio-group v-model="taskForm.priority" size="small">
@@ -67,47 +89,6 @@
                 </div>
               </template>
             </draggable>
-
-            <!-- Inline Create Form -->
-            <div v-if="createFormColumn === column.id" class="inline-create-form">
-              <el-input
-                v-model="taskForm.title"
-                placeholder="Task title..."
-                class="title-input"
-                @keyup.enter="saveTask"
-                @keyup.esc="cancelCreate"
-                ref="titleInput"
-              />
-              <el-input
-                v-model="taskForm.description"
-                type="textarea"
-                placeholder="Description (optional)..."
-                :rows="2"
-                class="desc-input"
-              />
-              <div class="form-actions">
-                <el-radio-group v-model="taskForm.priority" size="small">
-                  <el-radio-button :label="TaskPriority.LOW">Low</el-radio-button>
-                  <el-radio-button :label="TaskPriority.MEDIUM">Med</el-radio-button>
-                  <el-radio-button :label="TaskPriority.HIGH">High</el-radio-button>
-                </el-radio-group>
-                <div class="action-buttons">
-                  <el-button size="small" @click="cancelCreate">Cancel</el-button>
-                  <el-button size="small" type="primary" @click="saveTask">Add</el-button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Add Task Button (只在Todo列显示) -->
-            <el-button
-              v-if="column.id === 'todo' && createFormColumn !== column.id"
-              text
-              class="add-task-btn"
-              @click="openCreateForm(column.id)"
-            >
-              <el-icon><Plus /></el-icon>
-              Add Task
-            </el-button>
           </div>
         </div>
       </div>
@@ -131,6 +112,7 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
+  justify-content: space-between;
 }
 
 .header h1 {
@@ -215,51 +197,27 @@
   transform: translateY(-1px);
 }
 
-.inline-create-form .title-input,
-.inline-edit-form .title-input {
-  margin-bottom: 10px;
-}
-
-.inline-create-form .title-input :deep(.el-input__wrapper),
-.inline-edit-form .title-input :deep(.el-input__wrapper) {
-  font-size: 15px;
-  font-weight: 500;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  transition: all 0.2s;
-}
-
-.inline-create-form .title-input :deep(.el-input__wrapper:hover),
-.inline-edit-form .title-input :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-}
-
-.inline-create-form .title-input :deep(.el-input__wrapper.is-focus),
-.inline-edit-form .title-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
-}
-
-.inline-create-form .desc-input,
-.inline-edit-form .desc-input {
+.inline-create-form .content-input,
+.inline-edit-form .content-input {
   margin-bottom: 12px;
 }
 
-.inline-create-form .desc-input :deep(.el-textarea__inner),
-.inline-edit-form .desc-input :deep(.el-textarea__inner) {
-  font-size: 13px;
+.inline-create-form .content-input :deep(.el-textarea__inner),
+.inline-edit-form .content-input :deep(.el-textarea__inner) {
+  font-size: 14px;
   line-height: 1.5;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   transition: all 0.2s;
 }
 
-.inline-create-form .desc-input :deep(.el-textarea__inner:hover),
-.inline-edit-form .desc-input :deep(.el-textarea__inner:hover) {
+.inline-create-form .content-input :deep(.el-textarea__inner:hover),
+.inline-edit-form .content-input :deep(.el-textarea__inner:hover) {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
-.inline-create-form .desc-input :deep(.el-textarea__inner:focus),
-.inline-edit-form .desc-input :deep(.el-textarea__inner:focus) {
+.inline-create-form .content-input :deep(.el-textarea__inner:focus),
+.inline-edit-form .content-input :deep(.el-textarea__inner:focus) {
   box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
 }
 
@@ -309,21 +267,5 @@
 .action-buttons .el-button--primary {
   background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
   border: none;
-}
-
-.add-task-btn {
-  width: 100%;
-  justify-content: center;
-  padding: 8px;
-  color: var(--el-text-color-secondary);
-  border: 1px dashed var(--el-border-color);
-  border-radius: 4px;
-  transition: all 0.3s;
-}
-
-.add-task-btn:hover {
-  color: var(--el-color-primary);
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
 }
 </style>

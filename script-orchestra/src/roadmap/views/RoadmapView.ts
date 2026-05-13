@@ -20,15 +20,15 @@ export default defineComponent({
 
     // Inline create form state
     const createFormColumn = ref<TaskStatus | null>(null)
-    const titleInput = ref<any>(null)
+    const contentInput = ref<any>(null)
 
     // Inline edit state
     const editingTaskId = ref<string | null>(null)
+    const editContentInput = ref<any>(null)
 
     // Form data
     const taskForm = ref({
-      title: '',
-      description: '',
+      content: '',
       priority: TaskPriority.MEDIUM,
       status: TaskStatus.TODO
     })
@@ -42,14 +42,13 @@ export default defineComponent({
     function openCreateForm(status: TaskStatus) {
       createFormColumn.value = status
       taskForm.value = {
-        title: '',
-        description: '',
+        content: '',
         priority: TaskPriority.MEDIUM,
         status: status
       }
       // Focus input after DOM update
       nextTick(() => {
-        titleInput.value?.focus()
+        contentInput.value?.focus()
       })
     }
 
@@ -57,8 +56,7 @@ export default defineComponent({
     function cancelCreate() {
       createFormColumn.value = null
       taskForm.value = {
-        title: '',
-        description: '',
+        content: '',
         priority: TaskPriority.MEDIUM,
         status: TaskStatus.TODO
       }
@@ -68,19 +66,26 @@ export default defineComponent({
     function openEditForm(task: Task) {
       editingTaskId.value = task.id
       taskForm.value = {
-        title: task.title,
-        description: task.description,
+        content: task.content,
         priority: task.priority as TaskPriority,
         status: task.status
       }
+      // Focus textarea after DOM update
+      nextTick(() => {
+        const textarea = editContentInput.value?.$el?.querySelector('textarea')
+        if (textarea) {
+          textarea.focus()
+          // Set cursor to end
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+        }
+      })
     }
 
     // Cancel edit
     function cancelEdit() {
       editingTaskId.value = null
       taskForm.value = {
-        title: '',
-        description: '',
+        content: '',
         priority: TaskPriority.MEDIUM,
         status: TaskStatus.TODO
       }
@@ -88,8 +93,8 @@ export default defineComponent({
 
     // Save task
     async function saveTask() {
-      if (!taskForm.value.title.trim()) {
-        ElMessage.warning('Please enter task title')
+      if (!taskForm.value.content.trim()) {
+        ElMessage.warning('Please enter task content')
         return
       }
 
@@ -108,6 +113,31 @@ export default defineComponent({
       } catch (error) {
         ElMessage.error('Operation failed')
       }
+    }
+
+    // Handle clicking outside edit/create form
+    function handleClickOutside(event: MouseEvent) {
+      // Check if we're in edit or create mode
+      const isEditMode = editingTaskId.value !== null
+      const isCreateMode = createFormColumn.value !== null
+
+      if (!isEditMode && !isCreateMode) {
+        return
+      }
+
+      // Check if click target is inside forms
+      const target = event.target as HTMLElement
+      const editForm = target.closest('.inline-edit-form')
+      const createForm = target.closest('.inline-create-form')
+      const taskContent = target.closest('.task-content')
+
+      // Don't trigger if clicking inside forms or on task content
+      if (editForm || createForm || taskContent) {
+        return
+      }
+
+      // Clicked outside - auto save
+      saveTask()
     }
 
     // Delete task
@@ -157,7 +187,7 @@ export default defineComponent({
         return
       }
 
-      console.log('[Drag] Moving task:', task.title, 'from', fromColumnId, 'to', toColumnId)
+      console.log('[Drag] Moving task:', task.content, 'from', fromColumnId, 'to', toColumnId)
 
       try {
         // Update task status
@@ -179,7 +209,8 @@ export default defineComponent({
       store,
       createFormColumn,
       editingTaskId,
-      titleInput,
+      contentInput,
+      editContentInput,
       taskForm,
       TaskPriority,
       openCreateForm,
@@ -188,7 +219,8 @@ export default defineComponent({
       cancelEdit,
       saveTask,
       deleteTask,
-      handleDragEnd
+      handleDragEnd,
+      handleClickOutside
     }
   }
 })
