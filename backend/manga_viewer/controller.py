@@ -489,6 +489,7 @@ class ImportMoveResource(Resource):
         target_path = os.path.join(target_sub_path, new_name)
 
         # Handle name collision
+        original_target = target_path
         if os.path.exists(target_path):
             base_name = new_name
             counter = 1
@@ -499,6 +500,24 @@ class ImportMoveResource(Resource):
             new_name = new_name_with_suffix
 
         try:
+            # Log import operation (backend)
+            print(f"\n{'='*80}")
+            print(f"📦 [Import] Starting import operation")
+            print(f"{'='*80}")
+            print(f"  Folder Name: {os.path.basename(source_path)}")
+            print(f"  From Path:   {source_path}")
+            print(f"  To Path:     {target_path}")
+            print(f"  Category:    {category_main}_{category_sub}")
+            print(f"  Size:        {folder_data.get('size', 0) / 1024 / 1024:.2f} MB")
+            print(f"  Files:       {folder_data.get('number', 0)}")
+            print(f"  Tags:")
+            print(f"    - Auth:    {folder_data.get('auth', [])}")
+            print(f"    - Name:    {folder_data.get('name_tags', [])}")
+            print(f"    - Custom:  {folder_data.get('custom', [])}")
+            print(f"    - Mosaic:  {folder_data.get('mosaic', '')}")
+            if original_target != target_path:
+                print(f"  ⚠️  Name collision detected, renamed to: {new_name}")
+
             # Update cache before moving (so we can find import_cache.json in source dir)
             import_path = os.path.dirname(source_path)
             cache_file = os.path.join(import_path, 'import_cache.json')
@@ -528,10 +547,11 @@ class ImportMoveResource(Resource):
                 with open(cache_file, 'w', encoding='utf-8') as f:
                     json.dump(cache, f, indent=2, ensure_ascii=False)
             except Exception as e:
-                print(f"Failed to update cache: {e}")
+                print(f"  ⚠️  Failed to update cache: {e}")
 
             # Move folder
             shutil.move(source_path, target_path)
+            print(f"  ✅ Folder moved successfully")
 
             # Create folder entry in index
             folder_id = str(uuid.uuid4())
@@ -566,11 +586,95 @@ class ImportMoveResource(Resource):
             rebuildMeta()
             Repository.save_index()
 
+            print(f"  ✅ Index updated, folder ID: {folder_id}")
+            print(f"{'='*80}\n")
+
             return {
                 "message": "Folder imported successfully",
                 "folderId": folder_id,
                 "targetPath": target_path
             }, 200
+
+        except Exception as e:
+            print(f"  ❌ Import failed: {str(e)}")
+            print(f"{'='*80}\n")
+            return {"error": f"Failed to import folder: {str(e)}"}, 500
+
+
+@api.route("/manga-viewer/import/delete")
+class ImportDeleteResource(Resource):
+    def post(self):
+        """Move a folder to delete_paths (soft delete)"""
+        data = request.json or {}
+        source_path = data.get('sourcePath', '')
+
+        if not source_path:
+            return {"error": "sourcePath is required"}, 400
+
+        if not os.path.exists(source_path):
+            return {"error": f"Source path does not exist: {source_path}"}, 404
+
+        if not os.path.isdir(source_path):
+            return {"error": f"Source path is not a directory: {source_path}"}, 400
+
+        # Get delete path from settings
+        delete_root = settings_manager.get_setting('paths.delete_paths', '')
+        if not delete_root:
+            return {"error": "delete_paths not configured in settings"}, 400
+
+        delete_root_abs = os.path.abspath(delete_root)
+        os.makedirs(delete_root_abs, exist_ok=True)
+
+        try:
+            # Log delete operation (backend)
+            print(f"\n{'='*80}")
+            print(f"🗑️  [Delete] Starting soft delete operation")
+            print(f"{'='*80}")
+            print(f"  Folder Name: {os.path.basename(source_path)}")
+            print(f"  From Path:   {source_path}")
+
+            # Calculate folder info for logging
+            folder_size = 0
+            file_count = 0
+            for root, _, files in os.walk(source_path):
+                for file in files:
+                    try:
+                        folder_size += os.path.getsize(os.path.join(root, file))
+                        file_count += 1
+                    except:
+                        pass
+
+            print(f"  Size:        {folder_size / 1024 / 1024:.2f} MB")
+            print(f"  Files:       {file_count}")
+
+            # Move to delete_paths (handle name collision)
+            dst = os.path.join(delete_root_abs, os.path.basename(source_path))
+
+            if os.path.exists(dst):
+                base_name = os.path.basename(source_path)
+                counter = 1
+                while os.path.exists(dst):
+                    new_name = f"{base_name}_deleted_{counter}"
+                    dst = os.path.join(delete_root_abs, new_name)
+                    counter += 1
+                print(f"  ⚠️  Name collision, renamed to: {os.path.basename(dst)}")
+
+            # Move the folder
+            shutil.move(source_path, dst)
+
+            print(f"  To Path:     {dst}")
+            print(f"  ✅ Folder moved to delete_paths successfully")
+            print(f"{'='*80}\n")
+
+            return {
+                "message": "Folder moved to delete_paths successfully",
+                "deletePath": dst
+            }, 200
+
+        except Exception as e:
+            print(f"  ❌ Delete failed: {str(e)}")
+            print(f"{'='*80}\n")
+            return {"error": f"Failed to delete folder: {str(e)}"}, 500
 
         except Exception as e:
             return {"error": f"Failed to import folder: {str(e)}"}, 500

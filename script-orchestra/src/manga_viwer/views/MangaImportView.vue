@@ -233,6 +233,15 @@
             Next →
           </el-button>
           <el-button
+            type="danger"
+            @click="handleDelete"
+            :loading="deleting"
+            size="small"
+            style="flex: 1.5;"
+          >
+            Delete
+          </el-button>
+          <el-button
             type="primary"
             @click="handleImport"
             :loading="importing"

@@ -23,6 +23,7 @@ export default defineComponent({
     const folders = ref<any[]>([])
     const currentIndex = ref(0)
     const importing = ref(false)
+    const deleting = ref(false)
 
     // Form data
     const formData = ref({
@@ -248,7 +249,7 @@ export default defineComponent({
 
       importing.value = true
       try {
-        await axios.post('http://localhost:5001/manga-viewer/import/move', {
+        const importData = {
           sourcePath: currentFolder.value.path,
           folderData: {
             name: formData.value.name,
@@ -262,6 +263,30 @@ export default defineComponent({
             size: currentFolder.value.size,
             number: currentFolder.value.number
           }
+        }
+
+        // Log import operation (frontend)
+        console.log('📦 [Import] Starting import operation:', {
+          folder: currentFolder.value.name,
+          from: currentFolder.value.path,
+          category: `${importData.folderData.category_main}_${importData.folderData.category_sub}`,
+          size: `${Math.round(currentFolder.value.size / 1024 / 1024)} MB`,
+          files: currentFolder.value.number,
+          tags: {
+            auth: importData.folderData.auth,
+            name: importData.folderData.name_tags,
+            custom: importData.folderData.custom,
+            mosaic: importData.folderData.mosaic
+          }
+        })
+
+        const response = await axios.post('http://localhost:5001/manga-viewer/import/move', importData)
+
+        // Log success
+        console.log('✅ [Import] Success:', {
+          folder: currentFolder.value.name,
+          to: response.data.targetPath,
+          folderId: response.data.folderId
         })
 
         ElMessage.success('Folder imported successfully')
@@ -290,9 +315,70 @@ export default defineComponent({
           currentIndex.value = -1
         }
       } catch (e: any) {
+        console.error('❌ [Import] Failed:', {
+          folder: currentFolder.value.name,
+          error: e.response?.data?.error || e.message
+        })
         ElMessage.error(e.response?.data?.error || 'Failed to import folder')
       } finally {
         importing.value = false
+      }
+    }
+
+    async function handleDelete() {
+      if (!currentFolder.value) return
+
+      // Confirm deletion
+      const confirmed = confirm(`Are you sure you want to move folder to delete_paths: ${currentFolder.value.name}?\n\n(This is a soft delete - folder will be moved to delete_paths, not permanently deleted)`)
+      if (!confirmed) return
+
+      deleting.value = true
+      try {
+        // Log delete operation (frontend)
+        console.log('🗑️  [Delete] Starting soft delete operation:', {
+          folder: currentFolder.value.name,
+          from: currentFolder.value.path,
+          size: `${Math.round(currentFolder.value.size / 1024 / 1024)} MB`,
+          files: currentFolder.value.number
+        })
+
+        const response = await axios.post('http://localhost:5001/manga-viewer/import/delete', {
+          sourcePath: currentFolder.value.path
+        })
+
+        // Log success
+        console.log('✅ [Delete] Success:', {
+          folder: currentFolder.value.name,
+          movedTo: response.data.deletePath
+        })
+
+        ElMessage.success('Folder moved to delete_paths successfully')
+
+        // Remove current folder from list
+        folders.value.splice(currentIndex.value, 1)
+
+        // Auto move to next folder (same logic as import)
+        if (folders.value.length > 0) {
+          if (currentIndex.value < folders.value.length) {
+            const tempIndex = currentIndex.value
+            currentIndex.value = -1
+            await nextTick()
+            currentIndex.value = tempIndex
+          } else {
+            currentIndex.value = folders.value.length - 1
+          }
+        } else {
+          ElMessage.info('All folders processed!')
+          currentIndex.value = -1
+        }
+      } catch (e: any) {
+        console.error('❌ [Delete] Failed:', {
+          folder: currentFolder.value.name,
+          error: e.response?.data?.error || e.message
+        })
+        ElMessage.error(e.response?.data?.error || 'Failed to delete folder')
+      } finally {
+        deleting.value = false
       }
     }
 
@@ -658,6 +744,7 @@ export default defineComponent({
       folders,
       currentIndex,
       importing,
+      deleting,
       formData,
       categoryMainOptions,
       categorySubOptions,
@@ -685,6 +772,7 @@ export default defineComponent({
       addCustom,
       addOthers,
       handleImport,
+      handleDelete,
       goBack,
       // Middle panel
       middleFolder,
