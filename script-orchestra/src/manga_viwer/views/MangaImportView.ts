@@ -41,6 +41,9 @@ export default defineComponent({
     const categoryMainOptions = ref<Array<{id: string, label?: string, target_folder?: string}>>([])
     const categorySubOptions = ref<Array<{id: string, label?: string}>>([])
 
+    // Root path from settings (for relative path calculation)
+    const rootPath = ref('')
+
     // Tag input states
     const showAuthInput = ref(false)
     const showNameInput = ref(false)
@@ -651,6 +654,77 @@ export default defineComponent({
       loadRightPanel()
     }
 
+    function getRelativePath(fullPath: string): string {
+      // Get relative path from root_path to parent folder (exclude folder name)
+      // Example: /root/manga/boutique/bou_hf/FolderName -> boutique/bou_hf
+      if (!fullPath || !rootPath.value) return ''
+
+      try {
+        // Normalize paths for comparison
+        const normalizedFull = fullPath.replace(/\\/g, '/').replace(/\/+$/, '')
+        const normalizedRoot = rootPath.value.replace(/\\/g, '/').replace(/\/+$/, '')
+
+        // Check if path starts with root_path
+        if (normalizedFull.startsWith(normalizedRoot)) {
+          // Get relative path from root
+          let relativePath = normalizedFull.substring(normalizedRoot.length).replace(/^\//, '')
+
+          // Remove last part (folder name)
+          const parts = relativePath.split('/').filter(p => p)
+          if (parts.length > 1) {
+            // Return all parts except the last one (folder name)
+            return parts.slice(0, -1).join('/')
+          }
+        }
+
+        return ''
+      } catch (e) {
+        console.error('Failed to parse path:', e)
+        return ''
+      }
+    }
+
+    async function deleteRightFolder(folder: any) {
+      if (!folder || !folder.id) return
+
+      // Confirm deletion
+      const confirmed = confirm(`Delete folder from index: ${folder.name}?\n\nPath: ${folder.path}\n\n(This will move the folder to delete_paths)`)
+      if (!confirmed) return
+
+      try {
+        // Log delete operation (frontend)
+        console.log('🗑️  [Delete Index] Starting delete operation:', {
+          folder: folder.name,
+          path: folder.path,
+          folderId: folder.id,
+          size: `${Math.round(folder.size / 1024 / 1024)} MB`
+        })
+
+        // Call backend delete API (same as main viewer delete)
+        await axios.post('http://localhost:5001/manga-viewer/delete', {
+          folderIds: [folder.id]
+        })
+
+        // Log success
+        console.log('✅ [Delete Index] Success:', {
+          folder: folder.name,
+          folderId: folder.id
+        })
+
+        ElMessage.success('Folder deleted from index successfully')
+
+        // Refresh right panel to remove deleted folder
+        await loadRightPanel()
+
+      } catch (e: any) {
+        console.error('❌ [Delete Index] Failed:', {
+          folder: folder.name,
+          error: e.response?.data?.error || e.message
+        })
+        ElMessage.error(e.response?.data?.error || 'Failed to delete folder from index')
+      }
+    }
+
     function copyCardToForm(folder: any) {
       if (!currentFolder.value) {
         ElMessage.warning('Please scan and select a folder first')
@@ -713,6 +787,11 @@ export default defineComponent({
           if (res.data.categories) {
             categoryMainOptions.value = res.data.categories.main || []
             categorySubOptions.value = res.data.categories.sub || []
+          }
+
+          // Load root path (for relative path calculation)
+          if (res.data.paths && res.data.paths.root_path) {
+            rootPath.value = res.data.paths.root_path
           }
 
           // Load import path and auto-scan
@@ -792,7 +871,8 @@ export default defineComponent({
       onRightScroll,
       selectMiddleFolder,
       refreshRightPanel,
-      copyCardToForm
+      getRelativePath,
+      deleteRightFolder
     }
   }
 })

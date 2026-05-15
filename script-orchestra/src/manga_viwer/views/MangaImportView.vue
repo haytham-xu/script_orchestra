@@ -374,9 +374,17 @@
             <div class="name-row">
               <div class="name-cell" :title="f.name">{{ f.name }}</div>
               <div class="action-buttons">
-                <el-button size="small" type="primary" @click="copyCardToForm(f)" title="Copy tags to left form">
-                  📋 Copy
+                <el-button size="small" type="danger" @click="deleteRightFolder(f)" title="Delete from index">
+                  🗑️ Delete
                 </el-button>
+              </div>
+            </div>
+
+            <!-- Display relative path (without root and folder name) -->
+            <div class="tags-row" v-if="getRelativePath(f.path)">
+              <div class="tags-group">
+                <span class="label">Path:</span>
+                <span class="value path-text">{{ getRelativePath(f.path) }}</span>
               </div>
             </div>
 
@@ -921,6 +929,15 @@
 .value {
   font-size: 11px;
   color: #3f4c5a;
+}
+
+.path-text {
+  font-family: monospace;
+  background: #f5f7fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #606266;
 }
 
 .thumbs {
