@@ -1,5 +1,5 @@
 
-import { defineComponent, ref, onMounted, nextTick } from 'vue'
+import { defineComponent, ref, onMounted, nextTick, watch } from 'vue'
 import { useRoadmapStore } from '../service/RoadmapStore'
 import { TaskStatus, TaskPriority } from '../models/Task'
 import type { Task } from '../models/Task'
@@ -21,10 +21,12 @@ export default defineComponent({
     // Inline create form state
     const createFormColumn = ref<TaskStatus | null>(null)
     const contentInput = ref<any>(null)
+    const isComposingCreate = ref(false)
 
     // Inline edit state
     const editingTaskId = ref<string | null>(null)
     const editContentInput = ref<any>(null)
+    const isComposingEdit = ref(false)
 
     // Form data
     const taskForm = ref({
@@ -38,6 +40,45 @@ export default defineComponent({
       store.loadTasks()
     })
 
+    // Watch for create form opening and focus input
+    watch(createFormColumn, (newVal) => {
+      if (newVal !== null) {
+        // Form is opening, focus the input
+        nextTick(() => {
+          setTimeout(() => {
+            // Use document.querySelector as a reliable fallback
+            const textarea = document.querySelector('.inline-create-form textarea') as HTMLTextAreaElement
+            if (textarea) {
+              textarea.focus()
+              console.log('[Focus] Successfully focused create form textarea')
+            } else {
+              console.log('[Focus] Could not find create form textarea')
+            }
+          }, 100)
+        })
+      }
+    })
+
+    // Watch for edit form opening and focus input
+    watch(editingTaskId, (newVal) => {
+      if (newVal !== null) {
+        // Form is opening, focus the input
+        nextTick(() => {
+          setTimeout(() => {
+            const textarea = document.querySelector('.inline-edit-form textarea') as HTMLTextAreaElement
+            if (textarea) {
+              textarea.focus()
+              // Set cursor to end
+              textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+              console.log('[Focus] Successfully focused edit form textarea')
+            } else {
+              console.log('[Focus] Could not find edit form textarea')
+            }
+          }, 100)
+        })
+      }
+    })
+
     // Open inline create form
     function openCreateForm(status: TaskStatus) {
       createFormColumn.value = status
@@ -46,10 +87,7 @@ export default defineComponent({
         priority: TaskPriority.MEDIUM,
         status: status
       }
-      // Focus input after DOM update
-      nextTick(() => {
-        contentInput.value?.focus()
-      })
+      // Focus is now handled by the watch
     }
 
     // Cancel create
@@ -70,15 +108,7 @@ export default defineComponent({
         priority: task.priority as TaskPriority,
         status: task.status
       }
-      // Focus textarea after DOM update
-      nextTick(() => {
-        const textarea = editContentInput.value?.$el?.querySelector('textarea')
-        if (textarea) {
-          textarea.focus()
-          // Set cursor to end
-          textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-        }
-      })
+      // Focus is now handled by the watch
     }
 
     // Cancel edit
@@ -113,6 +143,37 @@ export default defineComponent({
       } catch (error) {
         ElMessage.error('Operation failed')
       }
+    }
+
+    // Handle composition events for IME (Input Method Editor)
+    function handleCompositionStart(isCreate: boolean) {
+      if (isCreate) {
+        isComposingCreate.value = true
+      } else {
+        isComposingEdit.value = true
+      }
+    }
+
+    function handleCompositionEnd(isCreate: boolean) {
+      if (isCreate) {
+        isComposingCreate.value = false
+      } else {
+        isComposingEdit.value = false
+      }
+    }
+
+    // Handle Enter key press
+    function handleEnterKey(event: KeyboardEvent, isCreate: boolean) {
+      const isComposing = isCreate ? isComposingCreate.value : isComposingEdit.value
+
+      // If IME is composing OR event.isComposing is true, don't save
+      if (isComposing || event.isComposing) {
+        return // Let the IME handle it
+      }
+
+      // Not composing - treat Enter as save
+      event.preventDefault()
+      saveTask()
     }
 
     // Handle clicking outside edit/create form
@@ -220,7 +281,10 @@ export default defineComponent({
       saveTask,
       deleteTask,
       handleDragEnd,
-      handleClickOutside
+      handleClickOutside,
+      handleCompositionStart,
+      handleCompositionEnd,
+      handleEnterKey
     }
   }
 })

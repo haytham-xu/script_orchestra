@@ -2,10 +2,6 @@
   <div class="roadmap-container" @click="handleClickOutside">
     <el-header class="header">
       <h1>Roadmap - Kanban Board</h1>
-      <el-button type="primary" @click="openCreateForm('todo')">
-        <el-icon><Plus /></el-icon>
-        Add Task
-      </el-button>
     </el-header>
 
     <el-main class="main-content">
@@ -21,30 +17,6 @@
           </div>
 
           <div class="column-body">
-            <!-- Inline Create Form (在Todo列顶部显示) -->
-            <div v-if="createFormColumn === column.id && column.id === 'todo'" class="inline-create-form" @click.stop>
-              <el-input
-                v-model="taskForm.content"
-                type="textarea"
-                placeholder="Task content..."
-                :rows="3"
-                class="content-input"
-                @keyup.esc="cancelCreate"
-                ref="contentInput"
-              />
-              <div class="form-actions">
-                <el-radio-group v-model="taskForm.priority" size="small">
-                  <el-radio-button :label="TaskPriority.LOW">Low</el-radio-button>
-                  <el-radio-button :label="TaskPriority.MEDIUM">Med</el-radio-button>
-                  <el-radio-button :label="TaskPriority.HIGH">High</el-radio-button>
-                </el-radio-group>
-                <div class="action-buttons">
-                  <el-button size="small" @click="cancelCreate">Cancel</el-button>
-                  <el-button size="small" type="primary" @click="saveTask">Add</el-button>
-                </div>
-              </div>
-            </div>
-
             <draggable
               :model-value="column.tasks"
               :group="{ name: 'tasks', pull: true, put: true }"
@@ -54,6 +26,35 @@
               animation="200"
               @end="handleDragEnd"
             >
+              <template #header>
+                <!-- Inline Create Form (在Todo列顶部显示) -->
+                <div v-if="createFormColumn === column.id && column.id === 'todo'" class="inline-create-form" @click.stop>
+                  <el-input
+                    v-model="taskForm.content"
+                    type="textarea"
+                    placeholder="Task content..."
+                    :rows="3"
+                    class="content-input"
+                    @keyup.esc="cancelCreate"
+                    @keydown.enter="handleEnterKey($event, true)"
+                    @compositionstart="handleCompositionStart(true)"
+                    @compositionend="handleCompositionEnd(true)"
+                    ref="contentInput"
+                    autofocus
+                  />
+                  <div class="form-actions">
+                    <el-radio-group v-model="taskForm.priority" size="small">
+                      <el-radio-button :label="TaskPriority.LOW">Low</el-radio-button>
+                      <el-radio-button :label="TaskPriority.MEDIUM">Med</el-radio-button>
+                      <el-radio-button :label="TaskPriority.HIGH">High</el-radio-button>
+                    </el-radio-group>
+                    <div class="action-buttons">
+                      <el-button size="small" @click="cancelCreate">Cancel</el-button>
+                      <el-button size="small" type="primary" @click="saveTask">Add</el-button>
+                    </div>
+                  </div>
+                </div>
+              </template>
               <template #item="{ element }">
                 <div :data-task-id="element.id">
                   <!-- Edit Form -->
@@ -64,6 +65,9 @@
                       placeholder="Task content..."
                       :rows="3"
                       class="content-input"
+                      @keydown.enter="handleEnterKey($event, false)"
+                      @compositionstart="handleCompositionStart(false)"
+                      @compositionend="handleCompositionEnd(false)"
                       ref="editContentInput"
                     />
                     <div class="form-actions">
@@ -89,6 +93,16 @@
                 </div>
               </template>
             </draggable>
+
+            <!-- Add Task 按钮 (仅在Todo列底部显示) -->
+            <div
+              v-if="column.id === 'todo'"
+              class="add-task-btn"
+              @click.stop="openCreateForm('todo')"
+            >
+              <el-icon><Plus /></el-icon>
+              <span>Add Task</span>
+            </div>
           </div>
         </div>
       </div>
@@ -176,8 +190,7 @@
 }
 
 .task-list {
-  min-height: 100px;
-  margin-bottom: 12px;
+  min-height: 20px;
 }
 
 .inline-create-form,
@@ -267,5 +280,27 @@
 .action-buttons .el-button--primary {
   background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
   border: none;
+}
+
+.add-task-btn {
+  width: 100%;
+  padding: 12px;
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.add-task-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #f0f7ff;
 }
 </style>
