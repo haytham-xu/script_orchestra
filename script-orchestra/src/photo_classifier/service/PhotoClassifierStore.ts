@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { GroupList, DefaultGroup, FileModel, Group } from '@/photo_classifier/service/Model.ts'
 import { FileStatus, FileType, GroupStatus } from '@/photo_classifier/service/Model.ts'
-import { postMoveFolder } from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { postMoveFolder, saveWorkingState, loadWorkingState, clearWorkingState } from '@/photo_classifier/service/PhotoClassifierService.ts'
 import { ElMessage } from 'element-plus'
 
 interface PhotoClassifierStoreState {
@@ -23,23 +23,102 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
 
   getters: {
     defaultGroupAvatar: (state): string => {
+      // First try to find an image
       const firstImage = state.defaultGroup.files.find(
         (file: FileModel) => file.fileType === FileType.Image,
       )
-      return firstImage?.fileUrl ?? ''
+      if (firstImage) return firstImage.fileUrl
+
+      // If no image, use first video
+      const firstVideo = state.defaultGroup.files.find(
+        (file: FileModel) => file.fileType === FileType.Video,
+      )
+      return firstVideo?.fileUrl ?? ''
     },
 
     groupAvatar: (state) => {
       return (groupId: number): string => {
-        const firstImage = state.groupList.groupList[groupId].files.find(
+        const group = state.groupList.groupList[groupId]
+        if (!group) return ''
+
+        // First try to find an image
+        const firstImage = group.files.find(
           (file: FileModel) => file.fileType === FileType.Image,
         )
-        return firstImage?.fileUrl ?? ''
+        if (firstImage) return firstImage.fileUrl
+
+        // If no image, use first video
+        const firstVideo = group.files.find(
+          (file: FileModel) => file.fileType === FileType.Video,
+        )
+        return firstVideo?.fileUrl ?? ''
       }
     },
   },
 
   actions: {
+    // Auto-save working state to backend
+    async autoSaveWorkingState() {
+      try {
+        await saveWorkingState({
+          defaultGroup: this.defaultGroup,
+          groupList: this.groupList,
+        })
+      } catch (error) {
+        console.error('Failed to auto-save working state:', error)
+        // Don't show error message to avoid annoying the user
+      }
+    },
+
+    // Load working state from backend
+    async loadWorkingStateFromBackend(): Promise<boolean> {
+      try {
+        const state = await loadWorkingState()
+        if (state) {
+          this.defaultGroup = state.defaultGroup
+          this.groupList = state.groupList
+          this.initialized = true
+          return true
+        }
+        return false
+      } catch (error) {
+        console.error('Failed to load working state:', error)
+        return false
+      }
+    },
+
+    // Clear working state (called after Apply or path change)
+    async clearWorkingStateFromBackend(targetRootPath?: string) {
+      try {
+        await clearWorkingState(targetRootPath)
+      } catch (error) {
+        console.error('Failed to clear working state:', error)
+      }
+    },
+
+    // Reset all state (clear all groups and marks)
+    async resetAllState() {
+      // Clear all groups
+      this.groupList = { groupList: [] }
+
+      // Reset all files to pending state and clear categoryTag
+      for (const file of this.defaultGroup.files) {
+        file.fileStatus = FileStatus.Pending
+        file.categoryTag = null
+        file.groupId = null
+      }
+
+      // Reset current group index
+      this.currentGroupIndex = -1
+
+      ElMessage.success({
+        message: '已重置所有分组和标记',
+        offset: 20,
+        duration: 1500,
+        customClass: 'message-bottom'
+      })
+    },
+
     initDefaultGroup(defaultGroup: DefaultGroup) {
       if (this.initialized) return
       this.defaultGroup = defaultGroup
@@ -89,6 +168,10 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           duration: 1500,
           customClass: 'message-bottom'
         })
+
+        // Auto-save after creating new group
+        this.autoSaveWorkingState()
+
         return newGroupId
       } finally {
         this.groupActionLock = false
@@ -143,6 +226,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           duration: 1500,
           customClass: 'message-bottom'
         })
+
+        // Auto-save after adding file to group
+        this.autoSaveWorkingState()
       } finally {
         this.groupActionLock = false
       }
@@ -179,6 +265,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
       if (successCount === 0 && skipCount === 0 && errorCount === 0) {
         ElMessage.warning({ message: '没有需要处理的文件', ...messageConfig })
       }
+
+      // Auto-save after applying files
+      await this.autoSaveWorkingState()
     },
 
     async applyFile(a_file: FileModel): Promise<'success' | 'skip' | 'error'> {
@@ -233,6 +322,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
 
         this.groupList.groupList.push(newGroup)
         this.currentGroupIndex = newGroupId
+
+        // Auto-save after batch creating new group
+        this.autoSaveWorkingState()
 
         return newGroupId
       } finally {
@@ -289,6 +381,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
         } else if (addedCount > 0) {
           ElMessage.success({ message: `添加了 ${addedCount} 张到分组 ${groupIndex}`, ...messageConfig })
         }
+
+        // Auto-save after batch adding files to group
+        this.autoSaveWorkingState()
       } finally {
         this.groupActionLock = false
       }
@@ -323,6 +418,9 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           duration: 1500,
           customClass: 'message-bottom'
         })
+
+        // Auto-save after removing files from group
+        this.autoSaveWorkingState()
       } finally {
         this.groupActionLock = false
       }

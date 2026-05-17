@@ -23,7 +23,9 @@ api = Api(
 from .file_controller import ns as file_ns
 from .folder_controller import ns as folder_ns
 from .settings_controller import ns as settings_ns
+from .working_state_controller import ns as working_state_ns
 
 api.add_namespace(file_ns)
 api.add_namespace(folder_ns)
 api.add_namespace(settings_ns)
+api.add_namespace(working_state_ns)

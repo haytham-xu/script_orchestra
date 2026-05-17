@@ -5,6 +5,8 @@ import { useRouter } from 'vue-router'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import { FileCategory, FileStatus } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
+import { getFileList } from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { loadRootPathFromBackend } from '@/photo_classifier/config/settings'
 
 export default defineComponent({
   name: 'PCDefaultGroupView',
@@ -96,9 +98,26 @@ export default defineComponent({
 
       await photoClassifierStore.applyFiles(fileList)
 
+      // Clear working state after successful apply
+      await photoClassifierStore.clearWorkingStateFromBackend()
+
       // 处理完成后，调整 currentIndex
       if (currentIndex.value >= displayFileList.value.length) {
         currentIndex.value = Math.max(0, displayFileList.value.length - 1)
+      }
+    }
+
+    async function initStore() {
+      // Load settings from backend first
+      await loadRootPathFromBackend()
+
+      // Try to load working state first
+      const hasWorkingState = await photoClassifierStore.loadWorkingStateFromBackend()
+
+      // If no working state, load files from backend
+      if (!hasWorkingState) {
+        const defaultFiles = await getFileList()
+        photoClassifierStore.initDefaultGroup(defaultFiles)
       }
     }
 
@@ -208,6 +227,10 @@ export default defineComponent({
     }
 
     onMounted(() => {
+      // Initialize store if not already loaded
+      if (!photoClassifierStore.initialized) {
+        initStore()
+      }
       window.addEventListener('keydown', handleKeyDown)
     })
 

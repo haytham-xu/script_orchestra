@@ -13,6 +13,12 @@
           批量选择
         </el-button>
         <el-button
+          type="danger"
+          @click="handleReset"
+        >
+          重置
+        </el-button>
+        <el-button
           type="primary"
           :icon="Setting"
           @click="settingsDrawerVisible = true"
@@ -30,13 +36,21 @@
       shadow="hover"
       @click="goToDefaultGroup"
     >
-      <!-- <div class="card-title">Default</div> -->
-      <el-image
-        v-if="photoClassifierStore.defaultGroupAvatar"
-        :src="photoClassifierStore.defaultGroupAvatar"
-        fit="cover"
-        class="card-image"
-      ></el-image>
+      <template v-if="photoClassifierStore.defaultGroupAvatar">
+        <video
+          v-if="isVideoUrl(photoClassifierStore.defaultGroupAvatar)"
+          :src="photoClassifierStore.defaultGroupAvatar"
+          class="card-image"
+          muted
+          preload="metadata"
+        />
+        <el-image
+          v-else
+          :src="photoClassifierStore.defaultGroupAvatar"
+          fit="cover"
+          class="card-image"
+        ></el-image>
+      </template>
     </el-card>
 
     <el-card
@@ -46,13 +60,21 @@
       shadow="hover"
       @click="goToGroup(group, index)"
     >
-      <!-- <div class="card-title">Group {{ index + 1 }}</div> -->
-      <el-image
-        v-if="photoClassifierStore.groupAvatar(index)"
-        :src="photoClassifierStore.groupAvatar(index)"
-        fit="cover"
-        class="card-image"
-      ></el-image>
+      <template v-if="photoClassifierStore.groupAvatar(index)">
+        <video
+          v-if="isVideoUrl(photoClassifierStore.groupAvatar(index))"
+          :src="photoClassifierStore.groupAvatar(index)"
+          class="card-image"
+          muted
+          preload="metadata"
+        />
+        <el-image
+          v-else
+          :src="photoClassifierStore.groupAvatar(index)"
+          fit="cover"
+          class="card-image"
+        ></el-image>
+      </template>
     </el-card>
     </div>
 

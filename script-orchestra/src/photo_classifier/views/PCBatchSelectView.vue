@@ -40,29 +40,35 @@
         @click="handleImageClick(file, index, $event)"
       >
         <div class="image-wrapper">
-          <el-image
-            :src="file.fileUrl + '&thumbnail=true&size=300'"
-            fit="cover"
+          <!-- Video preview -->
+          <video
+            v-if="file.fileType === 'video'"
+            :src="file.fileUrl"
             class="thumbnail"
-            lazy
-            :loading="'lazy'"
+            preload="metadata"
+            muted
           >
-            <template #placeholder>
-              <div class="image-slot">
-                <el-icon class="is-loading"><Loading /></el-icon>
-              </div>
-            </template>
-            <template #error>
-              <div class="image-slot">
-                <el-icon><Picture /></el-icon>
-              </div>
-            </template>
-          </el-image>
+            Your browser does not support the video tag.
+          </video>
+
+          <!-- Image preview - use original URL without thumbnail to preserve EXIF orientation -->
+          <img
+            v-else
+            :src="file.fileUrl + '&thumbnail=true&size=300'"
+            class="thumbnail"
+            loading="lazy"
+            @error="handleImageError"
+          />
+
           <div v-if="isSelected(file)" class="selection-badge">
             <el-icon><Check /></el-icon>
           </div>
           <div v-if="file.groupId != null" class="group-badge">
             Group {{ file.groupId }}
+          </div>
+          <!-- Video indicator badge -->
+          <div v-if="file.fileType === 'video'" class="video-badge">
+            <el-icon><VideoPlay /></el-icon>
           </div>
         </div>
       </div>
@@ -201,6 +207,7 @@
 .thumbnail {
   width: 100%;
   height: 100%;
+  object-fit: contain;
 }
 
 .selection-badge {
@@ -227,6 +234,21 @@
   color: white;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.video-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 30px;
+  height: 30px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 18px;
 }
 
 .image-slot {

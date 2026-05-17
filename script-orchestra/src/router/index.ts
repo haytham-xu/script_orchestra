@@ -51,7 +51,7 @@ const router = createRouter({
       path: '/photo-classifier/group/:groupId',
       name: 'photo-classifier-group',
       component: PCGroupView,
-      props: true,
+      props: (route) => ({ groupId: Number(route.params.groupId) }),
     },
     {
       path: '/photo-classifier/group/:groupId/batch',

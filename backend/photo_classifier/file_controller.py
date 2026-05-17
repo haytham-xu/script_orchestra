@@ -2,7 +2,7 @@ from flask_restx import Namespace, Resource
 from flask import send_file, request
 from . import config
 import os
-from PIL import Image
+from PIL import Image, ImageOps
 import hashlib
 from pathlib import Path
 
@@ -62,6 +62,9 @@ class FileResource(Resource):
 
                 # Generate thumbnail
                 img = Image.open(file_path)
+
+                # Apply EXIF orientation to fix rotation issues
+                img = ImageOps.exif_transpose(img)
 
                 # Convert RGBA to RGB if needed
                 if img.mode == 'RGBA':

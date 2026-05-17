@@ -1,10 +1,12 @@
 import { defineComponent, ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, Loading, Picture } from '@element-plus/icons-vue'
+import { Check, Loading, Picture, VideoPlay } from '@element-plus/icons-vue'
 import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import { FileStatus } from '@/photo_classifier/service/Model.ts'
+import { getFileList } from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { loadRootPathFromBackend } from '@/photo_classifier/config/settings'
 
 export default defineComponent({
   name: 'PCBatchSelectView',
@@ -39,6 +41,20 @@ export default defineComponent({
 
     function goBack() {
       router.push('/photo-classifier')
+    }
+
+    async function initStore() {
+      // Load settings from backend first
+      await loadRootPathFromBackend()
+
+      // Try to load working state first
+      const hasWorkingState = await photoClassifierStore.loadWorkingStateFromBackend()
+
+      // If no working state, load files from backend
+      if (!hasWorkingState) {
+        const defaultFiles = await getFileList()
+        photoClassifierStore.initDefaultGroup(defaultFiles)
+      }
     }
 
     function isSelected(file: FileModel): boolean {
@@ -104,6 +120,12 @@ export default defineComponent({
       loadedCount.value = pageSize
     }
 
+    function handleImageError(event: Event) {
+      const img = event.target as HTMLImageElement
+      img.style.display = 'none'
+      console.error('Failed to load image:', img.src)
+    }
+
     function loadMore() {
       if (hasMore.value) {
         loadedCount.value = Math.min(loadedCount.value + pageSize, allFiles.value.length)
@@ -122,6 +144,9 @@ export default defineComponent({
     }
 
     onMounted(() => {
+      // Initialize store with working state or fresh data
+      initStore()
+
       // 找到滚动容器并添加监听器
       const gridElement = document.querySelector('.image-grid')
       if (gridElement) {
@@ -151,10 +176,12 @@ export default defineComponent({
       createNewGroupWithSelected,
       addSelectedToGroup,
       handleFilterChange,
+      handleImageError,
       loadMore,
       Check,
       Loading,
       Picture,
+      VideoPlay,
     }
   },
 })

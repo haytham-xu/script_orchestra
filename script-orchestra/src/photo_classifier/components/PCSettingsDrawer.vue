@@ -46,6 +46,7 @@
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getRootPath, setRootPath, loadRootPathFromBackend } from '../config/settings'
+import { clearWorkingState } from '../service/PhotoClassifierService'
 import { useRouter } from 'vue-router'
 
 const props = defineProps<{
@@ -95,6 +96,9 @@ const handleSave = async () => {
   saving.value = true
 
   try {
+    // Clear working state for old path before switching
+    await clearWorkingState(currentPath.value)
+
     // Save to backend (will also update localStorage)
     await setRootPath(trimmedPath)
     ElMessage.success('Settings saved successfully')
@@ -102,11 +106,11 @@ const handleSave = async () => {
     // Close drawer
     visible.value = false
 
-    // Emit event and redirect
+    // Emit event to trigger reload
     emit('pathChanged')
 
-    // Redirect to photo-classifier route
-    router.push('/photo-classifier')
+    // Force reload the page to refresh all data
+    router.go(0)
   } catch (error) {
     ElMessage.error('Failed to save settings. Please check if the path exists.')
   } finally {

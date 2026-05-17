@@ -5,6 +5,8 @@ import { useRouter } from 'vue-router'
 import { FileCategory } from '@/photo_classifier/service/Model.ts'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
 import MediaComponment from '@/photo_classifier/components/MediaComponment.vue'
+import { getFileList } from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { loadRootPathFromBackend } from '@/photo_classifier/config/settings'
 
 export default defineComponent({
   name: 'PCGroupView',
@@ -75,7 +77,25 @@ export default defineComponent({
 
     const applyGroup = async () => {
       await photoClassifierStore.applyFiles(displayFileList.value)
+
+      // Clear working state after successful apply
+      await photoClassifierStore.clearWorkingStateFromBackend()
+
       goNextGroup()
+    }
+
+    async function initStore() {
+      // Load settings from backend first
+      await loadRootPathFromBackend()
+
+      // Try to load working state first
+      const hasWorkingState = await photoClassifierStore.loadWorkingStateFromBackend()
+
+      // If no working state, load files from backend
+      if (!hasWorkingState) {
+        const defaultFiles = await getFileList()
+        photoClassifierStore.initDefaultGroup(defaultFiles)
+      }
     }
 
     function handleKeydowna(e: KeyboardEvent) {
@@ -109,6 +129,10 @@ export default defineComponent({
     }
 
     onMounted(() => {
+      // Initialize store if not already loaded
+      if (!photoClassifierStore.initialized) {
+        initStore()
+      }
       window.addEventListener('keydown', handleKeydowna)
     })
 
