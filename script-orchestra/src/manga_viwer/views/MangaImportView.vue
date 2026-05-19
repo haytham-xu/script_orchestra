@@ -90,13 +90,13 @@
         <div class="classify-row">
           <div class="classify-section-inline" style="flex: 1;">
             <span class="classify-label">Category Main:</span>
-            <el-radio-group v-model="formData.category_main" size="small">
+            <el-radio-group v-model="formData.category_main" size="small" class="category-main-radio-group">
               <el-radio v-for="cat in categoryMainOptions" :key="cat.id" :label="cat.id">{{ cat.label || cat.id }}</el-radio>
             </el-radio-group>
           </div>
           <div class="classify-section-inline" style="width: 150px;">
             <span class="classify-label">Mosaic:</span>
-            <el-radio-group v-model="formData.mosaic" size="small">
+            <el-radio-group v-model="formData.mosaic" size="small" class="mosaic-radio-group">
               <el-radio label="true">✓</el-radio>
               <el-radio label="false">✗</el-radio>
             </el-radio-group>
@@ -720,20 +720,63 @@
   min-width: 0;
 }
 
-.category-sub-radio-group {
+/* Shared styles for all category radio groups */
+.category-sub-radio-group,
+.category-main-radio-group,
+.mosaic-radio-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 8px;
   flex: 1;
 }
 
-.category-sub-radio-group :deep(.el-radio) {
+.category-sub-radio-group :deep(.el-radio),
+.category-main-radio-group :deep(.el-radio),
+.mosaic-radio-group :deep(.el-radio) {
   margin-right: 0;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  padding: 0 10px;
+  height: 20px;
+  background: #ffffff;
+  transition: all 0.2s;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
 }
 
-.category-sub-radio-group :deep(.el-radio__label) {
-  font-size: 11px;
-  padding-left: 4px;
+.category-sub-radio-group :deep(.el-radio:hover),
+.category-main-radio-group :deep(.el-radio:hover),
+.mosaic-radio-group :deep(.el-radio:hover) {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.category-sub-radio-group :deep(.el-radio.is-checked),
+.category-main-radio-group :deep(.el-radio.is-checked),
+.mosaic-radio-group :deep(.el-radio.is-checked) {
+  background: #409eff;
+  border-color: #409eff;
+}
+
+.category-sub-radio-group :deep(.el-radio.is-checked .el-radio__label),
+.category-main-radio-group :deep(.el-radio.is-checked .el-radio__label),
+.mosaic-radio-group :deep(.el-radio.is-checked .el-radio__label) {
+  color: #ffffff;
+}
+
+.category-sub-radio-group :deep(.el-radio__input),
+.category-main-radio-group :deep(.el-radio__input),
+.mosaic-radio-group :deep(.el-radio__input) {
+  display: none;
+}
+
+.category-sub-radio-group :deep(.el-radio__label),
+.category-main-radio-group :deep(.el-radio__label),
+.mosaic-radio-group :deep(.el-radio__label) {
+  font-size: 12px;
+  padding-left: 0;
+  color: #606266;
 }
 
 /* Middle Panel (1/3) */

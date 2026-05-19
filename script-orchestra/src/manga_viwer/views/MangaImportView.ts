@@ -188,6 +188,10 @@ export default defineComponent({
     function prevFolder() {
       if (currentIndex.value > 0) {
         currentIndex.value--
+        // Clear right search and middle preview
+        clearRightSearch()
+        middleFolder.value = null
+        middleFiles.value = []
       } else {
         ElMessage.info('This is the first folder')
       }
@@ -196,6 +200,10 @@ export default defineComponent({
     function nextFolder() {
       if (currentIndex.value < folders.value.length - 1) {
         currentIndex.value++
+        // Clear right search and middle preview
+        clearRightSearch()
+        middleFolder.value = null
+        middleFiles.value = []
       } else {
         ElMessage.info('This is the last folder')
       }
@@ -297,8 +305,15 @@ export default defineComponent({
         // Remove current folder from list
         folders.value.splice(currentIndex.value, 1)
 
-        // Refresh right panel
-        await loadRightPanel()
+        // Clear right search and middle preview
+        clearRightSearch()
+        middleFolder.value = null
+        middleFiles.value = []
+
+        // Refresh right panel (only if user has searched)
+        if (rightSearchTokens.value.length > 0) {
+          await loadRightPanel()
+        }
 
         // Auto move to next folder (which is now at the same index)
         if (folders.value.length > 0) {
@@ -359,6 +374,11 @@ export default defineComponent({
 
         // Remove current folder from list
         folders.value.splice(currentIndex.value, 1)
+
+        // Clear right search and middle preview
+        clearRightSearch()
+        middleFolder.value = null
+        middleFiles.value = []
 
         // Auto move to next folder (same logic as import)
         if (folders.value.length > 0) {
@@ -537,13 +557,19 @@ export default defineComponent({
 
         // Reset display count when search changes
         rightDisplayCount.value = rightPageSize
+
+        // Load right panel data if not loaded yet
+        if (rightAllFolders.value.length === 0) {
+          loadRightPanel()
+        }
       }
     }
 
     // Filter folders based on search tokens (frontend filtering)
     const rightFilteredFolders = computed(() => {
+      // Don't show anything by default - user must search first
       if (rightSearchTokens.value.length === 0) {
-        return rightAllFolders.value
+        return []
       }
 
       const tokens = rightSearchTokens.value.map(t => t.toLowerCase())
@@ -772,7 +798,8 @@ export default defineComponent({
 
     // Init & Cleanup
     onMounted(async () => {
-      loadRightPanel()
+      // Don't auto-load right panel - wait for user to search
+      // loadRightPanel()
       window.addEventListener('keydown', handleKeyDown)
 
       // Load settings (import path and categories)
