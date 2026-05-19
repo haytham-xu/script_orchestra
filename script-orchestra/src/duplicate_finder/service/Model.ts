@@ -3,6 +3,8 @@ export interface DuplicateImage {
   phash: string
   resolution: string
   filesize: number
+  display_path?: string  // Directory path without root prefix
+  filename?: string      // Just the filename
 }
 
 export interface DuplicateGroup {
@@ -34,4 +36,6 @@ export interface DeleteResponse {
 export interface Settings {
   delete_target_path: string
   similarity_threshold: number
+  root_path?: string
+  folder_paths?: string[]
 }

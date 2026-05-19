@@ -2,16 +2,17 @@
  * Duplicate Finder View Logic
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage } from 'element-plus'
-import { DuplicateFinderService, type ImageInfo, type ScanResult } from '../service/DuplicateFinderService'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { DuplicateFinderService, type ImageInfo, type ScanResult, type Settings } from '../service/DuplicateFinderService'
 import io, { Socket } from 'socket.io-client'
 import { v4 as uuidv4 } from 'uuid'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
 
 export function useDuplicateFinderView() {
-  const scanPaths = ref<string>('')
+  const selectedFolders = ref<string[]>([])
   const threshold = ref(90)
   const isScanning = ref(false)
+  const isSaving = ref(false)
   const scanProgress = ref({
     current: 0,
     total: 0,
@@ -20,6 +21,16 @@ export function useDuplicateFinderView() {
   })
   const scanResult = ref<ScanResult | null>(null)
   const selectedForDelete = ref<Set<string>>(new Set())
+  const settings = ref<Settings>({
+    delete_target_path: '',
+    similarity_threshold: 90,
+    folder_paths: [],
+    folder_root_paths: {}
+  })
+  const showWhitelistDrawer = ref(false)
+  const whitelist = ref<Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }>>([])
+  const isLoadingWhitelist = ref(false)
+  const isCleaning = ref(false)
 
   let socket: Socket | null = null
   let currentScanId: string | null = null
@@ -53,19 +64,18 @@ export function useDuplicateFinderView() {
    * Start scan
    */
   async function startScan() {
-    if (!scanPaths.value.trim()) {
-      ElMessage.warning('Please enter at least one path')
+    if (selectedFolders.value.length === 0) {
+      ElMessage.warning('Please select at least one folder')
       return
     }
 
-    // Parse paths (comma or newline separated)
-    const paths = scanPaths.value
-      .split(/[,\n]/)
-      .map(p => p.trim())
-      .filter(p => p.length > 0)
-
-    if (paths.length === 0) {
-      ElMessage.warning('Please enter valid paths')
+    // Save settings before scanning
+    try {
+      settings.value.similarity_threshold = threshold.value
+      await DuplicateFinderService.updateSettings(settings.value)
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to save settings:', error)
+      ElMessage.error(error.message || 'Failed to save settings')
       return
     }
 
@@ -115,7 +125,7 @@ export function useDuplicateFinderView() {
     // Start scan
     try {
       await DuplicateFinderService.scan({
-        paths,
+        paths: selectedFolders.value,
         threshold: threshold.value,
         scan_id: currentScanId
       })
@@ -246,6 +256,238 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Load settings
+   */
+  async function loadSettings() {
+    try {
+      const result = await DuplicateFinderService.getSettings()
+      settings.value = result
+      threshold.value = result.similarity_threshold || 90
+
+      // Initialize folder_root_paths if not present (backward compatibility)
+      if (!settings.value.folder_root_paths) {
+        settings.value.folder_root_paths = {}
+      }
+
+      // Auto-select all folders on load
+      if (result.folder_paths && result.folder_paths.length > 0) {
+        selectedFolders.value = [...result.folder_paths]
+      }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to load settings:', error)
+    }
+  }
+
+  /**
+   * Save folder settings
+   */
+  async function saveFolderSettings() {
+    isSaving.value = true
+    try {
+      // Update threshold in settings
+      settings.value.similarity_threshold = threshold.value
+
+      await DuplicateFinderService.updateSettings(settings.value)
+      ElMessage.success('Settings saved successfully')
+
+      // Reload settings to update UI
+      await loadSettings()
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to save settings:', error)
+      ElMessage.error(error.message || 'Failed to save settings')
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  /**
+   * Save advanced settings (delete_target_path, phash_db_path, similarity_threshold)
+   */
+  async function saveAdvancedSettings() {
+    isSaving.value = true
+    try {
+      await DuplicateFinderService.updateSettings({
+        similarity_threshold: threshold.value,
+        delete_target_path: settings.value.delete_target_path,
+        phash_db_path: settings.value.phash_db_path
+      })
+      // Update local settings
+      settings.value.similarity_threshold = threshold.value
+      ElMessage.success('Advanced settings saved successfully')
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to save advanced settings:', error)
+      ElMessage.error(error.message || 'Failed to save advanced settings')
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  /**
+   * Add folder path to settings
+   */
+  function addFolderPath() {
+    if (!settings.value.folder_paths) {
+      settings.value.folder_paths = []
+    }
+    if (!settings.value.folder_root_paths) {
+      settings.value.folder_root_paths = {}
+    }
+    settings.value.folder_paths.push('')
+  }
+
+  /**
+   * Remove folder path from settings
+   */
+  function removeFolderPath(index: number) {
+    if (settings.value.folder_paths) {
+      const pathToRemove = settings.value.folder_paths[index]
+      settings.value.folder_paths.splice(index, 1)
+      // Also remove from folder_root_paths
+      if (settings.value.folder_root_paths && pathToRemove) {
+        delete settings.value.folder_root_paths[pathToRemove]
+      }
+    }
+  }
+
+  /**
+   * Add exclude folder path to settings
+   */
+  function addExcludeFolderPath() {
+    if (!settings.value.exclude_folder_paths) {
+      settings.value.exclude_folder_paths = []
+    }
+    settings.value.exclude_folder_paths.push('')
+  }
+
+  /**
+   * Remove exclude folder path from settings
+   */
+  function removeExcludeFolderPath(index: number) {
+    if (settings.value.exclude_folder_paths) {
+      settings.value.exclude_folder_paths.splice(index, 1)
+    }
+  }
+
+  /**
+   * Add group to whitelist
+   */
+  async function addGroupToWhitelist(group: ImageInfo[], groupIndex: number) {
+    if (group.length === 0) return
+
+    const firstImage = group[0]
+    const filename = firstImage.filename || firstImage.file_path.split('/').pop() || ''
+    const filesize = firstImage.filesize
+
+    try {
+      await ElMessageBox.confirm(
+        `Add "${filename}" (${formatFileSize(filesize)}) to whitelist? This group will not appear in future scans.`,
+        'Add to Whitelist',
+        {
+          confirmButtonText: 'Add',
+          cancelButtonText: 'Cancel',
+          type: 'info'
+        }
+      )
+
+      await DuplicateFinderService.addToWhitelist(filename, filesize, `Group ${groupIndex + 1}`, firstImage.file_path)
+      ElMessage.success('Added to whitelist')
+
+      // Auto-refresh whitelist
+      await loadWhitelist()
+
+      // Remove this group from results
+      if (scanResult.value) {
+        scanResult.value.duplicate_groups.splice(groupIndex, 1)
+      }
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Failed to add to whitelist:', error)
+        ElMessage.error(error.message || 'Failed to add to whitelist')
+      }
+    }
+  }
+
+  /**
+   * Load whitelist
+   */
+  async function loadWhitelist() {
+    isLoadingWhitelist.value = true
+    try {
+      const result = await DuplicateFinderService.getWhitelist()
+      whitelist.value = result.whitelist
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to load whitelist:', error)
+      ElMessage.error(error.message || 'Failed to load whitelist')
+    } finally {
+      isLoadingWhitelist.value = false
+    }
+  }
+
+  /**
+   * Remove from whitelist
+   */
+  async function removeFromWhitelist(filename: string, filesize: number, index: number) {
+    try {
+      await ElMessageBox.confirm(
+        `Remove "${filename}" from whitelist?`,
+        'Confirm Remove',
+        {
+          confirmButtonText: 'Remove',
+          cancelButtonText: 'Cancel',
+          type: 'warning'
+        }
+      )
+
+      await DuplicateFinderService.removeFromWhitelist(filename, filesize)
+      ElMessage.success('Removed from whitelist')
+
+      // Remove from local list
+      whitelist.value.splice(index, 1)
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Failed to remove from whitelist:', error)
+        ElMessage.error(error.message || 'Failed to remove from whitelist')
+      }
+    }
+  }
+
+  /**
+   * Format timestamp to readable string
+   */
+  function formatTimestamp(timestamp: number): string {
+    const date = new Date(timestamp * 1000)
+    return date.toLocaleString()
+  }
+
+  /**
+   * Clean up database by removing entries for files that no longer exist
+   */
+  async function cleanupDatabase() {
+    try {
+      await ElMessageBox.confirm(
+        'This will scan your folder paths and remove database entries for files that no longer exist. Continue?',
+        'Confirm Cleanup',
+        {
+          confirmButtonText: 'Clean',
+          cancelButtonText: 'Cancel',
+          type: 'warning'
+        }
+      )
+
+      isCleaning.value = true
+      const result = await DuplicateFinderService.cleanupDatabase()
+      ElMessage.success(result.message || `Cleanup complete: removed ${result.removed_hashes} hash entries and ${result.removed_whitelist} whitelist entries`)
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Cleanup failed:', error)
+        ElMessage.error(error.message || 'Cleanup failed')
+      }
+    } finally {
+      isCleaning.value = false
+    }
+  }
+
+  /**
    * Computed: Total files selected
    */
   const selectedCount = computed(() => selectedForDelete.value.size)
@@ -259,6 +501,7 @@ export function useDuplicateFinderView() {
 
   onMounted(() => {
     connectWebSocket()
+    loadSettings()
   })
 
   onBeforeUnmount(() => {
@@ -266,13 +509,19 @@ export function useDuplicateFinderView() {
   })
 
   return {
-    scanPaths,
+    selectedFolders,
     threshold,
     isScanning,
+    isSaving,
+    isCleaning,
     scanProgress,
     scanResult,
     selectedForDelete,
     hasResults,
+    settings,
+    showWhitelistDrawer,
+    whitelist,
+    isLoadingWhitelist,
     startScan,
     toggleFileSelection,
     hasSelectedInGroup,
@@ -281,6 +530,17 @@ export function useDuplicateFinderView() {
     openFolder,
     getImageUrl,
     getRelativePath,
-    formatFileSize
+    formatFileSize,
+    saveFolderSettings,
+    saveAdvancedSettings,
+    addFolderPath,
+    removeFolderPath,
+    addExcludeFolderPath,
+    removeExcludeFolderPath,
+    addGroupToWhitelist,
+    loadWhitelist,
+    removeFromWhitelist,
+    formatTimestamp,
+    cleanupDatabase
   }
 }

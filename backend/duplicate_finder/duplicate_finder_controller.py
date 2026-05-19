@@ -93,6 +93,12 @@ class ScanResource(Resource):
         print(f"[Duplicate Finder] Scanning paths: {paths}")
         print(f"[Duplicate Finder] Threshold: {threshold_pct}% (hamming distance: {threshold})")
 
+        # Get exclude paths from settings
+        exclude_paths = settings_manager.get_settings().get('exclude_folder_paths', [])
+        exclude_paths_abs = [os.path.abspath(p) for p in exclude_paths if os.path.exists(p)]
+        if exclude_paths_abs:
+            print(f"[Duplicate Finder] Excluding paths: {exclude_paths_abs}")
+
         # Collect all image files from paths
         image_files = []
         for path in paths:
@@ -107,6 +113,16 @@ class ScanResource(Resource):
                 # Recursively scan directory
                 print(f"[Duplicate Finder] Scanning directory: {path}")
                 for root, dirs, files in os.walk(path):
+                    # Check if current directory should be excluded
+                    root_abs = os.path.abspath(root)
+                    should_exclude = any(
+                        root_abs.startswith(exclude_path)
+                        for exclude_path in exclude_paths_abs
+                    )
+                    if should_exclude:
+                        print(f"[Duplicate Finder] Excluding directory: {root_abs}")
+                        continue
+
                     for file in files:
                         if file.lower().endswith(IMAGE_EXTS):
                             full_path = os.path.join(root, file)
@@ -143,6 +159,32 @@ class ScanResource(Resource):
 
         # Count total duplicates
         duplicate_count = sum(len(group) for group in duplicate_groups)
+
+        # Get folder_root_paths from settings for path simplification
+        folder_root_paths = settings_manager.get_settings().get('folder_root_paths', {})
+
+        # Add display_path to each image (remove root_path prefix and filename)
+        for group in duplicate_groups:
+            for img in group:
+                file_path = img['file_path']
+
+                # Find the matching root path for this file
+                root_path = None
+                for folder_path, folder_root in folder_root_paths.items():
+                    if file_path.startswith(folder_root):
+                        root_path = folder_root
+                        break
+
+                # Remove root_path prefix if found
+                if root_path:
+                    relative_path = file_path[len(root_path):].lstrip('/')
+                else:
+                    relative_path = file_path
+
+                # Remove filename, keep only directory path
+                dir_path = os.path.dirname(relative_path)
+                img['display_path'] = dir_path if dir_path else '/'
+                img['filename'] = os.path.basename(file_path)
 
         result = {
             "scan_id": scan_id,
@@ -304,3 +346,128 @@ class OpenFolderResource(Resource):
             }
         except Exception as e:
             return {"error": str(e)}, 500
+
+
+@ns.route("/whitelist")
+class WhitelistResource(Resource):
+    def get(self):
+        """Get all whitelisted items"""
+        try:
+            cache = PHashCache()
+            whitelist = cache.get_whitelist()
+            return {"whitelist": whitelist}
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+    def post(self):
+        """
+        Add files to whitelist by filename + filesize
+
+        Request body:
+        {
+            "filename": "IMG_001.jpg",
+            "filesize": 1234567,
+            "note": "Optional note",
+            "preview_path": "Optional path to preview image"
+        }
+        """
+        data = request.json
+        if not data or 'filename' not in data or 'filesize' not in data:
+            return {"error": "Missing 'filename' or 'filesize'"}, 400
+
+        filename = data['filename']
+        filesize = data['filesize']
+        note = data.get('note')
+        preview_path = data.get('preview_path')
+
+        try:
+            cache = PHashCache()
+            cache.add_to_whitelist(filename, filesize, note, preview_path)
+            return {"message": "Added to whitelist successfully"}
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+    def delete(self):
+        """
+        Remove from whitelist
+
+        Query params:
+            filename: File name
+            filesize: File size in bytes
+        """
+        filename = request.args.get('filename')
+        filesize = request.args.get('filesize')
+
+        if not filename or not filesize:
+            return {"error": "Missing 'filename' or 'filesize'"}, 400
+
+        try:
+            filesize = int(filesize)
+            cache = PHashCache()
+            cache.remove_from_whitelist(filename, filesize)
+            return {"message": "Removed from whitelist successfully"}
+        except ValueError:
+            return {"error": "Invalid filesize value"}, 400
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+
+@ns.route("/cleanup")
+class CleanupResource(Resource):
+    def post(self):
+        """
+        Clean up database by removing entries for files that no longer exist.
+
+        This will:
+        1. Scan folder_paths to get all existing image files
+        2. Get all records from database
+        3. Remove database entries for files that don't exist
+        4. Also remove from whitelist if file doesn't exist
+
+        Response:
+        {
+            "removed_hashes": 10,
+            "removed_whitelist": 2,
+            "message": "Cleanup complete"
+        }
+        """
+        try:
+            cache = PHashCache()
+            settings = settings_manager.get_settings()
+            folder_paths = settings.get('folder_paths', [])
+
+            if not folder_paths:
+                return {"error": "No folder paths configured"}, 400
+
+            print(f"[Duplicate Finder] Starting cleanup for paths: {folder_paths}")
+
+            # Step 1: Collect all existing image files
+            existing_files = set()
+            for path in folder_paths:
+                if not os.path.exists(path):
+                    print(f"[Duplicate Finder] Path not found: {path}")
+                    continue
+
+                if os.path.isdir(path):
+                    for root, dirs, files in os.walk(path):
+                        for file in files:
+                            if file.lower().endswith(IMAGE_EXTS):
+                                full_path = os.path.abspath(os.path.join(root, file))
+                                existing_files.add(full_path)
+
+            print(f"[Duplicate Finder] Found {len(existing_files)} existing image files")
+
+            # Step 2: Clean up database
+            removed_hashes, removed_whitelist = cache.cleanup_missing_files(existing_files)
+
+            print(f"[Duplicate Finder] Cleanup complete: removed {removed_hashes} hash entries, {removed_whitelist} whitelist entries")
+
+            return {
+                "removed_hashes": removed_hashes,
+                "removed_whitelist": removed_whitelist,
+                "message": f"Cleanup complete: removed {removed_hashes} hash entries and {removed_whitelist} whitelist entries"
+            }
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Duplicate Finder] Cleanup error: {error_msg}")
+            return {"error": error_msg}, 500

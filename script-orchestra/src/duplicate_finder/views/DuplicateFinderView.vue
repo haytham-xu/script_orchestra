@@ -3,45 +3,110 @@
     <el-card class="main-card">
       <template #header>
         <div class="card-header">
-          <h2>Duplicate Image Finder</h2>
-          <span class="subtitle">Find and remove duplicate images using perceptual hashing</span>
+          <div>
+            <h2>Duplicate Image Finder</h2>
+            <span class="subtitle">Find and remove duplicate images using perceptual hashing</span>
+          </div>
+          <el-button @click="showWhitelistDrawer = true">⚙️ Settings</el-button>
         </div>
       </template>
 
       <!-- Input Section -->
       <div class="input-section">
-        <el-input
-          v-model="scanPaths"
-          type="textarea"
-          :rows="3"
-          placeholder="/path/to/folder1&#10;/path/to/folder2"
-          :disabled="isScanning"
-        >
-          <template #prepend>Paths</template>
-        </el-input>
-        <p class="hint">Enter folder paths (one per line or comma-separated). Get path: Right-click folder in Finder → Hold Option → Copy Pathname</p>
+        <!-- Folder Paths Section -->
+        <div class="folder-section">
+          <div class="folder-header">
+            <h3>Scan Folders</h3>
+            <el-button size="small" @click="addFolderPath">+ Add Folder</el-button>
+          </div>
 
-        <div class="threshold-section">
-          <span class="threshold-label">Similarity Threshold: {{ threshold }}%</span>
-          <el-slider
-            v-model="threshold"
-            :min="80"
-            :max="100"
-            :disabled="isScanning"
-            show-stops
-          />
-          <p class="hint">Higher = more strict (only very similar images)</p>
+          <div v-if="settings.folder_paths && settings.folder_paths.length > 0" class="folder-list-edit">
+            <div v-for="(path, index) in settings.folder_paths" :key="index" class="folder-item-with-root">
+              <el-checkbox
+                v-model="selectedFolders"
+                :value="path"
+                size="large"
+                class="folder-checkbox"
+              />
+              <div class="folder-input-group">
+                <el-input
+                  v-model="settings.folder_paths[index]"
+                  placeholder="Folder Path: /path/to/folder"
+                  class="folder-path-input"
+                />
+                <el-input
+                  v-model="settings.folder_root_paths[path]"
+                  placeholder="Root Path: /path/to/root"
+                  class="root-path-input"
+                />
+              </div>
+              <el-button
+                @click="removeFolderPath(index)"
+                type="danger"
+                size="small"
+                :icon="'Delete'"
+              >
+                Remove
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="no-folders">
+            <p>No folder paths configured. Click "Add Folder" to add paths.</p>
+          </div>
+      </div>
+
+      <!-- Exclude Folder Paths Section -->
+      <div class="folder-section">
+        <div class="folder-header">
+          <h3>Exclude Folders</h3>
+          <el-button size="small" @click="addExcludeFolderPath">+ Add Exclude Folder</el-button>
         </div>
 
+        <div v-if="settings.exclude_folder_paths && settings.exclude_folder_paths.length > 0" class="folder-list-edit">
+          <div v-for="(path, index) in settings.exclude_folder_paths" :key="index" class="folder-item">
+            <el-input
+              v-model="settings.exclude_folder_paths[index]"
+              placeholder="/path/to/exclude/folder"
+              style="flex: 1"
+            />
+            <el-button
+              @click="removeExcludeFolderPath(index)"
+              type="danger"
+              size="small"
+              :icon="'Delete'"
+            >
+              Remove
+            </el-button>
+          </div>
+        </div>
+        <div v-else class="no-folders">
+          <p>No exclude folders configured.</p>
+        </div>
+      </div>
+
+      <!-- Scan Button -->
+      <div class="action-buttons">
         <el-button
           type="primary"
+          size="large"
           :loading="isScanning"
-          :disabled="!scanPaths.trim()"
+          :disabled="selectedFolders.length === 0"
           @click="startScan"
           class="scan-button"
         >
-          {{ isScanning ? 'Scanning...' : 'Start Scan' }}
+          {{ isScanning ? 'Scanning...' : `🔍 Scan ${selectedFolders.length} Folder${selectedFolders.length > 1 ? 's' : ''}` }}
         </el-button>
+
+        <el-button
+          type="warning"
+          size="large"
+          :loading="isCleaning"
+          :disabled="!settings.folder_paths || settings.folder_paths.length === 0"
+          @click="cleanupDatabase"
+        >
+          {{ isCleaning ? 'Cleaning...' : '🧹 Clean Database' }}
+        </el-button>
+      </div>
       </div>
 
       <!-- Progress Section -->
@@ -81,14 +146,22 @@
           <template #header>
             <div class="group-header">
               <span class="group-title">Group {{ groupIndex + 1 }} ({{ group.length }} similar images)</span>
-              <el-button
-                size="small"
-                type="danger"
-                :disabled="!hasSelectedInGroup(group)"
-                @click="deleteSelectedInGroup(group, groupIndex)"
-              >
-                🗑️ Delete Selected ({{ getSelectedCountInGroup(group) }})
-              </el-button>
+              <div class="group-actions">
+                <el-button
+                  size="small"
+                  @click="addGroupToWhitelist(group, groupIndex)"
+                >
+                  ✅ Add to Whitelist
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  :disabled="!hasSelectedInGroup(group)"
+                  @click="deleteSelectedInGroup(group, groupIndex)"
+                >
+                  🗑️ Delete Selected ({{ getSelectedCountInGroup(group) }})
+                </el-button>
+              </div>
             </div>
           </template>
 
@@ -108,8 +181,12 @@
                 <div v-if="imageIndex === 0" class="highest-badge">🏆 HIGHEST RESOLUTION</div>
               </div>
               <div class="image-info">
-                <p class="image-filename" :title="image.file_path">{{ image.file_path.split('/').pop() }}</p>
-                <p class="image-path" :title="image.file_path">{{ getRelativePath(image.file_path) }}</p>
+                <p class="image-filename" :title="image.filename || image.file_path.split('/').pop()">
+                  {{ image.filename || image.file_path.split('/').pop() }}
+                </p>
+                <p class="image-path" :title="image.display_path || image.file_path">
+                  {{ image.display_path || getRelativePath(image.file_path) }}
+                </p>
                 <div class="image-meta">
                   <span>{{ image.resolution }}</span>
                   <span>{{ formatFileSize(image.filesize) }}</span>
@@ -136,6 +213,93 @@
         </template>
       </el-empty>
     </el-card>
+
+    <!-- Settings Drawer -->
+    <el-drawer
+      v-model="showWhitelistDrawer"
+      title="Settings"
+      :size="600"
+    >
+      <div class="whitelist-content">
+        <!-- Advanced Settings -->
+        <div class="settings-section-drawer">
+          <h3>Advanced Settings</h3>
+
+          <div class="setting-item">
+            <label>Similarity Threshold: {{ threshold }}%</label>
+            <el-slider
+              v-model="threshold"
+              :min="60"
+              :max="100"
+              show-stops
+            />
+            <p class="settings-hint">Higher = more strict (only very similar images). Range: 60%-100%</p>
+          </div>
+
+          <div class="setting-item">
+            <label>Delete Target Path</label>
+            <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder" />
+            <p class="settings-hint">Where deleted files will be moved to</p>
+          </div>
+
+          <div class="setting-item">
+            <label>PHash Database Path</label>
+            <el-input v-model="settings.phash_db_path" placeholder="/path/to/phash_cache.db" />
+            <p class="settings-hint">Path to the perceptual hash cache database</p>
+          </div>
+
+          <el-button
+            type="primary"
+            @click="saveAdvancedSettings"
+            :loading="isSaving"
+            style="margin-top: 12px"
+          >
+            💾 Save Advanced Settings
+          </el-button>
+        </div>
+
+        <el-divider />
+
+        <!-- Whitelist Management -->
+        <div class="settings-section-drawer">
+          <h3>Whitelist Management</h3>
+          <p class="whitelist-hint">
+            Whitelisted items will be excluded from future duplicate scans.
+          </p>
+
+          <el-button
+            type="primary"
+            @click="loadWhitelist"
+            :loading="isLoadingWhitelist"
+            style="margin-bottom: 16px"
+          >
+            🔄 Refresh List
+          </el-button>
+
+          <div v-if="whitelist.length > 0" class="whitelist-list">
+            <div v-for="(item, index) in whitelist" :key="`${item.filename}-${item.filesize}`" class="whitelist-item">
+              <img v-if="item.preview_path" :src="getImageUrl(item.preview_path)" class="whitelist-thumbnail" :alt="item.filename" />
+              <div class="whitelist-info">
+                <p class="whitelist-filename">{{ item.filename }}</p>
+                <p class="whitelist-meta">
+                  <span>Size: {{ formatFileSize(item.filesize) }}</span>
+                  <span>Added: {{ formatTimestamp(item.added_time) }}</span>
+                </p>
+                <p v-if="item.note" class="whitelist-note">{{ item.note }}</p>
+              </div>
+              <el-button
+                type="danger"
+                size="small"
+                @click="removeFromWhitelist(item.filename, item.filesize, index)"
+              >
+                Remove
+              </el-button>
+            </div>
+          </div>
+          <el-empty v-else description="No whitelisted items" />
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -144,13 +308,19 @@ import { CircleCheck } from '@element-plus/icons-vue'
 import { useDuplicateFinderView } from './DuplicateFinderView'
 
 const {
-  scanPaths,
+  selectedFolders,
   threshold,
   isScanning,
+  isSaving,
+  isCleaning,
   scanProgress,
   scanResult,
   selectedForDelete,
   hasResults,
+  settings,
+  showWhitelistDrawer,
+  whitelist,
+  isLoadingWhitelist,
   startScan,
   toggleFileSelection,
   hasSelectedInGroup,
@@ -159,14 +329,25 @@ const {
   openFolder,
   getImageUrl,
   getRelativePath,
-  formatFileSize
+  formatFileSize,
+  saveFolderSettings,
+  saveAdvancedSettings,
+  addFolderPath,
+  removeFolderPath,
+  addExcludeFolderPath,
+  removeExcludeFolderPath,
+  addGroupToWhitelist,
+  loadWhitelist,
+  removeFromWhitelist,
+  formatTimestamp,
+  cleanupDatabase
 } = useDuplicateFinderView()
 </script>
 
 <style scoped>
 .duplicate-finder-container {
   padding: 20px;
-  max-width: 1400px;
+  max-width: 1800px;
   margin: 0 auto;
 }
 
@@ -175,6 +356,12 @@ const {
 }
 
 .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header > div {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -194,7 +381,149 @@ const {
 .input-section {
   display: flex;
   flex-direction: column;
+  gap: 24px;
+}
+
+/* Settings Section */
+.settings-section h3,
+.folder-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.settings-section {
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.setting-item label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  color: #606266;
+}
+
+.settings-hint {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #909399;
+}
+
+/* Folder Section */
+.folder-section {
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.folder-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.folder-list-edit {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
+}
+
+.folder-item-with-root {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #dcdfe6;
+}
+
+.folder-checkbox {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.folder-input-group {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+}
+
+.folder-path-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.root-path-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Remove old styles that are no longer used */
+.folder-row {
+  display: none;
+}
+
+.folder-label {
+  display: none;
+}
+
+.root-path-row {
+  display: none;
+}
+
+.root-path-label {
+  display: none;
+}
+
+.folder-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #dcdfe6;
+}
+
+.folder-item .el-checkbox {
+  flex: 1;
+  margin: 0;
+}
+
+.folder-item .el-checkbox :deep(.el-checkbox__label) {
+  width: 100%;
+  overflow: visible;
+}
+
+.folder-item .el-input {
+  margin-left: 8px;
+  flex: 1;
+}
+
+.no-folders {
+  padding: 16px;
+  text-align: center;
+  background: white;
+  border-radius: 6px;
+  color: #909399;
+  margin-bottom: 0;
+}
+
+.no-folders p {
+  margin: 0;
+  font-size: 13px;
 }
 
 .hint {
@@ -203,19 +532,14 @@ const {
   font-size: 13px;
 }
 
-.threshold-section {
+.action-buttons {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.threshold-label {
-  font-weight: 500;
-  font-size: 14px;
+  gap: 12px;
+  align-items: center;
 }
 
 .scan-button {
-  align-self: flex-start;
+  flex: 0 0 auto;
 }
 
 /* Progress Section */
@@ -323,6 +647,12 @@ const {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .group-title {
@@ -332,7 +662,7 @@ const {
 
 .image-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
   gap: 16px;
 }
 
@@ -343,6 +673,7 @@ const {
   overflow: hidden;
   transition: all 0.2s;
   background: #fff;
+  width: 400px;
 }
 
 .image-item:hover {
@@ -361,8 +692,8 @@ const {
 
 .image-wrapper {
   position: relative;
-  width: 100%;
-  height: 200px;
+  width: 400px;
+  height: 300px;
   overflow: hidden;
   background: #f5f7fa;
 }
@@ -370,7 +701,7 @@ const {
 .image-wrapper img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .selected-overlay {
@@ -391,6 +722,19 @@ const {
   margin: 8px 0 0 0;
   font-size: 16px;
   font-weight: 700;
+}
+
+.highest-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #67c23a;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .first-badge {
@@ -422,12 +766,16 @@ const {
 
 .image-path {
   margin: 0 0 8px 0;
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
-  white-space: nowrap;
+  word-break: break-all;
+  line-height: 1.4;
+  max-height: 2.8em;
   overflow: hidden;
-  text-overflow: ellipsis;
   font-family: monospace;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .image-meta {
@@ -435,5 +783,94 @@ const {
   justify-content: space-between;
   font-size: 12px;
   color: #909399;
+}
+
+/* Settings Drawer */
+.whitelist-content {
+  padding: 0 20px;
+}
+
+.settings-section-drawer {
+  margin-bottom: 24px;
+}
+
+.settings-section-drawer h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.settings-section-drawer .setting-item {
+  margin-bottom: 20px;
+}
+
+.settings-section-drawer .setting-item label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  color: #606266;
+}
+
+.whitelist-hint {
+  margin: 0 0 16px 0;
+  padding: 12px;
+  background: #f0f9ff;
+  border-radius: 6px;
+  color: #606266;
+  font-size: 14px;
+}
+
+.whitelist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.whitelist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  border: 1px solid #dcdfe6;
+}
+
+.whitelist-thumbnail {
+  width: 80px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.whitelist-info {
+  flex: 1;
+  margin-right: 16px;
+}
+
+.whitelist-filename {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.whitelist-meta {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  gap: 16px;
+}
+
+.whitelist-note {
+  margin: 0;
+  font-size: 13px;
+  color: #606266;
+  font-style: italic;
 }
 </style>

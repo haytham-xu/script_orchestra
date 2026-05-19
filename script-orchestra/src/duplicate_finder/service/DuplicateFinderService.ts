@@ -15,6 +15,8 @@ export interface ImageInfo {
   phash: string
   resolution: string
   filesize: number
+  display_path?: string
+  filename?: string
 }
 
 export interface ScanResult {
@@ -27,6 +29,10 @@ export interface ScanResult {
 export interface Settings {
   similarity_threshold: number
   delete_target_path: string
+  phash_db_path?: string
+  folder_paths?: string[]
+  folder_root_paths?: { [key: string]: string }
+  exclude_folder_paths?: string[]
 }
 
 export class DuplicateFinderService {
@@ -76,6 +82,44 @@ export class DuplicateFinderService {
    */
   static async openFolder(folderPath: string): Promise<{ success: boolean; message?: string; error?: string }> {
     const response = await postRequest(`${this.BASE_URL}/open-folder`, {}, { folder_path: folderPath })
+    return response
+  }
+
+  /**
+   * Add to whitelist
+   */
+  static async addToWhitelist(filename: string, filesize: number, note?: string, preview_path?: string): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/whitelist`, {}, { filename, filesize, note, preview_path })
+    return response
+  }
+
+  /**
+   * Get whitelist
+   */
+  static async getWhitelist(): Promise<{ whitelist: Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }> }> {
+    const response = await getRequest(`${this.BASE_URL}/whitelist`)
+    return response
+  }
+
+  /**
+   * Remove from whitelist
+   */
+  static async removeFromWhitelist(filename: string, filesize: number): Promise<{ message: string }> {
+    const response = await fetch(`${BACKEND_BASE_URL}${this.BASE_URL}/whitelist?filename=${encodeURIComponent(filename)}&filesize=${filesize}`, {
+      method: 'DELETE'
+    })
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to remove from whitelist')
+    }
+    return response.json()
+  }
+
+  /**
+   * Clean up database by removing entries for files that no longer exist
+   */
+  static async cleanupDatabase(): Promise<{ removed_hashes: number; removed_whitelist: number; message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/cleanup`, {}, {})
     return response
   }
 }
