@@ -217,6 +217,15 @@
         <!-- Action Buttons at bottom -->
         <div class="action-buttons-row">
           <el-button
+            @click="openCurrentFolder"
+            :disabled="!currentFolder"
+            size="small"
+            style="flex: 1;"
+            title="Open folder in file manager"
+          >
+            📁 Open
+          </el-button>
+          <el-button
             @click="prevFolder"
             :disabled="currentIndex === 0"
             size="small"
@@ -237,7 +246,7 @@
             @click="handleDelete"
             :loading="deleting"
             size="small"
-            style="flex: 1.5;"
+            style="flex: 1;"
           >
             Delete
           </el-button>
@@ -374,6 +383,9 @@
             <div class="name-row">
               <div class="name-cell" :title="f.name">{{ f.name }}</div>
               <div class="action-buttons">
+                <el-button size="small" @click="openRightFolder(f)" title="Open folder in file manager">
+                  📁 Open
+                </el-button>
                 <el-button size="small" type="danger" @click="deleteRightFolder(f)" title="Delete from index">
                   🗑️ Delete
                 </el-button>
@@ -433,9 +445,20 @@
           <div class="line-right" @click="selectMiddleFolder(f)">
             <div v-if="rightPreviewImages(f).length > 0" class="thumbs">
               <div v-for="(item, i) in rightPreviewImages(f)" :key="i" class="thumb">
+                <!-- Image -->
                 <img v-if="item.type === 'image'" :src="item.url" />
-                <img v-else-if="item.type === 'pdf' && rightPdfPreviews[item.url]" :src="rightPdfPreviews[item.url]" />
-                <div v-else-if="item.type === 'pdf'" class="pdf-loading">PDF</div>
+
+                <!-- PDF: Show rendered first page or loading placeholder -->
+                <template v-else-if="item.type === 'pdf'">
+                  <img v-if="rightPdfPreviews[item.url]" :src="rightPdfPreviews[item.url]" />
+                  <div v-else class="pdf-loading">📄 PDF</div>
+                </template>
+
+                <!-- Video: Show video thumbnail or placeholder -->
+                <div v-else-if="item.type === 'video'" class="video-thumb">
+                  <video :src="item.url" preload="metadata"></video>
+                  <div class="video-overlay">▶️</div>
+                </div>
               </div>
             </div>
             <div v-else class="no-thumb">无图片预览</div>
@@ -988,6 +1011,41 @@
   padding: 4px 8px;
   background: #f0f4f8;
   border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+.video-thumb {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.video-thumb video {
+  max-height: 180px;
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.video-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 32px;
+  color: white;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  pointer-events: none;
 }
 
 </style>

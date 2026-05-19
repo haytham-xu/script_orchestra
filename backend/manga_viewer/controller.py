@@ -274,15 +274,17 @@ class OpenFolderResource(Resource):
 
         data = request.json or {}
         folder_id = data.get('folderId', '')
+        folder_path = data.get('folderPath', '')
 
-        if not folder_id:
-            return {"error": "folderId is required"}, 400
+        # Support both folderId (from index) and direct folderPath
+        if folder_id:
+            folder = Repository.manga_index.folders.get(folder_id)
+            if not folder:
+                return {"error": f"Folder {folder_id} not found"}, 404
+            folder_path = folder.path
+        elif not folder_path:
+            return {"error": "Either folderId or folderPath is required"}, 400
 
-        folder = Repository.manga_index.folders.get(folder_id)
-        if not folder:
-            return {"error": f"Folder {folder_id} not found"}, 404
-
-        folder_path = folder.path
         if not os.path.exists(folder_path):
             return {"error": f"Folder path does not exist: {folder_path}"}, 404
 

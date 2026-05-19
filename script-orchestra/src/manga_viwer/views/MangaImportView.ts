@@ -102,7 +102,7 @@ export default defineComponent({
           await page.render({
             canvasContext: context,
             viewport: viewport
-          }).promise
+          } as any).promise
 
           pages.push(canvas.toDataURL())
         }
@@ -389,6 +389,23 @@ export default defineComponent({
       router.push('/manga-viewer')
     }
 
+    async function openCurrentFolder() {
+      if (!currentFolder.value || !currentFolder.value.path) {
+        ElMessage.warning('No folder selected')
+        return
+      }
+
+      try {
+        await axios.post('http://localhost:5001/manga-viewer/open-folder', {
+          folderPath: currentFolder.value.path
+        })
+        ElMessage.success('Folder opened in file manager')
+      } catch (e: any) {
+        console.error('Failed to open folder:', e)
+        ElMessage.error(e.response?.data?.error || 'Failed to open folder')
+      }
+    }
+
     // Keyboard shortcuts (like manga classifier)
     function handleKeyDown(event: KeyboardEvent) {
       if (!currentFolder.value) return
@@ -481,7 +498,7 @@ export default defineComponent({
           await page.render({
             canvasContext: context,
             viewport: viewport
-          }).promise
+          } as any).promise
 
           pages.push(canvas.toDataURL())
         }
@@ -554,13 +571,13 @@ export default defineComponent({
       rightDisplayedFolders.value.length < rightFilteredFolders.value.length
     )
 
-    function rightPreviewImages(folder: any): Array<{url: string; type: 'image' | 'pdf'}> {
+    function rightPreviewImages(folder: any): Array<{url: string; type: 'image' | 'pdf' | 'video'}> {
       if (!folder.files || folder.files.length === 0) {
         return []
       }
 
       const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']
-      const result: Array<{url: string; type: 'image' | 'pdf'}> = []
+      const result: Array<{url: string; type: 'image' | 'pdf' | 'video'}> = []
 
       // First, collect images
       const images = folder.files.filter((file: string) => {
@@ -573,11 +590,22 @@ export default defineComponent({
         if (result.length >= 3) break
       }
 
-      // If less than 3 images, add PDF first pages
+      // If less than 3 images, add PDFs
       if (result.length < 3) {
         const pdfs = folder.files.filter((file: string) => isPdf(file))
         for (const pdf of pdfs) {
           result.push({ url: pdf, type: 'pdf' })
+          // Trigger PDF rendering in background (non-blocking)
+          renderPdfFirstPage(pdf).catch(err => console.error('Failed to render PDF preview:', err))
+          if (result.length >= 3) break
+        }
+      }
+
+      // If still less than 3, add videos
+      if (result.length < 3) {
+        const videos = folder.files.filter((file: string) => isVideo(file))
+        for (const video of videos) {
+          result.push({ url: video, type: 'video' })
           if (result.length >= 3) break
         }
       }
@@ -725,52 +753,20 @@ export default defineComponent({
       }
     }
 
-    function copyCardToForm(folder: any) {
-      if (!currentFolder.value) {
-        ElMessage.warning('Please scan and select a folder first')
+    async function openRightFolder(folder: any) {
+      if (!folder || !folder.id) {
+        ElMessage.warning('No folder selected')
         return
       }
 
-      // Copy tags from selected card to form
-      if (folder.tags) {
-        formData.value.category_main = folder.tags.category_main || ''
-        formData.value.category_sub = folder.tags.category_sub || ''
-        formData.value.mosaic = folder.tags.mosaic || ''
-
-        // Copy tag arrays (avoid duplicates)
-        if (folder.tags.auth && Array.isArray(folder.tags.auth)) {
-          folder.tags.auth.forEach((tag: string) => {
-            if (!formData.value.auth.includes(tag)) {
-              formData.value.auth.push(tag)
-            }
-          })
-        }
-
-        if (folder.tags.name && Array.isArray(folder.tags.name)) {
-          folder.tags.name.forEach((tag: string) => {
-            if (!formData.value.name_tags.includes(tag)) {
-              formData.value.name_tags.push(tag)
-            }
-          })
-        }
-
-        if (folder.tags.custom && Array.isArray(folder.tags.custom)) {
-          folder.tags.custom.forEach((tag: string) => {
-            if (!formData.value.custom.includes(tag)) {
-              formData.value.custom.push(tag)
-            }
-          })
-        }
-
-        if (folder.tags.others && Array.isArray(folder.tags.others)) {
-          folder.tags.others.forEach((tag: string) => {
-            if (!formData.value.others.includes(tag)) {
-              formData.value.others.push(tag)
-            }
-          })
-        }
-
-        ElMessage.success(`Copied tags from "${folder.name}"`)
+      try {
+        await axios.post('http://localhost:5001/manga-viewer/open-folder', {
+          folderId: folder.id
+        })
+        ElMessage.success('Folder opened in file manager')
+      } catch (e: any) {
+        console.error('Failed to open folder:', e)
+        ElMessage.error(e.response?.data?.error || 'Failed to open folder')
       }
     }
 
@@ -853,6 +849,7 @@ export default defineComponent({
       handleImport,
       handleDelete,
       goBack,
+      openCurrentFolder,
       // Middle panel
       middleFolder,
       middleFilesWithPdf,
@@ -872,7 +869,8 @@ export default defineComponent({
       selectMiddleFolder,
       refreshRightPanel,
       getRelativePath,
-      deleteRightFolder
+      deleteRightFolder,
+      openRightFolder
     }
   }
 })
