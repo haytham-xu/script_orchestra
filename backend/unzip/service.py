@@ -130,12 +130,13 @@ class UnzipService:
             shutil.rmtree(macosx_path)
 
 
-    def extract_archive(self, archive_path: str) -> Dict:
+    def extract_archive(self, archive_path: str, delete_after_extract: bool = True) -> Dict:
         """
         Extract a single archive file
 
         Args:
             archive_path: Path to archive file
+            delete_after_extract: If True, delete the archive file after successful extraction (default: True)
 
         Returns:
             Result dictionary with success status
@@ -183,13 +184,28 @@ class UnzipService:
                 # Remove __MACOSX folder if exists
                 self._remove_macosx_folder(target_folder)
 
-                # Extraction successful
+                # Count extracted files
                 file_count = self.count_extracted_files(target_folder)
+
+                # Only delete archive if extraction was successful AND files were actually extracted
+                deleted = False
+                if delete_after_extract and file_count > 0:
+                    try:
+                        os.remove(archive_path)
+                        deleted = True
+                        print(f"[Unzip] Deleted original archive: {archive_path} (extracted {file_count} files)")
+                    except Exception as e:
+                        print(f"[Unzip] Warning: Failed to delete archive: {e}")
+                elif delete_after_extract and file_count == 0:
+                    print(f"[Unzip] Warning: Archive extracted 0 files, keeping original: {archive_path}")
+
+                # Extraction successful
                 return {
                     "success": True,
                     "archivePath": archive_path,
                     "outputFolder": target_folder,
-                    "fileCount": file_count
+                    "fileCount": file_count,
+                    "deleted": deleted
                 }
 
             except (RuntimeError, rarfile.BadRarFile, py7zr.exceptions.Bad7zFile) as e:
@@ -210,12 +226,13 @@ class UnzipService:
             "error": "Password required or incorrect password"
         }
 
-    def extract_from_path(self, input_path: str) -> Dict:
+    def extract_from_path(self, input_path: str, delete_after_extract: bool = True) -> Dict:
         """
         Extract archive(s) from file or folder path
 
         Args:
             input_path: Path to archive file or folder
+            delete_after_extract: If True, delete archive files after successful extraction (default: True)
 
         Returns:
             Summary dictionary
@@ -260,7 +277,7 @@ class UnzipService:
 
         for archive_path in archive_files:
             print(f"[Unzip] Extracting: {archive_path}")
-            result = self.extract_archive(archive_path)
+            result = self.extract_archive(archive_path, delete_after_extract)
 
             if result["success"]:
                 success_count += 1

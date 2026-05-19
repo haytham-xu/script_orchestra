@@ -33,6 +33,11 @@ export interface Settings {
   folder_paths?: string[]
   folder_root_paths?: { [key: string]: string }
   exclude_folder_paths?: string[]
+  auto_selection_rules?: {
+    auto_mark_numbered_copies?: boolean
+    auto_mark_copy_suffix?: boolean
+    prefer_folders?: string[]
+  }
 }
 
 export class DuplicateFinderService {

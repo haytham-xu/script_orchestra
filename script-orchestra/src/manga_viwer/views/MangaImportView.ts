@@ -215,6 +215,14 @@ export default defineComponent({
         rightSearchTokens.value.push(trimmed)
         store.recordHotTag(trimmed)
         ElMessage.success(`Added "${trimmed}" to search`)
+
+        // Reset display count when search changes
+        rightDisplayCount.value = rightPageSize
+
+        // Load right panel data if not loaded yet
+        if (rightAllFolders.value.length === 0) {
+          loadRightPanel()
+        }
       }
     }
 

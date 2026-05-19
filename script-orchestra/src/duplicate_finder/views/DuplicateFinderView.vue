@@ -260,6 +260,68 @@
 
         <el-divider />
 
+        <!-- Auto-Selection Rules -->
+        <div class="settings-section-drawer">
+          <h3>Auto-Selection Rules</h3>
+          <p class="settings-hint-text">
+            Automatically mark files for deletion based on common patterns
+          </p>
+
+          <div class="rule-item">
+            <el-checkbox v-model="settings.auto_selection_rules.auto_mark_numbered_copies">
+              Auto-mark numbered copies
+            </el-checkbox>
+            <p class="rule-description">
+              Automatically select files like <code>photo(1).jpg</code>, <code>photo(2).jpg</code> for deletion, keeping only <code>photo.jpg</code>
+            </p>
+          </div>
+
+          <div class="rule-item">
+            <el-checkbox v-model="settings.auto_selection_rules.auto_mark_copy_suffix">
+              Auto-mark "copy" suffix
+            </el-checkbox>
+            <p class="rule-description">
+              Automatically select files like <code>photo_copy.jpg</code>, <code>photo-copy.jpg</code>, <code>photo copy.jpg</code> for deletion
+            </p>
+          </div>
+
+          <div class="rule-item">
+            <label>Prefer specific folders</label>
+            <p class="rule-description">
+              Files in these folders will be kept, others marked for deletion
+            </p>
+            <div v-if="settings.auto_selection_rules.prefer_folders && settings.auto_selection_rules.prefer_folders.length > 0" class="prefer-folders-list">
+              <div v-for="(folder, index) in settings.auto_selection_rules.prefer_folders" :key="index" class="prefer-folder-item">
+                <el-input
+                  v-model="settings.auto_selection_rules.prefer_folders[index]"
+                  placeholder="/path/to/preferred/folder"
+                />
+                <el-button
+                  @click="removePreferFolder(index)"
+                  type="danger"
+                  size="small"
+                >
+                  Remove
+                </el-button>
+              </div>
+            </div>
+            <el-button size="small" @click="addPreferFolder" style="margin-top: 8px">
+              + Add Preferred Folder
+            </el-button>
+          </div>
+
+          <el-button
+            type="primary"
+            @click="saveAdvancedSettings"
+            :loading="isSaving"
+            style="margin-top: 12px"
+          >
+            💾 Save Advanced Settings
+          </el-button>
+        </div>
+
+        <el-divider />
+
         <!-- Whitelist Management -->
         <div class="settings-section-drawer">
           <h3>Whitelist Management</h3>
@@ -340,7 +402,9 @@ const {
   loadWhitelist,
   removeFromWhitelist,
   formatTimestamp,
-  cleanupDatabase
+  cleanupDatabase,
+  addPreferFolder,
+  removePreferFolder
 } = useDuplicateFinderView()
 </script>
 
@@ -811,6 +875,63 @@ const {
   font-weight: 500;
   font-size: 14px;
   color: #606266;
+}
+
+.settings-hint-text {
+  margin: 0 0 16px 0;
+  padding: 12px;
+  background: #f0f9ff;
+  border-radius: 6px;
+  color: #606266;
+  font-size: 14px;
+}
+
+.rule-item {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.rule-item label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  color: #606266;
+}
+
+.rule-description {
+  margin: 8px 0 0 24px;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.rule-description code {
+  padding: 2px 6px;
+  background: #e4e7ed;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 12px;
+  color: #303133;
+}
+
+.prefer-folders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.prefer-folder-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.prefer-folder-item .el-input {
+  flex: 1;
 }
 
 .whitelist-hint {

@@ -25,7 +25,12 @@ export function useDuplicateFinderView() {
     delete_target_path: '',
     similarity_threshold: 90,
     folder_paths: [],
-    folder_root_paths: {}
+    folder_root_paths: {},
+    auto_selection_rules: {
+      auto_mark_numbered_copies: true,
+      auto_mark_copy_suffix: true,
+      prefer_folders: []
+    }
   })
   const showWhitelistDrawer = ref(false)
   const whitelist = ref<Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }>>([])
@@ -58,6 +63,90 @@ export function useDuplicateFinderView() {
       socket.disconnect()
       socket = null
     }
+  }
+
+  /**
+   * Apply auto-selection rules to duplicate groups
+   */
+  function applyAutoSelectionRules(groups: ImageInfo[][]) {
+    if (!settings.value.auto_selection_rules) return
+
+    const rules = settings.value.auto_selection_rules
+
+    groups.forEach(group => {
+      if (group.length < 2) return
+
+      // Extract filenames without extensions for comparison
+      const getBaseName = (filePath: string) => {
+        const fileName = filePath.split('/').pop() || ''
+        return fileName.replace(/\.[^/.]+$/, '') // Remove extension
+      }
+
+      // Rule 1: Auto-mark numbered copies like X(1).jpg, X(2).jpg
+      if (rules.auto_mark_numbered_copies) {
+        // Find the base file (without numbered suffix)
+        const baseFile = group.find(img => {
+          const baseName = getBaseName(img.file_path)
+          return !/\(\d+\)$/.test(baseName) && !/\s+\(\d+\)$/.test(baseName)
+        })
+
+        if (baseFile) {
+          // Mark all numbered copies for deletion
+          group.forEach(img => {
+            if (img.file_path !== baseFile.file_path) {
+              const baseName = getBaseName(img.file_path)
+              // Match patterns like "filename(1)", "filename (2)"
+              if (/\(\d+\)$/.test(baseName) || /\s+\(\d+\)$/.test(baseName)) {
+                selectedForDelete.value.add(img.file_path)
+              }
+            }
+          })
+        }
+      }
+
+      // Rule 2: Auto-mark "copy" suffix like X_copy.jpg, X-copy.jpg, X copy.jpg
+      if (rules.auto_mark_copy_suffix) {
+        // Find the original file (without copy suffix)
+        const originalFile = group.find(img => {
+          const baseName = getBaseName(img.file_path)
+          return !/_copy$/i.test(baseName) &&
+                 !/-copy$/i.test(baseName) &&
+                 !/\s+copy$/i.test(baseName) &&
+                 !/\scopy$/i.test(baseName)
+        })
+
+        if (originalFile) {
+          // Mark all copy files for deletion
+          group.forEach(img => {
+            if (img.file_path !== originalFile.file_path) {
+              const baseName = getBaseName(img.file_path)
+              if (/_copy$/i.test(baseName) ||
+                  /-copy$/i.test(baseName) ||
+                  /\s+copy$/i.test(baseName) ||
+                  /\scopy$/i.test(baseName)) {
+                selectedForDelete.value.add(img.file_path)
+              }
+            }
+          })
+        }
+      }
+
+      // Rule 3: Prefer files in specific folders
+      if (rules.prefer_folders && rules.prefer_folders.length > 0) {
+        const preferredFiles = group.filter(img =>
+          rules.prefer_folders!.some(folder => img.file_path.startsWith(folder))
+        )
+
+        if (preferredFiles.length > 0) {
+          // Mark all non-preferred files for deletion
+          group.forEach(img => {
+            if (!preferredFiles.includes(img)) {
+              selectedForDelete.value.add(img.file_path)
+            }
+          })
+        }
+      }
+    })
   }
 
   /**
@@ -112,6 +201,12 @@ export function useDuplicateFinderView() {
       console.log('[Duplicate Finder] Complete:', data)
       scanResult.value = data.result
       isScanning.value = false
+
+      // Apply auto-selection rules
+      if (data.result.duplicate_groups && data.result.duplicate_groups.length > 0) {
+        applyAutoSelectionRules(data.result.duplicate_groups)
+      }
+
       ElMessage.success(`Scan complete: Found ${data.result.duplicate_groups.length} duplicate groups`)
     })
 
@@ -269,6 +364,15 @@ export function useDuplicateFinderView() {
         settings.value.folder_root_paths = {}
       }
 
+      // Initialize auto_selection_rules if not present (backward compatibility)
+      if (!settings.value.auto_selection_rules) {
+        settings.value.auto_selection_rules = {
+          auto_mark_numbered_copies: true,
+          auto_mark_copy_suffix: true,
+          prefer_folders: []
+        }
+      }
+
       // Auto-select all folders on load
       if (result.folder_paths && result.folder_paths.length > 0) {
         selectedFolders.value = [...result.folder_paths]
@@ -365,6 +469,32 @@ export function useDuplicateFinderView() {
   function removeExcludeFolderPath(index: number) {
     if (settings.value.exclude_folder_paths) {
       settings.value.exclude_folder_paths.splice(index, 1)
+    }
+  }
+
+  /**
+   * Add preferred folder to auto-selection rules
+   */
+  function addPreferFolder() {
+    if (!settings.value.auto_selection_rules) {
+      settings.value.auto_selection_rules = {
+        auto_mark_numbered_copies: true,
+        auto_mark_copy_suffix: true,
+        prefer_folders: []
+      }
+    }
+    if (!settings.value.auto_selection_rules.prefer_folders) {
+      settings.value.auto_selection_rules.prefer_folders = []
+    }
+    settings.value.auto_selection_rules.prefer_folders.push('')
+  }
+
+  /**
+   * Remove preferred folder from auto-selection rules
+   */
+  function removePreferFolder(index: number) {
+    if (settings.value.auto_selection_rules?.prefer_folders) {
+      settings.value.auto_selection_rules.prefer_folders.splice(index, 1)
     }
   }
 
@@ -541,6 +671,8 @@ export function useDuplicateFinderView() {
     loadWhitelist,
     removeFromWhitelist,
     formatTimestamp,
-    cleanupDatabase
+    cleanupDatabase,
+    addPreferFolder,
+    removePreferFolder
   }
 }

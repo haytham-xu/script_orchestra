@@ -19,7 +19,8 @@ class UnzipExtractResource(Resource):
 
         Request body (JSON):
         {
-            "path": "/path/to/archive.zip"  // or folder path
+            "path": "/path/to/archive.zip",  // or folder path
+            "deleteAfterExtract": true       // optional, default true
         }
 
         Response:
@@ -37,6 +38,7 @@ class UnzipExtractResource(Resource):
             return {"error": "Missing 'path' parameter in request body"}, 400
 
         input_path = data['path']
+        delete_after_extract = data.get('deleteAfterExtract', True)  # Default: True
 
         if not input_path or not isinstance(input_path, str):
             return {"error": "'path' must be a non-empty string"}, 400
@@ -47,8 +49,8 @@ class UnzipExtractResource(Resource):
             service = UnzipService(password_list=PASSWORD_LIST)
 
             # Extract based on input path type
-            print(f"[Unzip] Processing path: {input_path}")
-            result = service.extract_from_path(input_path)
+            print(f"[Unzip] Processing path: {input_path}, delete after: {delete_after_extract}")
+            result = service.extract_from_path(input_path, delete_after_extract)
 
             print(f"[Unzip] Extraction complete. Result: {result}")
             return jsonify(result)
