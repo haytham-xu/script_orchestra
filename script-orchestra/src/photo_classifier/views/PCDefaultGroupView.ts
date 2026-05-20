@@ -226,11 +226,13 @@ export default defineComponent({
       ElMessage.success('All files marked as Normal')
     }
 
-    onMounted(() => {
+    onMounted(async () => {
       // Initialize store if not already loaded
+      // This ensures the page works even when accessed directly (not from dashboard)
       if (!photoClassifierStore.initialized) {
-        initStore()
+        await initStore()
       }
+
       window.addEventListener('keydown', handleKeyDown)
     })
 

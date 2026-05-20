@@ -17,7 +17,10 @@ export async function getRequest<T>(uriPath: string, params = {}): Promise<T> {
 }
 
 export async function postRequest(uriPath: string, params = {}, payload = {}) {
-  const res = await axios.post(BACKEND_BASE_URL + uriPath, payload, { params })
+  const url = BACKEND_BASE_URL + uriPath
+  console.log(`[HTTP] POST ${url}`, { params, payload })
+  const res = await axios.post(url, payload, { params })
+  console.log(`[HTTP] POST ${url} - Status: ${res.status}`, res.data)
   if (![200, 201, 202].includes(res.status)) {
     ElMessage.error(`Request Failed: ${res.statusText}`)
     throw new Error(`Request Failed: ${res.statusText}`)

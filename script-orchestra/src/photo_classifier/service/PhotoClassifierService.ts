@@ -18,7 +18,9 @@ export async function postMoveFolder(sourceFolderPath:string, targetFolderPath:s
         "targetFolderPath": targetFolderPath,
         "rootPath": rootPath
     }
+    console.log('[PhotoClassifierService] postMoveFolder - Sending request:', payload)
     const responseData = await postRequest(PHOTO_CLASSIFIER_ENDPOINT_FOLDER, {}, payload)
+    console.log('[PhotoClassifierService] postMoveFolder - Response:', responseData)
     return responseData
 }
 

@@ -24,3 +24,4 @@ backend/file_git/default_settings.json
 # Manga Viewer settings (generated at runtime)
 backend/manga_viewer/manga_viewer_settings.json
 /log
+cypress_test_data

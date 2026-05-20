@@ -28,8 +28,9 @@ import file_git.controller
 from file_git import websocket_service as fg_websocket
 from duplicate_finder import websocket_service as df_websocket
 
-# Import test API for Cypress testing
-from test_api import test_api
+# Import Cypress support API for E2E testing
+from cypress_support.api import cypress_api
+from cypress_support.config_manager import ConfigManager
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -47,8 +48,8 @@ def create_app() -> Flask:
     # Register roadmap blueprint
     app.register_blueprint(roadmap_blueprint)
 
-    # Register test API blueprint
-    app.register_blueprint(test_api)
+    # Register Cypress support API blueprint
+    app.register_blueprint(cypress_api)
 
     # Initialize WebSocket using duplicate_finder's init (both are identical)
     # This creates a single shared socketio instance for all tools
@@ -60,7 +61,30 @@ def create_app() -> Flask:
 
     return app, socketio
 
+def check_cypress_snapshots():
+    """Check for unrestored Cypress config snapshots on startup"""
+    try:
+        config_manager = ConfigManager()
+        result = config_manager.check_all_snapshots()
+
+        if result['count'] > 0:
+            print("\n" + "="*60)
+            print("⚠️  WARNING: Found unrestored Cypress config snapshots!")
+            print("="*60)
+            print("This may indicate a previous test run failed.\n")
+            for snap in result['unrestored']:
+                print(f"  - {snap['tool']}: {snap['snapshot_time']}")
+            print("\nRestore with:")
+            print("  python backend/cypress_support/restore_config.py --all")
+            print("="*60 + "\n")
+    except Exception as e:
+        # Don't block startup if check fails
+        print(f"⚠️  Failed to check Cypress snapshots: {e}")
+
 if __name__ == "__main__":
+    # Check for unrestored snapshots
+    check_cypress_snapshots()
+
     app, socketio = create_app()
     # Use port 5001 to avoid conflict with macOS AirPlay (port 5000)
 

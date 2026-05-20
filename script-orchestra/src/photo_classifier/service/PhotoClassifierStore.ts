@@ -119,8 +119,16 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
       })
     },
 
-    initDefaultGroup(defaultGroup: DefaultGroup) {
-      if (this.initialized) return
+    initDefaultGroup(defaultGroup: DefaultGroup, force = false) {
+      // Allow force re-initialization for test isolation
+      if (this.initialized && !force) return
+
+      // Clear existing state when re-initializing
+      if (force) {
+        this.groupList = { groupList: [] }
+        this.currentGroupIndex = -1
+      }
+
       this.defaultGroup = defaultGroup
       this.initialized = true
     },
