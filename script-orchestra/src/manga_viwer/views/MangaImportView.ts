@@ -434,7 +434,7 @@ export default defineComponent({
       }
     }
 
-    // Keyboard shortcuts (like manga classifier)
+    // Keyboard shortcuts
     function handleKeyDown(event: KeyboardEvent) {
       if (!currentFolder.value) return
 

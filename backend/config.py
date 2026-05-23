@@ -2,11 +2,6 @@ import os
 
 HOST_URL = 'http://127.0.0.1:5001'
 
-MANGA_CLASSIFIER_ROOT_PATH = ''
-MANGA_CLASSIFIER_TARGET_PATHS = ''
-MANGA_CLASSIFIER_DELETE_PATHS = ''
-MANGA_CLASSIFIER_CATEGOTY = {}
-
 PHOTO_CLASSIFIER_ROOT_PATH = ''
 
 # PDF Converter temporary files path (in project's buffer folder)

@@ -2,10 +2,6 @@ from flask import Flask
 from flask_cors import CORS
 from extensions import restx_api
 
-import manga_classifier.config_controller
-import manga_classifier.folder_controller
-import manga_classifier.file_controller
-
 # Import photo_classifier as independent module (using Blueprint)
 from photo_classifier import blueprint as photo_classifier_blueprint
 
