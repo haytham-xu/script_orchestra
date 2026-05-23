@@ -618,6 +618,64 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Verify and cleanup current scan results by checking which files still exist
+   */
+  const isVerifying = ref(false)
+
+  async function verifyAndCleanup() {
+    if (!scanResult.value || !scanResult.value.duplicate_groups) {
+      ElMessage.warning('No scan results to verify')
+      return
+    }
+
+    try {
+      isVerifying.value = true
+
+      // Call verification API
+      const result = await DuplicateFinderService.verifyFiles(scanResult.value.duplicate_groups)
+
+      if (result.missing_count === 0) {
+        ElMessage.success('All files still exist. No cleanup needed.')
+        return
+      }
+
+      // Show confirmation dialog with details
+      const affectedGroupsInfo = result.affected_groups.length > 0
+        ? `\n\nAffected groups: ${result.affected_groups.length}\nSample missing files:\n${result.missing_files.slice(0, 5).join('\n')}${result.missing_files.length > 5 ? '\n...' : ''}`
+        : ''
+
+      await ElMessageBox.confirm(
+        `Found ${result.missing_count} missing files that were externally deleted.${affectedGroupsInfo}\n\nDo you want to clean up the display?`,
+        'Missing Files Detected',
+        {
+          confirmButtonText: 'Clean Up',
+          cancelButtonText: 'Cancel',
+          type: 'warning'
+        }
+      )
+
+      // Update scan result with cleaned groups
+      scanResult.value.duplicate_groups = result.cleaned_groups
+      scanResult.value.duplicate_count = result.cleaned_groups.reduce((sum, group) => sum + group.length, 0)
+
+      // Remove deleted files from selection
+      result.missing_files.forEach(filePath => {
+        selectedForDelete.value.delete(filePath)
+      })
+
+      ElMessage.success(`Cleanup complete! Removed ${result.affected_groups.length} affected groups.`)
+
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Verify error:', error)
+        ElMessage.error(error.message || 'Failed to verify files')
+      }
+    } finally {
+      isVerifying.value = false
+    }
+  }
+
+  /**
    * Computed: Total files selected
    */
   const selectedCount = computed(() => selectedForDelete.value.size)
@@ -644,6 +702,7 @@ export function useDuplicateFinderView() {
     isScanning,
     isSaving,
     isCleaning,
+    isVerifying,
     scanProgress,
     scanResult,
     selectedForDelete,
@@ -672,6 +731,7 @@ export function useDuplicateFinderView() {
     removeFromWhitelist,
     formatTimestamp,
     cleanupDatabase,
+    verifyAndCleanup,
     addPreferFolder,
     removePreferFolder
   }

@@ -470,4 +470,118 @@ class CleanupResource(Resource):
         except Exception as e:
             error_msg = str(e)
             print(f"[Duplicate Finder] Cleanup error: {error_msg}")
+            return {" error": error_msg}, 500
+
+
+@ns.route("/verify")
+class VerifyResource(Resource):
+    def post(self):
+        """
+        Verify which files from the provided list still exist on filesystem.
+        Returns detailed information about missing files and affected groups.
+
+        Request body:
+        {
+            "duplicate_groups": [  // The duplicate groups to verify
+                [
+                    {"file_path": "/path/to/file1.jpg", ...},
+                    {"file_path": "/path/to/file2.jpg", ...}
+                ],
+                ...
+            ]
+        }
+
+        Response:
+        {
+            "missing_files": ["/path/to/file1.jpg", ...],
+            "missing_count": 10,
+            "affected_groups": [
+                {
+                    "group_index": 0,
+                    "missing_files": ["/path/to/file1.jpg"],
+                    "remaining_files": ["/path/to/file2.jpg"]
+                }
+            ],
+            "cleaned_groups": [  // Groups with missing files removed
+                [
+                    {"file_path": "/path/to/file2.jpg", ...}
+                ]
+            ]
+        }
+        """
+        data = request.json
+        if not data or 'duplicate_groups' not in data:
+            return {"error": "Missing 'duplicate_groups' in request"}, 400
+
+        duplicate_groups = data['duplicate_groups']
+
+        try:
+            cache = PHashCache()
+
+            # Collect all file paths from all groups
+            all_files = []
+            file_to_group_indices = {}  # Map file_path to list of group indices
+
+            for group_idx, group in enumerate(duplicate_groups):
+                for img in group:
+                    file_path = img['file_path']
+                    all_files.append(file_path)
+                    if file_path not in file_to_group_indices:
+                        file_to_group_indices[file_path] = []
+                    file_to_group_indices[file_path].append(group_idx)
+
+            # Verify which files still exist
+            verification = cache.verify_files_exist(all_files)
+            missing_files = verification['missing']
+
+            if not missing_files:
+                return {
+                    "missing_files": [],
+                    "missing_count": 0,
+                    "affected_groups": [],
+                    "cleaned_groups": duplicate_groups
+                }
+
+            # Find affected groups
+            affected_group_indices = set()
+            for missing_file in missing_files:
+                if missing_file in file_to_group_indices:
+                    affected_group_indices.update(file_to_group_indices[missing_file])
+
+            # Build detailed response
+            affected_groups = []
+            cleaned_groups = []
+
+            for group_idx, group in enumerate(duplicate_groups):
+                group_missing = []
+                group_remaining = []
+
+                for img in group:
+                    if img['file_path'] in missing_files:
+                        group_missing.append(img['file_path'])
+                    else:
+                        group_remaining.append(img)
+
+                if group_idx in affected_group_indices:
+                    affected_groups.append({
+                        'group_index': group_idx,
+                        'missing_files': group_missing,
+                        'remaining_files': [img['file_path'] for img in group_remaining]
+                    })
+
+                # Only keep groups with 2+ remaining files
+                if len(group_remaining) >= 2:
+                    cleaned_groups.append(group_remaining)
+
+            return {
+                "missing_files": missing_files,
+                "missing_count": len(missing_files),
+                "affected_groups": affected_groups,
+                "cleaned_groups": cleaned_groups
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Duplicate Finder] Verify error: {error_msg}")
             return {"error": error_msg}, 500
+

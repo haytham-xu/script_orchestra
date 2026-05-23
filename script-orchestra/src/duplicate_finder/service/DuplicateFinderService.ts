@@ -127,4 +127,22 @@ export class DuplicateFinderService {
     const response = await postRequest(`${this.BASE_URL}/cleanup`, {}, {})
     return response
   }
+
+  /**
+   * Verify which files from duplicate groups still exist on filesystem.
+   * Returns detailed information about missing files and cleaned groups.
+   */
+  static async verifyFiles(duplicateGroups: ImageInfo[][]): Promise<{
+    missing_files: string[]
+    missing_count: number
+    affected_groups: Array<{
+      group_index: number
+      missing_files: string[]
+      remaining_files: string[]
+    }>
+    cleaned_groups: ImageInfo[][]
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/verify`, {}, { duplicate_groups: duplicateGroups })
+    return response
+  }
 }

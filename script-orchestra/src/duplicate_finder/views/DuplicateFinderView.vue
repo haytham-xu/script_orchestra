@@ -98,13 +98,13 @@
         </el-button>
 
         <el-button
-          type="warning"
+          type="info"
           size="large"
-          :loading="isCleaning"
-          :disabled="!settings.folder_paths || settings.folder_paths.length === 0"
-          @click="cleanupDatabase"
+          :loading="isVerifying"
+          :disabled="!hasResults || !scanResult"
+          @click="verifyAndCleanup"
         >
-          {{ isCleaning ? 'Cleaning...' : '🧹 Clean Database' }}
+          {{ isVerifying ? 'Verifying...' : '🔍 Verify & Cleanup' }}
         </el-button>
       </div>
       </div>
@@ -359,6 +359,29 @@
             </div>
           </div>
           <el-empty v-else description="No whitelisted items" />
+        </div>
+
+        <el-divider />
+
+        <!-- Database Maintenance -->
+        <div class="settings-section-drawer">
+          <h3>Database Maintenance</h3>
+          <p class="settings-hint-text">
+            Clean up database by removing entries for files that no longer exist on disk.
+          </p>
+
+          <el-button
+            type="warning"
+            @click="cleanupDatabase"
+            :loading="isCleaning"
+            :disabled="!settings.folder_paths || settings.folder_paths.length === 0"
+          >
+            {{ isCleaning ? 'Cleaning...' : '🧹 Clean Database' }}
+          </el-button>
+
+          <p class="settings-hint" style="margin-top: 12px;">
+            This will scan all configured folder paths and remove stale database entries. Use this periodically to keep database healthy.
+          </p>
         </div>
       </div>
     </el-drawer>
