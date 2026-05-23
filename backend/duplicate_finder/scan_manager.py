@@ -2,7 +2,7 @@
 Scan manager for handling stop signals and resource cleanup
 """
 import threading
-from typing import Dict
+from typing import Dict, List
 
 class ScanManager:
     """Manage active scans and provide stop functionality"""
@@ -11,7 +11,7 @@ class ScanManager:
         self._active_scans: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
-    def start_scan(self, scan_id: str):
+    def start_scan(self, scan_id: str) -> threading.Event:
         """Register a new scan"""
         with self._lock:
             stop_event = threading.Event()
@@ -19,7 +19,7 @@ class ScanManager:
             print(f"[ScanManager] Scan {scan_id} started")
             return stop_event
 
-    def stop_scan(self, scan_id: str):
+    def stop_scan(self, scan_id: str) -> bool:
         """Request to stop a scan"""
         with self._lock:
             if scan_id in self._active_scans:
@@ -37,14 +37,14 @@ class ScanManager:
                 return self._active_scans[scan_id].is_set()
             return False
 
-    def complete_scan(self, scan_id: str):
+    def complete_scan(self, scan_id: str) -> None:
         """Remove scan from active list"""
         with self._lock:
             if scan_id in self._active_scans:
                 del self._active_scans[scan_id]
                 print(f"[ScanManager] Scan {scan_id} completed and cleaned up")
 
-    def get_active_scans(self):
+    def get_active_scans(self) -> List[str]:
         """Get list of active scan IDs"""
         with self._lock:
             return list(self._active_scans.keys())

@@ -42,7 +42,6 @@ export function useDuplicateFinderView() {
   const isCleaning = ref(false)
 
   let socket: Socket | null = null
-  let currentScanId: string | null = null
 
   /**
    * Connect WebSocket
