@@ -1,4 +1,4 @@
-import { defineComponent, ref, onMounted, onUnmounted, computed } from 'vue'
+import { defineComponent, ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Loading, Picture, VideoPlay } from '@element-plus/icons-vue'
 import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
@@ -151,6 +151,18 @@ export default defineComponent({
       const gridElement = document.querySelector('.image-grid')
       if (gridElement) {
         gridElement.addEventListener('scroll', handleScroll)
+      }
+    })
+
+    // Watch drawer open/close
+    watch(showGroupSelectDrawer, (isOpen) => {
+      if (isOpen) {
+        console.log('[BatchSelect] Drawer opened')
+        console.log('[BatchSelect] groupList.groupList:', photoClassifierStore.groupList.groupList)
+        console.log('[BatchSelect] groupList count:', photoClassifierStore.groupList.groupList.length)
+        photoClassifierStore.groupList.groupList.forEach((group, index) => {
+          console.log(`[BatchSelect] Group ${index}: ${group.files.length} files`)
+        })
       }
     })
 

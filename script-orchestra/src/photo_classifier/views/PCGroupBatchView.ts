@@ -4,6 +4,8 @@ import { Check, Loading, Picture } from '@element-plus/icons-vue'
 import { usePhotoClassifierStore } from '../service/PhotoClassifierStore'
 import { useRouter } from 'vue-router'
 import type { FileModel } from '@/photo_classifier/service/Model.ts'
+import { getFileList } from '@/photo_classifier/service/PhotoClassifierService.ts'
+import { loadRootPathFromBackend } from '@/photo_classifier/config/settings'
 
 export default defineComponent({
   name: 'PCGroupBatchView',
@@ -26,11 +28,22 @@ export default defineComponent({
 
     const allFiles = computed(() => {
       const group = photoClassifierStore.groupList.groupList[props.groupId]
+      console.log(`[GroupBatch] Getting files for group ${props.groupId}:`, {
+        groupExists: !!group,
+        filesCount: group?.files?.length || 0,
+        totalGroups: photoClassifierStore.groupList.groupList.length
+      })
       return group ? group.files : []
     })
 
     const displayFileList = computed(() => {
-      return allFiles.value.slice(0, loadedCount.value)
+      const list = allFiles.value.slice(0, loadedCount.value)
+      console.log(`[GroupBatch] displayFileList:`, {
+        loadedCount: loadedCount.value,
+        totalFiles: allFiles.value.length,
+        displayCount: list.length
+      })
+      return list
     })
 
     const hasMore = computed(() => {
@@ -98,6 +111,20 @@ export default defineComponent({
       }
     }
 
+    async function initStore() {
+      // Load settings from backend first
+      await loadRootPathFromBackend()
+
+      // Try to load working state first
+      const hasWorkingState = await photoClassifierStore.loadWorkingStateFromBackend()
+
+      // If no working state, load files from backend
+      if (!hasWorkingState) {
+        const defaultFiles = await getFileList()
+        photoClassifierStore.initDefaultGroup(defaultFiles)
+      }
+    }
+
     function loadMore() {
       if (hasMore.value) {
         loadedCount.value = Math.min(loadedCount.value + pageSize, allFiles.value.length)
@@ -114,7 +141,16 @@ export default defineComponent({
       }
     }
 
-    onMounted(() => {
+    onMounted(async () => {
+      // Initialize store with working state or fresh data
+      await initStore()
+
+      console.log(`[GroupBatch] onMounted - groupId: ${props.groupId}`)
+      console.log(`[GroupBatch] Store state:`, {
+        totalGroups: photoClassifierStore.groupList.groupList.length,
+        groupFiles: photoClassifierStore.groupList.groupList[props.groupId]?.files?.length || 0
+      })
+
       const gridElement = document.querySelector('.image-grid')
       if (gridElement) {
         gridElement.addEventListener('scroll', handleScroll)

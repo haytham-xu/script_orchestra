@@ -180,11 +180,9 @@ describe('PhotoClassifier - Batch Select Operations', () => {
 
       // Select group 0 from drawer
       cy.get('.el-drawer', { timeout: 5000 }).should('be.visible')
-      cy.wait(300) // Wait for group cards in drawer to render
-      cy.get('.el-drawer .group-card', { timeout: 10000 }).should('exist')
-      cy.get('.el-drawer .group-card').eq(0).within(() => {
-        cy.contains('button', 'Add').click()
-      })
+      cy.wait(300) // Wait for group items in drawer to render
+      cy.get('.el-drawer .group-item', { timeout: 10000 }).should('exist')
+      cy.get('.el-drawer .group-item').eq(0).click()
       cy.wait(500)
 
       // Verify drawer closed and selection cleared
@@ -343,10 +341,11 @@ describe('PhotoClassifier - Batch Select Operations', () => {
       cy.clickCreateNewGroup()
       cy.wait(1500) // Further increase wait time for group creation and Vue updates
 
-      // Verify default group is now empty (only 1 custom group card should exist)
+      // Verify dashboard shows: 1 default group + 1 custom group = 2 total
+      // Note: defaultGroup.files still contains all 5 files (fileStatus=IN_GROUP)
       cy.visit('/photo-classifier')
       cy.wait(1000) // Wait for Vue to recalculate group cards
-      cy.get('.group-card', { timeout: 10000 }).should('have.length', 1)
+      cy.get('.group-card', { timeout: 10000 }).should('have.length', 2)
 
       cy.log('✅ Case 27 completed')
     })

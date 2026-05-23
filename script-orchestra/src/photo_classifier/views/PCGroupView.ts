@@ -29,9 +29,18 @@ export default defineComponent({
     })
 
     const markAllNormal = () => {
+      console.log('[GroupView] markAllNormal - Before:', displayFileList.value.map(f => ({
+        file: f.filePath,
+        categoryTag: f.categoryTag
+      })))
       for (const a_file of displayFileList.value) {
         a_file.categoryTag = FileCategory.NORMAL
       }
+      console.log('[GroupView] markAllNormal - After:', displayFileList.value.map(f => ({
+        file: f.filePath,
+        categoryTag: f.categoryTag
+      })))
+      photoClassifierStore.autoSaveWorkingState()
     }
 
     const currentFile = computed<FileModel | null>(() => {
@@ -111,16 +120,28 @@ export default defineComponent({
           goPrevImage()
           break
         case 'KeyZ':
+          console.log(`[GroupView] KeyZ - Setting ${file.filePath} to BEST`)
           file.categoryTag = FileCategory.BEST
+          console.log(`[GroupView] KeyZ - New categoryTag: ${file.categoryTag}`)
+          photoClassifierStore.autoSaveWorkingState()
           break
         case 'KeyX':
+          console.log(`[GroupView] KeyX - Setting ${file.filePath} to BETTER`)
           file.categoryTag = FileCategory.BETTER
+          console.log(`[GroupView] KeyX - New categoryTag: ${file.categoryTag}`)
+          photoClassifierStore.autoSaveWorkingState()
           break
         case 'KeyC':
+          console.log(`[GroupView] KeyC - Setting ${file.filePath} to NORMAL`)
           file.categoryTag = FileCategory.NORMAL
+          console.log(`[GroupView] KeyC - New categoryTag: ${file.categoryTag}`)
+          photoClassifierStore.autoSaveWorkingState()
           break
         case 'Backspace':
+          console.log(`[GroupView] Backspace - Setting ${file.filePath} to DEL`)
           file.categoryTag = FileCategory.DEL
+          console.log(`[GroupView] Backspace - New categoryTag: ${file.categoryTag}`)
+          photoClassifierStore.autoSaveWorkingState()
           break
         case 'Enter':
           applyGroup()

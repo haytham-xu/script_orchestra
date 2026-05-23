@@ -251,11 +251,10 @@ describe('PhotoClassifier - Small Group Operations', () => {
       cy.wait(500)
 
       // Add all files to group 0
-      cy.pressKey('KeyQ')
+      cy.pressKey('KeyQ')  // File 1 -> group 0, auto-advances to file 2
       cy.wait(300)
       for (let i = 0; i < 4; i++) {
-        cy.goToNextImage()
-        cy.pressKey('KeyW')
+        cy.pressKey('KeyW')  // Add current file to group 0, auto-advances to next
         cy.wait(300)
       }
 

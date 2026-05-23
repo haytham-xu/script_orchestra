@@ -223,18 +223,20 @@ describe('PhotoClassifier - Group Batch Operations', () => {
       cy.clickCreateNewGroup()
       cy.wait(1000)
 
-      // Add remaining files
+      // Enable "ungrouped only" filter to see remaining files
+      cy.get('.el-switch').click()
+      cy.wait(500)
+
+      // Add remaining files (now indices 0-49 will be the actual remaining ungrouped files)
       cy.get('.image-card').first().click()
       cy.get('.image-card').eq(49).click({ shiftKey: true })
       cy.wait(300)
       cy.clickAddToExistingGroup()
       cy.wait(500) // Wait for drawer to open
       cy.get('.el-drawer', { timeout: 5000 }).should('be.visible')
-      cy.wait(300) // Wait for group cards in drawer to render
-      cy.get('.el-drawer .group-card', { timeout: 10000 }).should('exist')
-      cy.get('.el-drawer .group-card').first().within(() => {
-        cy.contains('button', 'Add').click()
-      })
+      cy.wait(300) // Wait for group items in drawer to render
+      cy.get('.el-drawer .group-item', { timeout: 10000 }).should('exist')
+      cy.get('.el-drawer .group-item').first().click()
       cy.wait(1000)
 
       // Go to group batch

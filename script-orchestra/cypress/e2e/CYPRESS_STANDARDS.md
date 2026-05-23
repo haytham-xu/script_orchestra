@@ -7,7 +7,8 @@
 npm run test:e2e:open
 
 # Headless 模式（CI）
-npm run test:e2e > ../log/cypress.log
+npm run test:e2e 2>&1 | tee ../log/cypress.log
+npx cypress run --spec "cypress/e2e/photo-classifier/03-default-group-operations.cy.ts" 2>&1 | tee ../log/cypress.log
 ```
 
 ## 配置恢复命令

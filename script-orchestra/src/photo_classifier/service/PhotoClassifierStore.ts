@@ -60,6 +60,16 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     // Auto-save working state to backend
     async autoSaveWorkingState() {
       try {
+        console.log('[Store] autoSaveWorkingState - Saving state')
+        console.log('[Store] defaultGroup files count:', this.defaultGroup.files.length)
+        console.log('[Store] groups count:', this.groupList.groupList.length)
+        this.groupList.groupList.forEach((group, idx) => {
+          console.log(`[Store] Group ${idx}: ${group.files.length} files`)
+          group.files.forEach((file, fileIdx) => {
+            console.log(`  [${fileIdx}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+          })
+        })
+
         await saveWorkingState({
           defaultGroup: this.defaultGroup,
           groupList: this.groupList,
@@ -73,13 +83,28 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
     // Load working state from backend
     async loadWorkingStateFromBackend(): Promise<boolean> {
       try {
+        console.log('[Store] loadWorkingStateFromBackend - Loading state')
         const state = await loadWorkingState()
         if (state) {
+          console.log('[Store] State loaded successfully')
+          console.log('[Store] defaultGroup files:', state.defaultGroup.files.length)
+          state.defaultGroup.files.forEach((file, idx) => {
+            console.log(`[Store] DefaultGroup [${idx}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+          })
+          console.log('[Store] groups:', state.groupList.groupList.length)
+          state.groupList.groupList.forEach((group, idx) => {
+            console.log(`[Store] Group ${idx}: ${group.files.length} files`)
+            group.files.forEach((file, fileIdx) => {
+              console.log(`  [${fileIdx}] ${file.filePath} - categoryTag: ${file.categoryTag}`)
+            })
+          })
+
           this.defaultGroup = state.defaultGroup
           this.groupList = state.groupList
           this.initialized = true
           return true
         }
+        console.log('[Store] No state found')
         return false
       } catch (error) {
         console.error('Failed to load working state:', error)

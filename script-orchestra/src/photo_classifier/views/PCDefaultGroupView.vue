@@ -11,7 +11,7 @@
       </div>
 
       <div class="header-progress">
-        <span v-if="!isEditing" @click="startEditing">{{ currentIndex + 1 }}</span>
+        <span v-if="!isEditing" @click="startEditing">{{ displayFileList.length === 0 ? 0 : currentIndex + 1 }}</span>
 
         <el-input
           v-else

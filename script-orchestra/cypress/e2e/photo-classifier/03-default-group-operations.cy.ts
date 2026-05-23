@@ -157,13 +157,14 @@ describe('PhotoClassifier - Default Group Operations', () => {
       cy.wait(300)
 
       // Verify by going to dashboard
-      // Dashboard shows: 2 custom group cards (no default group since all files are grouped)
+      // Dashboard shows: 1 default group + 2 custom groups = 3 total
+      // Note: defaultGroup.files always contains all files (full set), even if they're grouped
       cy.visit('/photo-classifier')
       cy.wait(500) // Wait for Vue to update after all operations
-      cy.get('.group-card', { timeout: 10000 }).should('have.length', 2)
+      cy.get('.group-card', { timeout: 10000 }).should('have.length', 3)
 
-      // Verify group 0 has 2 files (can check avatar or enter group)
-      cy.get('.group-card').eq(0).click()
+      // Verify group 0 has 2 files (first custom group card is at index 1, after default group)
+      cy.get('.group-card').eq(1).click()
       cy.url().should('include', '/group/0')
       cy.verifyIndexDisplay('1 / 2')
 
@@ -247,15 +248,15 @@ describe('PhotoClassifier - Default Group Operations', () => {
       cy.pressKey('KeyW')  // File 3 -> group 0, W auto-advances to file 4
       cy.wait(300)
 
-      // Before filtering, we're at position 3 (file 3)
-      // After adding to group, still showing all 6 files
-      cy.verifyIndexDisplay('3 / 6')
+      // Before filtering, we're at file 4 (index 4/6)
+      // After adding files 1,2,3 to group, we auto-advanced to file 4
+      cy.verifyIndexDisplay('4 / 6')
 
-      // Toggle unidentified filter - this will reset to first ungrouped file
+      // Toggle unidentified filter - should keep showing file 4 (first ungrouped file)
       cy.toggleUnidentifiedFilter()
       cy.wait(500)
 
-      // Should show only 3 ungrouped files (4, 5, 6), and we're at position 1 now
+      // Should show only 3 ungrouped files (4, 5, 6), file 4 is now at position 1
       cy.verifyIndexDisplay('1 / 3')
 
       cy.log('✅ Case 10 completed')

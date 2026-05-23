@@ -27,6 +27,10 @@ describe('PhotoClassifier - Integration Scenarios', () => {
   beforeEach(() => {
     cy.checkBackendHealth()
 
+    // Visit a page first to ensure window is available
+    cy.visit('/photo-classifier')
+    cy.wait(500)
+
     // Reset store to ensure test isolation
     // This prevents state pollution from previous tests
     cy.resetPhotoClassifierStore()
@@ -67,7 +71,33 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       cy.pressKey('KeyW')  // File 5 → Group 1, auto-advance to file 6
       cy.wait(300)
 
-      // Mark remaining files: 6=normal, 7=best, 8,9=del, 10=unprocessed
+      // Process group 0 (files 1,2,3) - DO NOT APPLY YET
+      cy.visit('/photo-classifier/group/0')
+      cy.wait(1000) // Wait for group view to load
+      cy.contains('button', 'Mark All Normal').click()  // All 3 files → normal
+      cy.wait(300)
+      cy.goToNextImage()  // Move from file 1 to file 2
+      cy.markAs('better')  // File 2 → better (overwrite normal)
+      cy.wait(300)
+      // NOTE: Don't apply yet! Applying clears working state
+
+      // Process group 1 (files 4,5) - DO NOT APPLY YET
+      cy.visit('/photo-classifier/group/1')
+      cy.wait(1000) // Wait for group view to load
+      cy.contains('button', 'Mark All Normal').click()  // Both files → normal
+      cy.wait(300)
+      // NOTE: Don't apply yet!
+
+      // Mark remaining files in default group: 6=normal, 7=best, 8,9=del, 10=unprocessed
+      cy.goToDefaultGroup()
+      cy.get('.main-image').should('be.visible')
+      cy.wait(500)
+
+      // Enable "ungrouped only" filter to see only files 6-10
+      cy.get('.el-switch').click()
+      cy.wait(300)
+
+      // Now currentIndex=0 points to file 6 (first ungrouped file)
       cy.markAs('normal')  // File 6 → normal
       cy.goToNextImage()   // Move to file 7
       cy.markAs('best')    // File 7 → best
@@ -78,29 +108,9 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       cy.goToNextImage()   // Move to file 10
       // File 10 stays unprocessed
 
-      // Process group 0 (files 1,2,3)
-      cy.visit('/photo-classifier/group/0')
-      cy.wait(1000) // Wait for group view to load
-      cy.contains('button', 'Mark All Normal').click()  // All 3 files → normal
-      cy.wait(300)
-      cy.goToNextImage()  // Move from file 1 to file 2
-      cy.markAs('better')  // File 2 → better (overwrite normal)
-      cy.pressKey('Enter')  // Apply: file 1→normal, file 2→better, file 3→normal
-      // Don't wait - verifyFileDistribution will check when ready
-
-      // Process group 1 (files 4,5)
-      cy.visit('/photo-classifier/group/1')
-      cy.wait(1000) // Wait for group view to load
-      cy.contains('button', 'Mark All Normal').click()  // Both files → normal
-      cy.wait(300)
-      cy.pressKey('Enter')  // Apply: file 4→normal, file 5→normal
-      // Don't wait - verifyFileDistribution will check when ready
-
-      // Process remaining default group files (files 6=normal, 7=best, 8,9=del already marked)
-      cy.goToDefaultGroup()
-      cy.get('.main-image').should('be.visible')
-      cy.wait(1000)
-      cy.pressKey('Enter')  // Apply all marked files in default group
+      // Now apply everything at once from default group
+      // This ensures all marks are applied before working state is cleared
+      cy.pressKey('Enter')  // Apply all marked files including group files
       // Don't wait - verifyFileDistribution will check when ready
 
       // Verify final distribution:
@@ -147,14 +157,13 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       cy.wait(500)
 
       // Create group with 2 files
-      cy.pressKey('KeyQ')
+      cy.pressKey('KeyQ')  // File 1 → Group 0, auto-advance to file 2
       cy.wait(300)
-      cy.goToNextImage()
-      cy.pressKey('KeyW')
+      cy.pressKey('KeyW')  // File 2 → Group 0, auto-advance to file 3
       cy.wait(300)
 
       // Mark file 3 as best (don't apply yet)
-      cy.goToNextImage()
+      // Already at file 3 after KeyW auto-advance
       cy.markAs('best')
       cy.wait(500)
 
@@ -175,8 +184,13 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       // Go back to default group and verify mark was saved
       cy.goToDefaultGroup()
       cy.get('.main-image').should('be.visible')
-      cy.wait(1000) // Increase wait for state restoration
-      // Navigate to file 3 (now at index 0 since files 1,2 are grouped)
+      cy.wait(500)
+
+      // Enable "ungrouped only" filter so file 3 becomes index 0
+      cy.get('.el-switch').click()
+      cy.wait(500)
+
+      // Now file 3 should be at currentIndex=0 and should show 'best' tag
       cy.get('.header-tags, .header-right', { timeout: 10000 }).should('contain', 'best')
 
       cy.log('✅ Case 35 completed')

@@ -42,6 +42,12 @@ export default defineConfig({
     setupNodeEvents(on, config) {
       // Cypress Tasks for test data management
       on('task', {
+        // Browser console log output to terminal
+        log(message) {
+          console.log(message)
+          return null
+        },
+
         // Health check
         async checkBackendHealth() {
           try {
