@@ -26,6 +26,7 @@ export function useDuplicateFinderView() {
     similarity_threshold: 90,
     folder_paths: [],
     folder_root_paths: {},
+    max_cpu_usage_percent: 50,
     auto_selection_rules: {
       auto_mark_numbered_copies: true,
       auto_mark_copy_suffix: true,

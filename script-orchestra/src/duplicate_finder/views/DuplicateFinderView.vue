@@ -248,6 +248,22 @@
             <p class="settings-hint">Path to the perceptual hash cache database</p>
           </div>
 
+          <div class="setting-item">
+            <label>Max CPU Usage: {{ settings.max_cpu_usage_percent || 50 }}%</label>
+            <el-slider
+              v-model="settings.max_cpu_usage_percent"
+              :min="10"
+              :max="100"
+              :step="10"
+              :marks="{ 25: '25%', 50: '50%', 75: '75%', 100: '100%' }"
+              show-stops
+            />
+            <p class="settings-hint">
+              Percentage of CPU cores to use for hash computation. Lower values reduce system load.
+              Default: 50%
+            </p>
+          </div>
+
           <el-button
             type="primary"
             @click="saveAdvancedSettings"

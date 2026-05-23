@@ -149,8 +149,18 @@ class ScanResource(Resource):
             def progress_callback(current, total, message):
                 emit_progress(scan_id, current, total, message)
 
-            duplicate_groups = cache.find_duplicates(image_files, threshold, progress_callback)
+            scan_result = cache.find_duplicates(image_files, threshold, progress_callback)
+
+            # Extract duplicate groups from result
+            duplicate_groups = scan_result['duplicate_groups']
+            error_files = scan_result.get('error_files', [])
+            skipped_files = scan_result.get('skipped_files', [])
+
             print(f"[Duplicate Finder] Found {len(duplicate_groups)} duplicate groups")
+            if error_files:
+                print(f"[Duplicate Finder] ⚠️  {len(error_files)} files had errors")
+            if skipped_files:
+                print(f"[Duplicate Finder] 🚫 {len(skipped_files)} files were skipped")
         except Exception as e:
             error_msg = str(e)
             print(f"[Duplicate Finder] Error: {error_msg}")
@@ -189,8 +199,12 @@ class ScanResource(Resource):
         result = {
             "scan_id": scan_id,
             "duplicate_groups": duplicate_groups,
-            "total_files": len(image_files),
-            "duplicate_count": duplicate_count
+            "total_files": scan_result.get('total_files', len(image_files)),
+            "scanned_files": scan_result.get('scanned_files', len(image_files)),
+            "duplicate_count": duplicate_count,
+            "error_files": error_files,
+            "skipped_files": skipped_files,
+            "stats": scan_result.get('stats', {})
         }
 
         # Emit completion event

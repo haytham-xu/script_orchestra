@@ -12,7 +12,8 @@ SETTINGS_FILE = Path(__file__).parent / 'settings.json'
 
 DEFAULT_SETTINGS = {
     'delete_target_path': '',
-    'similarity_threshold': 90
+    'similarity_threshold': 90,
+    'max_cpu_usage_percent': 50  # Default to 50% of CPU cores
 }
 
 class SettingsManager:
@@ -50,6 +51,12 @@ class SettingsManager:
         # 100% = 0 distance, 0% = 64 distance
         max_distance = 64
         return int((100 - threshold) / 100 * max_distance)
+
+    def get_max_cpu_usage_percent(self) -> int:
+        """Get configured maximum CPU usage percentage (1-100)"""
+        cpu_percent = self.get_settings().get('max_cpu_usage_percent', 50)
+        # Ensure within valid range
+        return max(1, min(100, cpu_percent))
 
 
 # Global instance
