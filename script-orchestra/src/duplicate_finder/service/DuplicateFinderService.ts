@@ -151,4 +151,20 @@ export class DuplicateFinderService {
     const response = await postRequest(`${this.BASE_URL}/verify`, {}, { duplicate_groups: duplicateGroups })
     return response
   }
+
+  /**
+   * Stop an active scan
+   */
+  static async stopScan(scanId: string): Promise<{ message: string; scan_id: string }> {
+    const response = await postRequest(`${this.BASE_URL}/stop`, {}, { scan_id: scanId })
+    return response
+  }
+
+  /**
+   * Get active scans
+   */
+  static async getActiveScans(): Promise<{ active_scans: string[]; count: number }> {
+    const response = await getRequest(`${this.BASE_URL}/active-scans`)
+    return response
+  }
 }

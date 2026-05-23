@@ -35,7 +35,7 @@ def init_socketio(app):
     return socketio
 
 
-def emit_progress(scan_id: str, current: int, total: int, message: str = ""):
+def emit_progress(scan_id: str, current: int, total: int, message: str = "", extra_data: dict = None):
     """
     Emit scanning progress update to connected clients
 
@@ -44,9 +44,11 @@ def emit_progress(scan_id: str, current: int, total: int, message: str = ""):
         current: Current progress count
         total: Total count
         message: Optional status message
+        extra_data: Optional extra data (e.g., groups_batch for streaming results)
 
     Example:
         emit_progress('scan-123', 50, 100, 'Scanning image 50/100')
+        emit_progress('scan-123', 50, 100, 'Found 10 groups', {'groups_batch': [...]})
     """
     if not SOCKETIO_AVAILABLE or socketio is None:
         return
@@ -60,13 +62,19 @@ def emit_progress(scan_id: str, current: int, total: int, message: str = ""):
             'message': message
         }
 
+        # Add extra data if provided (e.g., groups_batch)
+        if extra_data:
+            progress_data.update(extra_data)
+
         # Emit to specific scan room
         socketio.emit(f'scan:{scan_id}:progress', progress_data)
 
         # Also emit to general progress channel
         socketio.emit('duplicate-finder:progress', progress_data)
 
-        print(f"[Duplicate Finder] Progress emitted for {scan_id}: {current}/{total} - {message}")
+        # Only log non-batch progress to avoid spam
+        if not extra_data or 'groups_batch' not in extra_data:
+            print(f"[Duplicate Finder] Progress emitted for {scan_id}: {current}/{total} - {message}")
 
     except Exception as e:
         print(f"[Duplicate Finder] Failed to emit progress: {e}")

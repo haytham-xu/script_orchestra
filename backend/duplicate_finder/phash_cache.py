@@ -690,7 +690,7 @@ class PHashCache:
 
         return (False, '')
 
-    def find_duplicates(self, file_paths: List[str], threshold: int = 5, progress_callback=None) -> List[List[Dict]]:
+    def find_duplicates(self, file_paths: List[str], threshold: int = 5, progress_callback=None, stop_event=None) -> List[List[Dict]]:
         """
         Find duplicate images based on perceptual hash similarity.
         Uses multiprocessing for parallel hash computation and batch database writes.
@@ -699,7 +699,8 @@ class PHashCache:
             file_paths: List of image file paths to compare
             threshold: Maximum hamming distance to consider duplicates (0-64)
                       Lower = more strict. 5 is good for compressed duplicates.
-            progress_callback: Optional callback(current, total, message) for progress updates
+            progress_callback: Optional callback(current, total, message, extra_data) for progress updates
+            stop_event: Optional threading.Event to signal stop
 
         Returns:
             List of duplicate groups, each group is a list of file info dicts
@@ -1003,6 +1004,11 @@ class PHashCache:
         processed = set()
 
         for i, img1 in enumerate(image_data):
+            # Check for stop signal every 100 iterations
+            if stop_event and i % 100 == 0 and stop_event.is_set():
+                print(f"[Duplicate Finder] Stop signal received, halting at {i}/{len(image_data)}")
+                break
+
             # Report progress every 100 images with ETA
             if progress_callback and i > 0 and i % 100 == 0:
                 elapsed = time.time() - duplicate_search_start
@@ -1061,6 +1067,18 @@ class PHashCache:
                     img.pop('phash', None)
 
                 duplicate_groups.append(group)
+
+                # Emit group in real-time (every 10 groups to reduce WebSocket overhead)
+                if progress_callback and len(duplicate_groups) % 10 == 0:
+                    # Send the last 10 groups
+                    batch_start = max(0, len(duplicate_groups) - 10)
+                    batch_groups = duplicate_groups[batch_start:]
+                    progress_callback(
+                        i,
+                        len(image_data),
+                        f'🔍 Finding duplicates... ({i}/{len(image_data)}) | Groups: {len(duplicate_groups)}',
+                        {'groups_batch': batch_groups}
+                    )
 
         duplicate_search_time = time.time() - duplicate_search_start
         total_time = time.time() - start_time

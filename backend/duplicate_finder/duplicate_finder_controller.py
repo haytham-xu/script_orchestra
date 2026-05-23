@@ -10,6 +10,7 @@ from flask_restx import Namespace, Resource
 from .phash_cache import PHashCache
 from .settings_manager import settings_manager
 from .websocket_service import emit_progress, emit_complete, emit_error
+from .scan_manager import scan_manager
 
 ns = Namespace("")
 
@@ -142,14 +143,20 @@ class ScanResource(Resource):
 
         # Find duplicates with progress callback
         try:
+            # Register scan for stop management
+            stop_event = scan_manager.start_scan(scan_id)
+
             cache = PHashCache()
             print(f"[Duplicate Finder] Computing hashes and finding duplicates...")
 
-            # Create progress callback
-            def progress_callback(current, total, message):
-                emit_progress(scan_id, current, total, message)
+            # Create progress callback that supports extra_data and stop checking
+            def progress_callback(current, total, message, extra_data=None):
+                # Check if scan should stop
+                if scan_manager.is_stopped(scan_id):
+                    raise InterruptedError(f"Scan {scan_id} was stopped by user")
+                emit_progress(scan_id, current, total, message, extra_data)
 
-            scan_result = cache.find_duplicates(image_files, threshold, progress_callback)
+            scan_result = cache.find_duplicates(image_files, threshold, progress_callback, stop_event)
 
             # Extract duplicate groups from result
             duplicate_groups = scan_result['duplicate_groups']
@@ -161,9 +168,16 @@ class ScanResource(Resource):
                 print(f"[Duplicate Finder] ⚠️  {len(error_files)} files had errors")
             if skipped_files:
                 print(f"[Duplicate Finder] 🚫 {len(skipped_files)} files were skipped")
+        except InterruptedError as e:
+            error_msg = str(e)
+            print(f"[Duplicate Finder] Scan stopped: {error_msg}")
+            scan_manager.complete_scan(scan_id)
+            emit_error(scan_id, error_msg)
+            return {"error": error_msg, "stopped": True}, 200
         except Exception as e:
             error_msg = str(e)
             print(f"[Duplicate Finder] Error: {error_msg}")
+            scan_manager.complete_scan(scan_id)
             emit_error(scan_id, error_msg)
             return {"error": error_msg}, 500
 
@@ -221,7 +235,56 @@ class ScanResource(Resource):
         }
         emit_complete(scan_id, completion_summary)
 
+        # Clean up scan manager
+        scan_manager.complete_scan(scan_id)
+
         return result
+
+
+@ns.route("/stop")
+class StopScanResource(Resource):
+    def post(self):
+        """
+        Stop an active scan gracefully.
+
+        Request body:
+        {
+            "scan_id": "scan-123"
+        }
+
+        Response:
+        {
+            "message": "Scan stop signal sent",
+            "scan_id": "scan-123"
+        }
+        """
+        data = request.json
+        if not data or 'scan_id' not in data:
+            return {"error": "Missing 'scan_id' in request"}, 400
+
+        scan_id = data['scan_id']
+
+        if scan_manager.stop_scan(scan_id):
+            return {
+                "message": f"Stop signal sent to scan {scan_id}",
+                "scan_id": scan_id
+            }
+        else:
+            return {
+                "error": f"Scan {scan_id} not found or already completed",
+                "scan_id": scan_id
+            }, 404
+
+
+@ns.route("/active-scans")
+class ActiveScansResource(Resource):
+    def get(self):
+        """Get list of active scan IDs"""
+        active_scans = scan_manager.get_active_scans()
+        return {
+            "active_scans": active_scans,
+            "count": len(active_scans)
+        }
 
 
 @ns.route("/delete")

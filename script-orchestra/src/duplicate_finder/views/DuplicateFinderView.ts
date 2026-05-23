@@ -15,6 +15,7 @@ export function useDuplicateFinderView() {
   const isScanning = ref(false)
   const isSaving = ref(false)
   const deepPathDelete = ref<string>('')
+  const currentScanId = ref<string | null>(null)
   const scanProgress = ref({
     current: 0,
     total: 0,
@@ -172,7 +173,8 @@ export function useDuplicateFinderView() {
     }
 
     // Generate scan ID
-    currentScanId = uuidv4()
+    const scanId = uuidv4()
+    currentScanId.value = scanId
     isScanning.value = true
     scanProgress.value = {
       current: 0,
@@ -180,7 +182,13 @@ export function useDuplicateFinderView() {
       percentage: 0,
       message: 'Starting scan...'
     }
-    scanResult.value = null
+    // Initialize with empty result for streaming
+    scanResult.value = {
+      scan_id: scanId,
+      duplicate_groups: [],
+      total_files: 0,
+      duplicate_count: 0
+    }
     selectedForDelete.value.clear()
 
     // Connect WebSocket if not connected
@@ -188,7 +196,7 @@ export function useDuplicateFinderView() {
       connectWebSocket()
     }
 
-    // Listen for progress updates
+    // Listen for progress updates (with streaming groups)
     socket?.on(`scan:${currentScanId}:progress`, (data: any) => {
       console.log('[Duplicate Finder] Progress:', data)
       scanProgress.value = {
@@ -196,6 +204,22 @@ export function useDuplicateFinderView() {
         total: data.total,
         percentage: data.percentage,
         message: data.message
+      }
+
+      // If progress contains groups_batch, add them to the result in real-time
+      if (data.groups_batch && Array.isArray(data.groups_batch)) {
+        if (scanResult.value && scanResult.value.duplicate_groups) {
+          // Add group_id to each new group
+          const newGroups = data.groups_batch.map((group: any, index: number) => {
+            const groupId = `group-${scanResult.value!.duplicate_groups.length + index}`
+            return Object.assign(group, { group_id: groupId })
+          })
+
+          // Append new groups
+          scanResult.value.duplicate_groups.push(...newGroups)
+
+          console.log(`[Duplicate Finder] Received ${newGroups.length} groups, total: ${scanResult.value.duplicate_groups.length}`)
+        }
       }
     })
 
@@ -223,14 +247,16 @@ export function useDuplicateFinderView() {
         scan_id: currentScanId
       })
 
-      // Set the full result from HTTP response (not WebSocket)
-      // Add group_id for virtual scroller key-field
+      // Merge HTTP result with WebSocket streaming result
+      // HTTP result is the authoritative final result
       if (result.duplicate_groups) {
         result.duplicate_groups = result.duplicate_groups.map((group, index) => {
           // Add a unique ID for each group for virtual scroller
           return Object.assign(group, { group_id: `group-${index}` })
         })
       }
+
+      // Update with final result (may include groups missed by WebSocket)
       scanResult.value = result
 
       // Apply auto-selection rules
@@ -241,6 +267,38 @@ export function useDuplicateFinderView() {
       console.error('[Duplicate Finder] Scan failed:', error)
       ElMessage.error(error.message || 'Scan failed')
       isScanning.value = false
+    }
+  }
+
+  /**
+   * Stop current scan
+   */
+  async function stopScan() {
+    if (!currentScanId.value) {
+      ElMessage.warning('No active scan to stop')
+      return
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        'Are you sure you want to stop the current scan? Already found groups will be kept.',
+        'Stop Scan',
+        {
+          confirmButtonText: 'Stop',
+          cancelButtonText: 'Continue Scanning',
+          type: 'warning'
+        }
+      )
+
+      const result = await DuplicateFinderService.stopScan(currentScanId.value)
+      ElMessage.success(result.message || 'Scan stopped')
+      isScanning.value = false
+      currentScanId.value = null
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Stop scan failed:', error)
+        ElMessage.error(error.message || 'Failed to stop scan')
+      }
     }
   }
 
@@ -734,6 +792,7 @@ export function useDuplicateFinderView() {
     selectedFolders,
     threshold,
     deepPathDelete,
+    currentScanId,
     isScanning,
     isSaving,
     isCleaning,
@@ -748,6 +807,7 @@ export function useDuplicateFinderView() {
     isLoadingWhitelist,
     // Methods
     startScan,
+    stopScan,
     toggleFileSelection,
     hasSelectedInGroup,
     getSelectedCountInGroup,

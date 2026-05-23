@@ -87,14 +87,24 @@
       <!-- Scan Button -->
       <div class="action-buttons">
         <el-button
+          v-if="!isScanning"
           type="primary"
           size="large"
-          :loading="isScanning"
           :disabled="selectedFolders.length === 0"
           @click="startScan"
           class="scan-button"
         >
-          {{ isScanning ? 'Scanning...' : `🔍 Scan ${selectedFolders.length} Folder${selectedFolders.length > 1 ? 's' : ''}` }}
+          🔍 Scan {{ selectedFolders.length }} Folder{{ selectedFolders.length > 1 ? 's' : '' }}
+        </el-button>
+
+        <el-button
+          v-if="isScanning"
+          type="danger"
+          size="large"
+          @click="stopScan"
+          class="stop-button"
+        >
+          ⏹️ Stop Scan
         </el-button>
 
         <el-button

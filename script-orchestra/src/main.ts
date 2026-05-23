@@ -9,6 +9,9 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
+// Virtual Scroller for large lists
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
