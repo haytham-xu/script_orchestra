@@ -140,69 +140,77 @@
         </div>
       </el-card>
 
-      <!-- Duplicate Groups -->
-      <div v-for="(group, groupIndex) in scanResult.duplicate_groups" :key="groupIndex" class="duplicate-group">
-        <el-card>
-          <template #header>
-            <div class="group-header">
-              <span class="group-title">Group {{ groupIndex + 1 }} ({{ group.length }} similar images)</span>
-              <div class="group-actions">
-                <el-button
-                  size="small"
-                  @click="addGroupToWhitelist(group, groupIndex)"
-                >
-                  ✅ Add to Whitelist
-                </el-button>
-                <el-button
-                  size="small"
-                  type="danger"
-                  :disabled="!hasSelectedInGroup(group)"
-                  @click="deleteSelectedInGroup(group, groupIndex)"
-                >
-                  🗑️ Delete Selected ({{ getSelectedCountInGroup(group) }})
-                </el-button>
+      <!-- Duplicate Groups with Virtual Scrolling -->
+      <RecycleScroller
+        :items="scanResult.duplicate_groups"
+        :item-size="400"
+        key-field="group_id"
+        class="duplicate-groups-scroller"
+        v-slot="{ item: group, index: groupIndex }"
+      >
+        <div class="duplicate-group">
+          <el-card>
+            <template #header>
+              <div class="group-header">
+                <span class="group-title">Group {{ groupIndex + 1 }} ({{ group.length }} similar images)</span>
+                <div class="group-actions">
+                  <el-button
+                    size="small"
+                    @click="addGroupToWhitelist(group, groupIndex)"
+                  >
+                    ✅ Add to Whitelist
+                  </el-button>
+                  <el-button
+                    size="small"
+                    type="danger"
+                    :disabled="!hasSelectedInGroup(group)"
+                    @click="deleteSelectedInGroup(group, groupIndex)"
+                  >
+                    🗑️ Delete Selected ({{ getSelectedCountInGroup(group) }})
+                  </el-button>
+                </div>
               </div>
-            </div>
-          </template>
+            </template>
 
-          <div class="image-grid">
-            <div
-              v-for="(image, imageIndex) in group"
-              :key="image.file_path"
-              :class="['image-item', { selected: selectedForDelete.has(image.file_path) }]"
-              @click="toggleFileSelection(image.file_path)"
-            >
-              <div class="image-wrapper">
-                <img :src="getImageUrl(image.file_path)" :alt="image.file_path" />
-                <div v-if="selectedForDelete.has(image.file_path)" class="selected-overlay">
-                  <el-icon :size="32"><CircleCheck /></el-icon>
-                  <p class="selected-text">DELETE</p>
+            <div class="image-grid">
+              <div
+                v-for="(image, imageIndex) in group"
+                :key="image.file_path"
+                :class="['image-item', { selected: selectedForDelete.has(image.file_path) }]"
+                @click="toggleFileSelection(image.file_path)"
+              >
+                <div class="image-wrapper">
+                  <img :src="getImageUrl(image.file_path)" :alt="image.file_path" />
+                  <div v-if="selectedForDelete.has(image.file_path)" class="selected-overlay">
+                    <el-icon :size="32"><CircleCheck /></el-icon>
+                    <p class="selected-text">DELETE</p>
+                  </div>
+                  <div v-if="imageIndex === 0" class="highest-badge">🏆 HIGHEST RESOLUTION</div>
                 </div>
-                <div v-if="imageIndex === 0" class="highest-badge">🏆 HIGHEST RESOLUTION</div>
-              </div>
-              <div class="image-info">
-                <p class="image-filename" :title="image.filename || image.file_path.split('/').pop()">
-                  {{ image.filename || image.file_path.split('/').pop() }}
-                </p>
-                <p class="image-path" :title="image.display_path || image.file_path">
-                  {{ image.display_path || getRelativePath(image.file_path) }}
-                </p>
-                <div class="image-meta">
-                  <span>{{ image.resolution }}</span>
-                  <span>{{ formatFileSize(image.filesize) }}</span>
+                <div class="image-info">
+                  <p class="image-filename" :title="image.filename || image.file_path.split('/').pop()">
+                    {{ image.filename || image.file_path.split('/').pop() }}
+                  </p>
+                  <p class="image-path" :title="image.display_path || image.file_path">
+                    {{ image.display_path || getRelativePath(image.file_path) }}
+                  </p>
+                  <div class="image-meta">
+                    <span>{{ image.resolution }}</span>
+                    <span>{{ formatFileSize(image.filesize) }}</span>
+                  </div>
+                  <el-button
+                    size="small"
+                    @click.stop="openFolder(image.file_path)"
+                    class="open-folder-button"
+                  >
+                    📁 Open Folder
+                  </el-button>
                 </div>
-                <el-button
-                  size="small"
-                  @click.stop="openFolder(image.file_path)"
-                  class="open-folder-button"
-                >
-                  📁 Open Folder
-                </el-button>
               </div>
             </div>
-          </div>
-        </el-card>
-      </div>
+          </el-card>
+        </div>
+      </RecycleScroller>
     </div>
 
     <!-- No Results -->
@@ -240,6 +248,15 @@
             <label>Delete Target Path</label>
             <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder" />
             <p class="settings-hint">Where deleted files will be moved to</p>
+          </div>
+
+          <div class="setting-item">
+            <label>Deep Path Delete (Optional)</label>
+            <el-input v-model="deepPathDelete" placeholder="/path/to/folder - preserve folder structure for files under this path" />
+            <p class="settings-hint">
+              When deleting files, if a file is under this path, preserve its relative folder structure in to_del.
+              Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg (instead of flat /to_del/file_a_folder1_sub.jpg)
+            </p>
           </div>
 
           <div class="setting-item">
@@ -448,6 +465,12 @@ const {
 </script>
 
 <style scoped>
+/* Virtual Scroller Styles */
+.duplicate-groups-scroller {
+  height: calc(100vh - 400px);
+  min-height: 500px;
+}
+
 .duplicate-finder-container {
   padding: 20px;
   max-width: 1800px;

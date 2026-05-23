@@ -55,8 +55,12 @@ export class DuplicateFinderService {
   /**
    * Delete (move) files to delete target
    */
-  static async deleteFiles(files: string[]): Promise<{ success: number; failed: number; errors: string[] }> {
-    const response = await postRequest(`${this.BASE_URL}/delete`, {}, { files })
+  static async deleteFiles(files: string[], deepPathDelete?: string): Promise<{ success: number; failed: number; errors: string[] }> {
+    const requestBody: any = { files }
+    if (deepPathDelete) {
+      requestBody.deep_path_delete = deepPathDelete
+    }
+    const response = await postRequest(`${this.BASE_URL}/delete`, {}, requestBody)
     return response
   }
 
@@ -142,6 +146,7 @@ export class DuplicateFinderService {
       remaining_files: string[]
     }>
     cleaned_groups: ImageInfo[][]
+    removed_groups_count: number
   }> {
     const response = await postRequest(`${this.BASE_URL}/verify`, {}, { duplicate_groups: duplicateGroups })
     return response

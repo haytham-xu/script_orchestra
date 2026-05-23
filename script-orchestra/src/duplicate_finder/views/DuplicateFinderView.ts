@@ -7,12 +7,14 @@ import { DuplicateFinderService, type ImageInfo, type ScanResult, type Settings 
 import io, { Socket } from 'socket.io-client'
 import { v4 as uuidv4 } from 'uuid'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
+import { RecycleScroller } from 'vue-virtual-scroller'
 
 export function useDuplicateFinderView() {
   const selectedFolders = ref<string[]>([])
   const threshold = ref(90)
   const isScanning = ref(false)
   const isSaving = ref(false)
+  const deepPathDelete = ref<string>('')
   const scanProgress = ref({
     current: 0,
     total: 0,
@@ -197,18 +199,13 @@ export function useDuplicateFinderView() {
       }
     })
 
-    // Listen for completion
+    // Listen for completion (WebSocket now only sends summary, not full result)
     socket?.on(`scan:${currentScanId}:complete`, (data: any) => {
-      console.log('[Duplicate Finder] Complete:', data)
-      scanResult.value = data.result
+      console.log('[Duplicate Finder] Complete (summary):', data)
+      // Note: data.result is now just a summary, not the full scan result
+      // The full result will come from the HTTP response below
       isScanning.value = false
-
-      // Apply auto-selection rules
-      if (data.result.duplicate_groups && data.result.duplicate_groups.length > 0) {
-        applyAutoSelectionRules(data.result.duplicate_groups)
-      }
-
-      ElMessage.success(`Scan complete: Found ${data.result.duplicate_groups.length} duplicate groups`)
+      ElMessage.success(`Scan complete: Found ${data.result.groups_count || 0} duplicate groups`)
     })
 
     // Listen for errors
@@ -218,13 +215,28 @@ export function useDuplicateFinderView() {
       isScanning.value = false
     })
 
-    // Start scan
+    // Start scan - HTTP API returns the full result
     try {
-      await DuplicateFinderService.scan({
+      const result = await DuplicateFinderService.scan({
         paths: selectedFolders.value,
         threshold: threshold.value,
         scan_id: currentScanId
       })
+
+      // Set the full result from HTTP response (not WebSocket)
+      // Add group_id for virtual scroller key-field
+      if (result.duplicate_groups) {
+        result.duplicate_groups = result.duplicate_groups.map((group, index) => {
+          // Add a unique ID for each group for virtual scroller
+          return Object.assign(group, { group_id: `group-${index}` })
+        })
+      }
+      scanResult.value = result
+
+      // Apply auto-selection rules
+      if (result.duplicate_groups && result.duplicate_groups.length > 0) {
+        applyAutoSelectionRules(result.duplicate_groups)
+      }
     } catch (error: any) {
       console.error('[Duplicate Finder] Scan failed:', error)
       ElMessage.error(error.message || 'Scan failed')
@@ -271,26 +283,36 @@ export function useDuplicateFinderView() {
     }
 
     try {
-      const result = await DuplicateFinderService.deleteFiles(filesToDelete)
+      // Pass deepPathDelete if it's set
+      const result = await DuplicateFinderService.deleteFiles(
+        filesToDelete,
+        deepPathDelete.value || undefined
+      )
 
       if (result.success > 0) {
         ElMessage.success(`Moved ${result.success} files to delete target`)
 
-        // Remove deleted files from result
-        if (scanResult.value) {
-          // Remove deleted files from the group
-          scanResult.value.duplicate_groups[groupIndex] = group.filter(
-            img => !selectedForDelete.value.has(img.file_path)
-          )
+        // When using deep path delete, files are moved with folder structure preserved
+        // We need to verify which files still exist and clean up the groups
+        if (deepPathDelete.value) {
+          await verifyAndCleanup()
+        } else {
+          // Remove deleted files from result (original behavior)
+          if (scanResult.value) {
+            // Remove deleted files from the group
+            scanResult.value.duplicate_groups[groupIndex] = group.filter(
+              img => !selectedForDelete.value.has(img.file_path)
+            )
 
-          // If group has less than 2 images, remove the entire group
-          if (scanResult.value.duplicate_groups[groupIndex].length < 2) {
-            scanResult.value.duplicate_groups.splice(groupIndex, 1)
+            // If group has less than 2 images, remove the entire group
+            if (scanResult.value.duplicate_groups[groupIndex].length < 2) {
+              scanResult.value.duplicate_groups.splice(groupIndex, 1)
+            }
           }
-        }
 
-        // Clear selections for deleted files
-        filesToDelete.forEach(path => selectedForDelete.value.delete(path))
+          // Clear selections for deleted files
+          filesToDelete.forEach(path => selectedForDelete.value.delete(path))
+        }
       }
 
       if (result.failed > 0) {
@@ -645,8 +667,12 @@ export function useDuplicateFinderView() {
         ? `\n\nAffected groups: ${result.affected_groups.length}\nSample missing files:\n${result.missing_files.slice(0, 5).join('\n')}${result.missing_files.length > 5 ? '\n...' : ''}`
         : ''
 
+      const removedGroupsInfo = result.removed_groups_count > 0
+        ? `\n${result.removed_groups_count} groups will be removed (less than 2 files remaining).`
+        : ''
+
       await ElMessageBox.confirm(
-        `Found ${result.missing_count} missing files that were externally deleted.${affectedGroupsInfo}\n\nDo you want to clean up the display?`,
+        `Found ${result.missing_count} missing files that were externally deleted.${affectedGroupsInfo}${removedGroupsInfo}\n\nDo you want to clean up the display?`,
         'Missing Files Detected',
         {
           confirmButtonText: 'Clean Up',
@@ -664,7 +690,11 @@ export function useDuplicateFinderView() {
         selectedForDelete.value.delete(filePath)
       })
 
-      ElMessage.success(`Cleanup complete! Removed ${result.affected_groups.length} affected groups.`)
+      let successMessage = `Cleanup complete! Removed ${result.affected_groups.length} affected groups.`
+      if (result.removed_groups_count > 0) {
+        successMessage += ` (${result.removed_groups_count} groups had <2 files)`
+      }
+      ElMessage.success(successMessage)
 
     } catch (error: any) {
       if (error !== 'cancel') {
@@ -698,8 +728,12 @@ export function useDuplicateFinderView() {
   })
 
   return {
+    // Components
+    RecycleScroller,
+    // Data
     selectedFolders,
     threshold,
+    deepPathDelete,
     isScanning,
     isSaving,
     isCleaning,
@@ -712,6 +746,7 @@ export function useDuplicateFinderView() {
     showWhitelistDrawer,
     whitelist,
     isLoadingWhitelist,
+    // Methods
     startScan,
     toggleFileSelection,
     hasSelectedInGroup,

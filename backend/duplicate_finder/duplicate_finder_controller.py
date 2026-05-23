@@ -207,8 +207,19 @@ class ScanResource(Resource):
             "stats": scan_result.get('stats', {})
         }
 
-        # Emit completion event
-        emit_complete(scan_id, result)
+        # Emit completion event with summary only (not full result)
+        # This prevents WebSocket crashes when handling large datasets (e.g., 640k+ files)
+        completion_summary = {
+            "scan_id": scan_id,
+            "total_files": result["total_files"],
+            "scanned_files": result["scanned_files"],
+            "duplicate_count": duplicate_count,
+            "groups_count": len(duplicate_groups),
+            "error_count": len(error_files),
+            "skipped_count": len(skipped_files),
+            "stats": result["stats"]
+        }
+        emit_complete(scan_id, completion_summary)
 
         return result
 
@@ -221,8 +232,15 @@ class DeleteResource(Resource):
 
         Request body:
         {
-            "files": ["/path/to/file1.jpg", "/path/to/file2.jpg"]
+            "files": ["/path/to/file1.jpg", "/path/to/file2.jpg"],
+            "deep_path_delete": "/path/to/match"  // optional: preserve folder structure for files under this path
         }
+
+        Deep path delete behavior:
+        - Files under deep_path_delete: preserve relative folder structure
+          Example: /a/folder1/sub/file.jpg -> /to_del/sub/file.jpg
+        - Files NOT under deep_path_delete: flatten with path suffix (original behavior)
+          Example: /b/folder2/file.jpg -> /to_del/file_b_folder2.jpg
 
         Response:
         {
@@ -236,6 +254,7 @@ class DeleteResource(Resource):
             return {"error": "Missing 'files' in request"}, 400
 
         files = data['files']
+        deep_path_delete = data.get('deep_path_delete')
         delete_target = settings_manager.get_delete_target_path()
 
         if not delete_target:
@@ -247,7 +266,15 @@ class DeleteResource(Resource):
         success_count = 0
         failed_count = 0
         errors = []
+        deleted_folders = []
 
+        # Normalize deep_path_delete for comparison
+        deep_path_abs = None
+        if deep_path_delete:
+            deep_path_abs = os.path.abspath(deep_path_delete)
+            print(f"[Duplicate Finder] Deep path delete mode: {deep_path_abs}")
+
+        # Delete files
         for file_path in files:
             if not os.path.exists(file_path):
                 errors.append(f"File not found: {file_path}")
@@ -255,30 +282,55 @@ class DeleteResource(Resource):
                 continue
 
             try:
-                # Generate new filename with path suffix
-                # /Users/you/Photos/2023/IMG_001.jpg -> IMG_001_Users_you_Photos_2023.jpg
-                original_name = os.path.basename(file_path)
-                name_without_ext, ext = os.path.splitext(original_name)
-                dir_path = os.path.dirname(file_path)
+                abs_file_path = os.path.abspath(file_path)
 
-                # Convert path to safe filename suffix
-                path_suffix = dir_path.replace('/', '_').replace('\\', '_')
-                # Remove leading underscores
-                path_suffix = path_suffix.lstrip('_')
+                # Check if file is under deep_path_delete
+                if deep_path_abs and abs_file_path.startswith(deep_path_abs + os.sep):
+                    # Deep path mode: preserve folder structure
+                    # Calculate relative path from deep_path_delete
+                    relative_path = os.path.relpath(abs_file_path, deep_path_abs)
+                    dest_path = os.path.join(delete_target, relative_path)
 
-                new_filename = f"{name_without_ext}_{path_suffix}{ext}"
-                dest_path = os.path.join(delete_target, new_filename)
+                    # Create parent directories if needed
+                    dest_dir = os.path.dirname(dest_path)
+                    os.makedirs(dest_dir, exist_ok=True)
 
-                # Handle name collision
-                counter = 1
-                while os.path.exists(dest_path):
-                    new_filename = f"{name_without_ext}_{path_suffix}_{counter}{ext}"
+                    # Handle name collision
+                    if os.path.exists(dest_path):
+                        name_without_ext, ext = os.path.splitext(dest_path)
+                        counter = 1
+                        while os.path.exists(dest_path):
+                            dest_path = f"{name_without_ext}_{counter}{ext}"
+                            counter += 1
+
+                    # Move file
+                    shutil.move(abs_file_path, dest_path)
+                    success_count += 1
+                    print(f"[Duplicate Finder] Moved file (deep): {abs_file_path} -> {dest_path}")
+
+                else:
+                    # Normal mode: flatten to delete_target root with path suffix
+                    original_name = os.path.basename(file_path)
+                    name_without_ext, ext = os.path.splitext(original_name)
+                    dir_path = os.path.dirname(file_path)
+
+                    # Convert path to safe filename suffix
+                    path_suffix = dir_path.replace('/', '_').replace('\\', '_')
+                    path_suffix = path_suffix.lstrip('_')
+
+                    new_filename = f"{name_without_ext}_{path_suffix}{ext}"
                     dest_path = os.path.join(delete_target, new_filename)
-                    counter += 1
 
-                # Move file
-                shutil.move(file_path, dest_path)
-                success_count += 1
+                    # Handle name collision
+                    counter = 1
+                    while os.path.exists(dest_path):
+                        new_filename = f"{name_without_ext}_{path_suffix}_{counter}{ext}"
+                        dest_path = os.path.join(delete_target, new_filename)
+                        counter += 1
+
+                    # Move file
+                    shutil.move(file_path, dest_path)
+                    success_count += 1
 
             except Exception as e:
                 errors.append(f"Failed to move {file_path}: {str(e)}")
@@ -516,11 +568,12 @@ class VerifyResource(Resource):
                     "remaining_files": ["/path/to/file2.jpg"]
                 }
             ],
-            "cleaned_groups": [  // Groups with missing files removed
+            "cleaned_groups": [  // Groups with missing files removed and groups with <2 files removed
                 [
                     {"file_path": "/path/to/file2.jpg", ...}
                 ]
-            ]
+            ],
+            "removed_groups_count": 5  // Number of groups removed due to <2 remaining files
         }
         """
         data = request.json
@@ -553,7 +606,8 @@ class VerifyResource(Resource):
                     "missing_files": [],
                     "missing_count": 0,
                     "affected_groups": [],
-                    "cleaned_groups": duplicate_groups
+                    "cleaned_groups": duplicate_groups,
+                    "removed_groups_count": 0
                 }
 
             # Find affected groups
@@ -565,6 +619,7 @@ class VerifyResource(Resource):
             # Build detailed response
             affected_groups = []
             cleaned_groups = []
+            removed_groups_count = 0
 
             for group_idx, group in enumerate(duplicate_groups):
                 group_missing = []
@@ -586,12 +641,17 @@ class VerifyResource(Resource):
                 # Only keep groups with 2+ remaining files
                 if len(group_remaining) >= 2:
                     cleaned_groups.append(group_remaining)
+                else:
+                    removed_groups_count += 1
+
+            print(f"[Duplicate Finder] Verify complete: {len(missing_files)} missing files, {removed_groups_count} groups removed")
 
             return {
                 "missing_files": missing_files,
                 "missing_count": len(missing_files),
                 "affected_groups": affected_groups,
-                "cleaned_groups": cleaned_groups
+                "cleaned_groups": cleaned_groups,
+                "removed_groups_count": removed_groups_count
             }
 
         except Exception as e:

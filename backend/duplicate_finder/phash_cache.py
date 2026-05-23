@@ -1054,9 +1054,12 @@ class PHashCache:
 
                 group.sort(key=get_resolution_pixels, reverse=True)
 
-                # Convert phash back to string for JSON (only in the group copy)
+                # Remove phash from response (frontend doesn't need it, saves bandwidth)
+                # Keep only essential fields for display
                 for img in group:
-                    img['phash'] = str(img['phash'])
+                    # Remove phash to reduce JSON size (64-char hex string per image)
+                    img.pop('phash', None)
+
                 duplicate_groups.append(group)
 
         duplicate_search_time = time.time() - duplicate_search_start

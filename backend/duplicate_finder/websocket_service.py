@@ -74,11 +74,36 @@ def emit_progress(scan_id: str, current: int, total: int, message: str = ""):
 
 def emit_complete(scan_id: str, result: dict):
     """
-    Emit scan completion event
+    Emit scan completion event with summary data.
+
+    IMPORTANT: Only pass summary data, NOT the full result with duplicate_groups.
+    For large datasets (e.g., 640k+ files), sending the full result can crash
+    the WebSocket thread due to message size limitations.
 
     Args:
         scan_id: Unique scan operation ID
-        result: Result dictionary with duplicate_groups, total_files, etc.
+        result: Summary dictionary with:
+            - scan_id: str
+            - total_files: int
+            - scanned_files: int
+            - duplicate_count: int
+            - groups_count: int
+            - error_count: int
+            - skipped_count: int
+            - stats: dict
+
+    Example:
+        completion_summary = {
+            "scan_id": "scan-123",
+            "total_files": 1000,
+            "scanned_files": 995,
+            "duplicate_count": 50,
+            "groups_count": 10,
+            "error_count": 5,
+            "skipped_count": 0,
+            "stats": {...}
+        }
+        emit_complete("scan-123", completion_summary)
     """
     if not SOCKETIO_AVAILABLE or socketio is None:
         return
