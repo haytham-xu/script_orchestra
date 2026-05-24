@@ -97,7 +97,7 @@ if __name__ == "__main__":
     if socketio:
         # Run with SocketIO if available
         print("[App] Starting with WebSocket support on 0.0.0.0:5001")
-        socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+        socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)
     else:
         # Fallback to regular Flask if SocketIO not available
         print("[App] Starting without WebSocket on 0.0.0.0:5001 (install flask-socketio to enable)")
