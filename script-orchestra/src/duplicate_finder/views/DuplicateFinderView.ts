@@ -302,6 +302,45 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Rescan from cache (using existing phash data)
+   */
+  async function rescanFromCache() {
+    try {
+      isScanning.value = true
+      scanProgress.value = {
+        current: 0,
+        total: 0,
+        percentage: 0,
+        message: 'Loading cached data...'
+      }
+
+      const result = await DuplicateFinderService.rescanFromCache(threshold.value, true)
+
+      // Add group IDs for virtual scroller
+      if (result.duplicate_groups) {
+        result.duplicate_groups = result.duplicate_groups.map((group, index) => {
+          return Object.assign(group, { group_id: `group-${index}` })
+        })
+      }
+
+      scanResult.value = result
+      selectedForDelete.value.clear()
+
+      // Apply auto-selection rules
+      if (result.duplicate_groups && result.duplicate_groups.length > 0) {
+        applyAutoSelectionRules(result.duplicate_groups)
+      }
+
+      ElMessage.success(`Quick rescan complete: Found ${result.duplicate_groups.length} duplicate groups using cached data`)
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Rescan from cache failed:', error)
+      ElMessage.error(error.message || 'Rescan failed')
+    } finally {
+      isScanning.value = false
+    }
+  }
+
+  /**
    * Toggle file selection for deletion
    */
   function toggleFileSelection(filePath: string) {
@@ -807,6 +846,7 @@ export function useDuplicateFinderView() {
     // Methods
     startScan,
     stopScan,
+    rescanFromCache,
     toggleFileSelection,
     hasSelectedInGroup,
     getSelectedCountInGroup,

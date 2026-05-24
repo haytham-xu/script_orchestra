@@ -98,6 +98,16 @@
         </el-button>
 
         <el-button
+          v-if="!isScanning"
+          type="success"
+          size="large"
+          @click="rescanFromCache"
+          class="rescan-button"
+        >
+          🔄 Quick Rescan (Use Cache)
+        </el-button>
+
+        <el-button
           v-if="isScanning"
           type="danger"
           size="large"
@@ -438,9 +448,11 @@ import { useDuplicateFinderView } from './DuplicateFinderView'
 const {
   selectedFolders,
   threshold,
+  deepPathDelete,
   isScanning,
   isSaving,
   isCleaning,
+  isVerifying,
   scanProgress,
   scanResult,
   selectedForDelete,
@@ -450,6 +462,8 @@ const {
   whitelist,
   isLoadingWhitelist,
   startScan,
+  stopScan,
+  rescanFromCache,
   toggleFileSelection,
   hasSelectedInGroup,
   getSelectedCountInGroup,
@@ -469,6 +483,7 @@ const {
   removeFromWhitelist,
   formatTimestamp,
   cleanupDatabase,
+  verifyAndCleanup,
   addPreferFolder,
   removePreferFolder
 } = useDuplicateFinderView()

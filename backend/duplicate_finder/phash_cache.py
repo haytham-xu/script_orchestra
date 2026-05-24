@@ -243,6 +243,26 @@ class PHashCache:
             )
         ''')
 
+        # Create phash neighbors table for caching similarity relationships
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS phash_neighbors (
+                phash TEXT NOT NULL,
+                neighbor_phash TEXT NOT NULL,
+                distance INTEGER NOT NULL,
+                last_checked REAL NOT NULL,
+                PRIMARY KEY (phash, neighbor_phash)
+            )
+        ''')
+
+        # Create indexes for phash_neighbors
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_neighbors_phash ON phash_neighbors(phash)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_neighbors_distance ON phash_neighbors(distance)
+        ''')
+
         conn.commit()
         # Don't close, keep connection alive
 
@@ -339,6 +359,60 @@ class PHashCache:
         ''', batch_data)
 
         conn.commit()
+
+    def get_all_cached_images(self, file_exists_check: bool = True) -> List[Dict]:
+        """
+        Load all cached image hashes from database.
+
+        Args:
+            file_exists_check: Whether to verify files still exist (default: True)
+
+        Returns:
+            List of image data dicts with phash, file_path, resolution, filesize
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT file_path, phash, resolution, filesize, mtime
+            FROM image_hashes
+            ORDER BY file_path
+        ''')
+
+        results = []
+        missing_count = 0
+
+        for row in cursor.fetchall():
+            file_path, phash, resolution, filesize, cached_mtime = row
+
+            # Optionally check if file still exists
+            if file_exists_check:
+                if not os.path.exists(file_path):
+                    missing_count += 1
+                    continue
+
+                # Check if file was modified
+                try:
+                    stat = os.stat(file_path)
+                    if stat.st_mtime != cached_mtime or stat.st_size != filesize:
+                        # File was modified, skip it
+                        missing_count += 1
+                        continue
+                except OSError:
+                    missing_count += 1
+                    continue
+
+            results.append({
+                'file_path': file_path,
+                'phash': phash,
+                'resolution': resolution,
+                'filesize': filesize
+            })
+
+        if missing_count > 0:
+            print(f"[Duplicate Finder] Skipped {missing_count} files (missing or modified)")
+
+        return results
 
     def update_file_path(self, filename: str, filesize: int, old_path: str, new_path: str, new_mtime: float):
         """Update file path when file is moved"""
@@ -588,6 +662,101 @@ class PHashCache:
 
         return None
 
+    def save_neighbors(self, neighbors_list: List[tuple]):
+        """
+        Save phash neighbor relationships to cache.
+
+        Args:
+            neighbors_list: List of (phash1, phash2, distance) tuples
+        """
+        if not neighbors_list:
+            return
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        current_time = time.time()
+
+        # Prepare data with last_checked timestamp
+        data = [(p1, p2, dist, current_time) for p1, p2, dist in neighbors_list]
+
+        cursor.executemany('''
+            INSERT OR REPLACE INTO phash_neighbors (phash, neighbor_phash, distance, last_checked)
+            VALUES (?, ?, ?, ?)
+        ''', data)
+
+        conn.commit()
+
+    def get_neighbors_from_cache(self, phashes: List[str], threshold: int) -> Dict[str, List[tuple]]:
+        """
+        Get cached neighbor relationships for given phashes.
+
+        Args:
+            phashes: List of phash values to query
+            threshold: Maximum distance to consider
+
+        Returns:
+            Dict mapping phash -> list of (neighbor_phash, distance) tuples
+        """
+        if not phashes:
+            return {}
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Query neighbors for all phashes at once
+        placeholders = ','.join('?' * len(phashes))
+        query = f'''
+            SELECT phash, neighbor_phash, distance
+            FROM phash_neighbors
+            WHERE phash IN ({placeholders})
+            AND distance <= ?
+        '''
+
+        cursor.execute(query, phashes + [threshold])
+
+        # Build result dict
+        result = {}
+        for row in cursor.fetchall():
+            phash, neighbor_phash, distance = row
+            if phash not in result:
+                result[phash] = []
+            result[phash].append((neighbor_phash, distance))
+
+        return result
+
+    def get_cached_phashes(self) -> set:
+        """
+        Get set of all phashes that have cached neighbors.
+
+        Returns:
+            Set of phash values that have neighbor records
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT DISTINCT phash FROM phash_neighbors')
+        return {row[0] for row in cursor.fetchall()}
+
+    def cleanup_orphaned_neighbors(self):
+        """
+        Remove neighbor records for phashes no longer in image_hashes table.
+        This is a maintenance operation to keep database clean.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Delete neighbors where phash not in image_hashes
+        cursor.execute('''
+            DELETE FROM phash_neighbors
+            WHERE phash NOT IN (SELECT phash FROM image_hashes)
+            OR neighbor_phash NOT IN (SELECT phash FROM image_hashes)
+        ''')
+
+        removed = cursor.rowcount
+        conn.commit()
+
+        return removed
+
     def save_scan_cache(self, file_paths: List[str], threshold: int, duplicate_groups: List[List[Dict]]):
         """
         Save scan results to cache for faster future scans.
@@ -814,6 +983,11 @@ class PHashCache:
         cache_check_start = time.time()
 
         for i, file_path in enumerate(file_paths):
+            # Check for stop signal during cache check
+            if stop_event and i % 1000 == 0 and stop_event.is_set():
+                print(f"[Duplicate Finder] Stop signal received during cache check")
+                raise InterruptedError(f"Scan stopped by user during cache check")
+
             # Update progress less frequently for cache check (every 1000 files)
             if progress_callback and i > 0 and i % 1000 == 0:
                 progress_callback(i, total_files, f'📝 Checking cache... ({i}/{total_files})')
@@ -873,6 +1047,13 @@ class PHashCache:
                                 batch_buffer = []
 
                     completed += 1
+
+                    # Check for stop signal during hash computation
+                    if stop_event and completed % 100 == 0 and stop_event.is_set():
+                        print(f"[Duplicate Finder] Stop signal received during hash computation")
+                        pool.terminate()  # Immediately terminate worker processes
+                        pool.join()
+                        raise InterruptedError(f"Scan stopped by user during hash computation")
 
                     # Update progress with ETA
                     if progress_callback and completed % PROGRESS_UPDATE_INTERVAL == 0:
@@ -980,22 +1161,59 @@ class PHashCache:
 
         print(f"[Duplicate Finder] Starting duplicate detection for {len(image_data)} images")
 
-        # Step 3: Build BK-Tree
-        if progress_callback:
-            progress_callback(0, len(image_data), '🌳 Building search tree...')
+        # Check neighbor cache coverage
+        current_phashes = [img['phash'] for img in image_data]
+        cached_phashes = self.get_cached_phashes()
 
-        tree_build_start = time.time()
-        bktree = BKTree()
+        # Separate cached and uncached files
+        cached_images = []
+        uncached_images = []
         for img in image_data:
-            bktree.add(img)
-        tree_build_time = time.time() - tree_build_start
-        print(f"[Duplicate Finder] ✅ BK-Tree built: {bktree.size} nodes in {tree_build_time:.1f}s")
+            if img['phash'] in cached_phashes:
+                cached_images.append(img)
+            else:
+                uncached_images.append(img)
 
-        if HAS_PSUTIL:
-            current_memory_mb = process.memory_info().rss / 1024 / 1024
-            print(f"[Duplicate Finder] Memory: {current_memory_mb:.1f} MB")
+        cache_coverage = len(cached_images) / len(image_data) * 100 if image_data else 0
+        print(f"[Duplicate Finder] Neighbor cache coverage: {len(cached_images)}/{len(image_data)} ({cache_coverage:.1f}%)")
 
-        # Step 4: Find duplicates with progress and ETA
+        # Try to load neighbors from cache for cached images
+        neighbors_from_cache = {}
+        neighbors_to_save = []  # Track new neighbors found for caching
+
+        if cached_images:
+            print(f"[Duplicate Finder] Loading {len(cached_images)} cached neighbor relationships...")
+            if progress_callback:
+                progress_callback(0, len(image_data), f'💾 Loading cache... {len(cached_images)} files')
+
+            cached_phashes_list = [img['phash'] for img in cached_images]
+            neighbors_from_cache = self.get_neighbors_from_cache(cached_phashes_list, threshold)
+            print(f"[Duplicate Finder] ✅ Loaded neighbors for {len(neighbors_from_cache)} phashes from cache")
+
+        # Step 3: Build BK-Tree (only if we need to search uncached files)
+        bktree = None
+        if uncached_images:
+            if progress_callback:
+                progress_callback(0, len(image_data), f'🌳 Building search tree for {len(uncached_images)} new files...')
+
+            tree_build_start = time.time()
+            bktree = BKTree()
+            for idx, img in enumerate(image_data):  # Build tree with ALL images for accurate searching
+                # Check for stop signal during BK-Tree build
+                if stop_event and idx % 10000 == 0 and stop_event.is_set():
+                    print(f"[Duplicate Finder] Stop signal received during BK-Tree build")
+                    raise InterruptedError(f"Scan stopped by user during BK-Tree build")
+                bktree.add(img)
+            tree_build_time = time.time() - tree_build_start
+            print(f"[Duplicate Finder] ✅ BK-Tree built: {bktree.size} nodes in {tree_build_time:.1f}s")
+
+            if HAS_PSUTIL:
+                current_memory_mb = process.memory_info().rss / 1024 / 1024
+                print(f"[Duplicate Finder] Memory: {current_memory_mb:.1f} MB")
+        else:
+            print(f"[Duplicate Finder] ✅ All files in cache, skipping BK-Tree build")
+
+        # Step 4: Find duplicates (hybrid: cache + BK-Tree)
         if progress_callback:
             progress_callback(0, len(image_data), '🔍 Finding duplicates...')
 
@@ -1003,9 +1221,12 @@ class PHashCache:
         duplicate_groups = []
         processed = set()
 
+        # Build a lookup map: phash -> image data
+        phash_to_img = {img['phash']: img for img in image_data}
+
         for i, img1 in enumerate(image_data):
-            # Check for stop signal every 100 iterations
-            if stop_event and i % 100 == 0 and stop_event.is_set():
+            # Check for stop signal more frequently (every iteration for better responsiveness)
+            if stop_event and stop_event.is_set():
                 print(f"[Duplicate Finder] Stop signal received, halting at {i}/{len(image_data)}")
                 break
 
@@ -1021,17 +1242,37 @@ class PHashCache:
                 else:
                     eta_str = f"{int(eta_seconds)}s"
 
+                cache_info = f" | 💾 {len(cached_images)} cached" if cached_images else ""
                 progress_callback(
                     i,
                     len(image_data),
-                    f'🔍 Finding duplicates... ({i}/{len(image_data)}) | ETA: {eta_str}'
+                    f'🔍 Finding duplicates... ({i}/{len(image_data)}) | ETA: {eta_str}{cache_info}'
                 )
 
             if img1['file_path'] in processed:
                 continue
 
-            # Use BK-Tree to find similar images
-            similar = bktree.search(img1['phash'], threshold)
+            # Try to get neighbors from cache first
+            similar = []
+            if img1['phash'] in neighbors_from_cache:
+                # Use cached neighbors
+                cached_neighbors = neighbors_from_cache[img1['phash']]
+                for neighbor_phash, distance in cached_neighbors:
+                    if neighbor_phash in phash_to_img:
+                        similar.append(phash_to_img[neighbor_phash])
+            elif bktree:
+                # Use BK-Tree to find similar images (for uncached files)
+                similar = bktree.search(img1['phash'], threshold)
+
+                # Save new neighbors to cache
+                for img2 in similar:
+                    if img2['phash'] != img1['phash']:  # Don't save self-reference
+                        # Calculate distance
+                        dist = img1['phash'] - img2['phash']
+                        neighbors_to_save.append((str(img1['phash']), str(img2['phash']), dist))
+            else:
+                # No tree and no cache (shouldn't happen)
+                continue
 
             # Filter and build group
             group = []
@@ -1085,6 +1326,12 @@ class PHashCache:
 
         print(f"[Duplicate Finder] ✅ Found {len(duplicate_groups)} groups in {duplicate_search_time:.1f}s")
         print(f"[Duplicate Finder] ⏱️  Total time: {total_time:.1f}s")
+
+        # Save new neighbors to cache
+        if neighbors_to_save:
+            print(f"[Duplicate Finder] 💾 Saving {len(neighbors_to_save)} new neighbor relationships to cache...")
+            self.save_neighbors(neighbors_to_save)
+            print(f"[Duplicate Finder] ✅ Neighbor cache updated")
 
         if HAS_PSUTIL:
             final_memory_mb = process.memory_info().rss / 1024 / 1024

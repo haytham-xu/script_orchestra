@@ -287,6 +287,308 @@ class ActiveScansResource(Resource):
         }
 
 
+@ns.route("/rescan-from-cache")
+class RescanFromCacheResource(Resource):
+    def post(self):
+        """
+        Rescan for duplicates using cached phash data from database.
+        No file scanning needed - only recalculates duplicate groups with new threshold.
+
+        Request body:
+        {
+            "threshold": 90,
+            "scan_id": "optional-scan-id",
+            "verify_files": true  // optional: verify files still exist (default: true)
+        }
+
+        Response: Same as /scan endpoint
+        """
+        data = request.json or {}
+        threshold_percent = data.get('threshold', settings_manager.get_settings()['similarity_threshold'])
+        verify_files = data.get('verify_files', True)
+
+        # Convert percentage to hamming distance (0-64)
+        threshold = int((100 - threshold_percent) / 100 * 64)
+
+        # Generate or use provided scan ID
+        scan_id = data.get('scan_id', str(uuid.uuid4()))
+
+        print(f"[Duplicate Finder] Rescan from cache: {scan_id}")
+        print(f"[Duplicate Finder] Threshold: {threshold_percent}% (hamming distance: {threshold})")
+        print(f"[Duplicate Finder] Verify files exist: {verify_files}")
+
+        try:
+            # Register scan for stop management
+            stop_event = scan_manager.start_scan(scan_id)
+
+            cache = PHashCache()
+
+            # Load all cached images from database
+            print(f"[Duplicate Finder] Loading cached phash data from database...")
+            if progress_callback:
+                emit_progress(scan_id, 0, 1, "Loading cached phash data...")
+
+            image_data = cache.get_all_cached_images(file_exists_check=verify_files)
+
+            if not image_data:
+                scan_manager.complete_scan(scan_id)
+                emit_error(scan_id, "No cached image data found in database")
+                return {"error": "No cached image data found. Please run a full scan first."}, 400
+
+            print(f"[Duplicate Finder] Loaded {len(image_data)} images from cache")
+
+            # Create progress callback that supports stop checking
+            def progress_callback(current, total, message, extra_data=None):
+                if scan_manager.is_stopped(scan_id):
+                    raise InterruptedError(f"Scan {scan_id} was stopped by user")
+                emit_progress(scan_id, current, total, message, extra_data)
+
+            # Use find_duplicates with cached data (skipping hash computation)
+            # We need to convert phash strings back to hash objects
+            import imagehash
+            for img in image_data:
+                img['phash'] = imagehash.hex_to_hash(img['phash'])
+
+            # Call the internal duplicate detection logic
+            # This will use neighbor cache and skip hash computation
+            print(f"[Duplicate Finder] Finding duplicates with cached data...")
+
+            # Simulate the duplicate detection part of find_duplicates
+            # We'll call a helper method that only does BK-Tree + duplicate detection
+            from .phash_cache import BKTree
+            import time
+
+            start_time = time.time()
+
+            # Check neighbor cache coverage
+            current_phashes = [str(img['phash']) for img in image_data]
+            cached_phashes = cache.get_cached_phashes()
+
+            cached_images = []
+            uncached_images = []
+            for img in image_data:
+                if str(img['phash']) in cached_phashes:
+                    cached_images.append(img)
+                else:
+                    uncached_images.append(img)
+
+            cache_coverage = len(cached_images) / len(image_data) * 100 if image_data else 0
+            print(f"[Duplicate Finder] Neighbor cache coverage: {len(cached_images)}/{len(image_data)} ({cache_coverage:.1f}%)")
+
+            # Load neighbors from cache
+            neighbors_from_cache = {}
+            neighbors_to_save = []
+
+            if cached_images:
+                print(f"[Duplicate Finder] Loading {len(cached_images)} cached neighbor relationships...")
+                emit_progress(scan_id, 0, len(image_data), f'💾 Loading cache... {len(cached_images)} files')
+
+                cached_phashes_list = [str(img['phash']) for img in cached_images]
+                neighbors_from_cache = cache.get_neighbors_from_cache(cached_phashes_list, threshold)
+                print(f"[Duplicate Finder] ✅ Loaded neighbors for {len(neighbors_from_cache)} phashes from cache")
+
+            # Build BK-Tree if needed
+            bktree = None
+            if uncached_images:
+                emit_progress(scan_id, 0, len(image_data), f'🌳 Building search tree for {len(uncached_images)} new files...')
+
+                tree_build_start = time.time()
+                bktree = BKTree()
+                for img in image_data:
+                    bktree.add(img)
+                tree_build_time = time.time() - tree_build_start
+                print(f"[Duplicate Finder] ✅ BK-Tree built: {bktree.size} nodes in {tree_build_time:.1f}s")
+            else:
+                print(f"[Duplicate Finder] ✅ All files in cache, skipping BK-Tree build")
+
+            # Find duplicates
+            emit_progress(scan_id, 0, len(image_data), '🔍 Finding duplicates...')
+
+            duplicate_search_start = time.time()
+            duplicate_groups = []
+            processed = set()
+
+            # Build lookup map
+            phash_to_img = {img['phash']: img for img in image_data}
+
+            for i, img1 in enumerate(image_data):
+                # Check for stop signal
+                if stop_event and stop_event.is_set():
+                    print(f"[Duplicate Finder] Stop signal received, halting at {i}/{len(image_data)}")
+                    break
+
+                # Report progress
+                if i > 0 and i % 100 == 0:
+                    elapsed = time.time() - duplicate_search_start
+                    speed = i / elapsed if elapsed > 0 else 0
+                    remaining = len(image_data) - i
+                    eta_seconds = remaining / speed if speed > 0 else 0
+
+                    if eta_seconds > 60:
+                        eta_str = f"{int(eta_seconds // 60)}m{int(eta_seconds % 60)}s"
+                    else:
+                        eta_str = f"{int(eta_seconds)}s"
+
+                    cache_info = f" | 💾 {len(cached_images)} cached" if cached_images else ""
+                    emit_progress(
+                        i,
+                        len(image_data),
+                        f'🔍 Finding duplicates... ({i}/{len(image_data)}) | ETA: {eta_str}{cache_info}'
+                    )
+
+                if img1['file_path'] in processed:
+                    continue
+
+                # Try cache first, then BK-Tree
+                similar = []
+                phash_str = str(img1['phash'])
+
+                if phash_str in neighbors_from_cache:
+                    # Use cached neighbors
+                    cached_neighbors = neighbors_from_cache[phash_str]
+                    for neighbor_phash, distance in cached_neighbors:
+                        try:
+                            neighbor_hash = imagehash.hex_to_hash(neighbor_phash)
+                            if neighbor_hash in phash_to_img:
+                                similar.append(phash_to_img[neighbor_hash])
+                        except:
+                            pass
+                elif bktree:
+                    # Use BK-Tree
+                    similar = bktree.search(img1['phash'], threshold)
+
+                    # Save new neighbors
+                    for img2 in similar:
+                        if img2['phash'] != img1['phash']:
+                            dist = img1['phash'] - img2['phash']
+                            neighbors_to_save.append((str(img1['phash']), str(img2['phash']), dist))
+
+                # Build group
+                group = []
+                for img2 in similar:
+                    if img2['file_path'] not in processed:
+                        group.append(img2.copy())
+                        processed.add(img2['file_path'])
+
+                # Only add groups with 2+ images
+                if len(group) >= 2:
+                    filename = os.path.basename(group[0]['file_path'])
+                    filesize = group[0]['filesize']
+
+                    # Skip if whitelisted
+                    if cache.is_whitelisted(filename, filesize):
+                        continue
+
+                    # Sort by resolution
+                    def get_resolution_pixels(img):
+                        try:
+                            w, h = img['resolution'].split('x')
+                            return int(w) * int(h)
+                        except:
+                            return 0
+
+                    group.sort(key=get_resolution_pixels, reverse=True)
+
+                    # Remove phash from response
+                    for img in group:
+                        img.pop('phash', None)
+
+                    duplicate_groups.append(group)
+
+                    # Emit groups in real-time
+                    if len(duplicate_groups) % 10 == 0:
+                        batch_start = max(0, len(duplicate_groups) - 10)
+                        batch_groups = duplicate_groups[batch_start:]
+                        emit_progress(
+                            i,
+                            len(image_data),
+                            f'🔍 Finding duplicates... ({i}/{len(image_data)}) | Groups: {len(duplicate_groups)}',
+                            {'groups_batch': batch_groups}
+                        )
+
+            duplicate_search_time = time.time() - duplicate_search_start
+            total_time = time.time() - start_time
+
+            print(f"[Duplicate Finder] ✅ Found {len(duplicate_groups)} groups in {duplicate_search_time:.1f}s")
+            print(f"[Duplicate Finder] ⏱️  Total time: {total_time:.1f}s")
+
+            # Save new neighbors
+            if neighbors_to_save:
+                print(f"[Duplicate Finder] 💾 Saving {len(neighbors_to_save)} new neighbor relationships...")
+                cache.save_neighbors(neighbors_to_save)
+                print(f"[Duplicate Finder] ✅ Neighbor cache updated")
+
+            scan_result = {'duplicate_groups': duplicate_groups}
+
+            duplicate_groups = scan_result['duplicate_groups']
+
+            print(f"[Duplicate Finder] Found {len(duplicate_groups)} duplicate groups")
+
+        except InterruptedError as e:
+            error_msg = str(e)
+            print(f"[Duplicate Finder] Rescan stopped: {error_msg}")
+            scan_manager.complete_scan(scan_id)
+            emit_error(scan_id, error_msg)
+            return {"error": error_msg, "stopped": True}, 200
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Duplicate Finder] Error during rescan: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            scan_manager.complete_scan(scan_id)
+            emit_error(scan_id, error_msg)
+            return {"error": error_msg}, 500
+
+        # Count total duplicates
+        duplicate_count = sum(len(group) for group in duplicate_groups)
+
+        # Get folder_root_paths from settings
+        folder_root_paths = settings_manager.get_settings().get('folder_root_paths', {})
+
+        # Add display_path to each image
+        for group in duplicate_groups:
+            for img in group:
+                file_path = img['file_path']
+
+                # Find matching root_path
+                dir_path = None
+                for root_name, root_path in folder_root_paths.items():
+                    if file_path.startswith(root_path):
+                        rel_path = file_path[len(root_path):].lstrip(os.sep)
+                        dir_path = os.path.dirname(rel_path)
+                        break
+
+                if dir_path is None:
+                    dir_path = os.path.dirname(file_path)
+
+                img['display_path'] = dir_path if dir_path else '/'
+                img['filename'] = os.path.basename(file_path)
+
+        result = {
+            "scan_id": scan_id,
+            "duplicate_groups": duplicate_groups,
+            "total_files": len(image_data),
+            "scanned_files": len(image_data),
+            "duplicate_count": duplicate_count,
+            "from_cache": True  # Indicate this was from cache
+        }
+
+        # Emit completion
+        completion_summary = {
+            "scan_id": scan_id,
+            "total_files": result["total_files"],
+            "scanned_files": result["scanned_files"],
+            "duplicate_count": duplicate_count,
+            "groups_count": len(duplicate_groups),
+            "from_cache": True
+        }
+        emit_complete(scan_id, completion_summary)
+
+        # Clean up scan manager
+        scan_manager.complete_scan(scan_id)
+
+        return result
+
 @ns.route("/delete")
 class DeleteResource(Resource):
     def post(self):

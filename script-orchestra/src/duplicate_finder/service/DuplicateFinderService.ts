@@ -167,4 +167,12 @@ export class DuplicateFinderService {
     const response = await getRequest(`${this.BASE_URL}/active-scans`)
     return response
   }
+
+  /**
+   * Rescan for duplicates using only cached phash data from database
+   */
+  static async rescanFromCache(threshold: number, verifyFiles: boolean = true): Promise<ScanResult> {
+    const response = await postRequest(`${this.BASE_URL}/rescan-from-cache`, {}, { threshold, verify_files: verifyFiles })
+    return response
+  }
 }
