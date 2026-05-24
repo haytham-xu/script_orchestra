@@ -12,7 +12,7 @@
           Live
         </el-tag>
         <el-tag v-else type="danger" size="small">
-          <el-icon><ConnectionDC /></el-icon>
+          <el-icon><CircleClose /></el-icon>
           Offline
         </el-tag>
       </div>
@@ -131,7 +131,7 @@ import {
   Search,
   Loading,
   Connection,
-  ConnectionDC
+  CircleClose
 } from '@element-plus/icons-vue'
 import ClipboardItem from '../components/ClipboardItem.vue'
 import {
@@ -274,32 +274,32 @@ async function detectMacIP() {
 
 // Lifecycle
 onMounted(async () => {
-  // Load initial history
-  await refreshHistory()
-
-  // Connect to WebSocket
+  // Connect to WebSocket first (before any await)
   wsService.connect()
   wsService.onClipboardUpdate(handleWebSocketUpdate)
-
-  // Check connection status
-  setTimeout(() => {
-    isConnected.value = wsService.isConnected()
-  }, 1000)
 
   // Monitor connection status
   const interval = setInterval(() => {
     isConnected.value = wsService.isConnected()
   }, 5000)
 
-  // Detect Mac IP
-  detectMacIP()
-
-  // Cleanup
+  // Register cleanup BEFORE any await
   onUnmounted(() => {
     wsService.offClipboardUpdate()
     wsService.disconnect()
     clearInterval(interval)
   })
+
+  // Now do async operations
+  await refreshHistory()
+
+  // Check connection status
+  setTimeout(() => {
+    isConnected.value = wsService.isConnected()
+  }, 1000)
+
+  // Detect Mac IP
+  detectMacIP()
 })
 </script>
 
