@@ -196,7 +196,7 @@ export function useDuplicateFinderView() {
     }
 
     // Listen for progress updates (with streaming groups)
-    socket?.on(`scan:${currentScanId}:progress`, (data: any) => {
+    socket?.on(`scan:${scanId}:progress`, (data: any) => {
       console.log('[Duplicate Finder] Progress:', data)
       scanProgress.value = {
         current: data.current,
@@ -223,7 +223,7 @@ export function useDuplicateFinderView() {
     })
 
     // Listen for completion (WebSocket now only sends summary, not full result)
-    socket?.on(`scan:${currentScanId}:complete`, (data: any) => {
+    socket?.on(`scan:${scanId}:complete`, (data: any) => {
       console.log('[Duplicate Finder] Complete (summary):', data)
       // Note: data.result is now just a summary, not the full scan result
       // The full result will come from the HTTP response below
@@ -232,7 +232,7 @@ export function useDuplicateFinderView() {
     })
 
     // Listen for errors
-    socket?.on(`scan:${currentScanId}:error`, (data: any) => {
+    socket?.on(`scan:${scanId}:error`, (data: any) => {
       console.error('[Duplicate Finder] Error:', data)
       ElMessage.error(`Scan failed: ${data.error}`)
       isScanning.value = false
@@ -243,7 +243,7 @@ export function useDuplicateFinderView() {
       const result = await DuplicateFinderService.scan({
         paths: selectedFolders.value,
         threshold: threshold.value,
-        scan_id: currentScanId
+        scan_id: currentScanId.value
       })
 
       // Merge HTTP result with WebSocket streaming result
