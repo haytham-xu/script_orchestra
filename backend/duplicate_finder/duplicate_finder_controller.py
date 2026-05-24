@@ -712,7 +712,11 @@ class DeleteResource(Resource):
 class SettingsResource(Resource):
     def get(self):
         """Get current settings"""
-        return settings_manager.get_settings()
+        from multiprocessing import cpu_count
+        settings = settings_manager.get_settings()
+        # Add system CPU count info
+        settings['system_cpu_count'] = cpu_count()
+        return settings
 
     def post(self):
         """Update settings"""
@@ -1023,4 +1027,209 @@ class VerifyResource(Resource):
             error_msg = str(e)
             print(f"[Duplicate Finder] Verify error: {error_msg}")
             return {"error": error_msg}, 500
+
+
+# ========== NEW 3-PHASE WORKFLOW ENDPOINTS ==========
+
+from .phash_new_workflow import DuplicateFinderWorkflow
+
+# Global workflow instance - will be lazily initialized
+_workflow = None
+
+def get_workflow():
+    """Get workflow instance with current settings"""
+    global _workflow
+    db_path = settings_manager.get_phash_db_path()
+
+    # Recreate workflow if db_path changed
+    if _workflow is None or (hasattr(_workflow, 'db_path') and str(_workflow.db_path) != str(db_path)):
+        if _workflow:
+            _workflow.close()
+        _workflow = DuplicateFinderWorkflow(db_path=db_path)
+        print(f"[Workflow] Initialized with database: {db_path}")
+
+    return _workflow
+
+
+@ns.route("/phase1/refresh")
+class Phase1RefreshResource(Resource):
+    def post(self):
+        """
+        Phase 1: Refresh image table
+        - Scan filesystem
+        - Sync DB (remove missing, add new)
+        - Compute phash for new files
+        - Set status='pending'
+
+        Request body:
+        {
+            "paths": ["/path/1", "/path/2"]
+        }
+
+        Response:
+        {
+            "added": 100,
+            "removed": 10,
+            "skipped": 500,
+            "errors": [],
+            "elapsed": 12.5
+        }
+        """
+        try:
+            data = request.json
+            if not data or 'paths' not in data:
+                return {"error": "Missing 'paths' in request"}, 400
+
+            paths = data['paths']
+
+            # Collect all image files
+            image_files = []
+            for root_path in paths:
+                if not os.path.exists(root_path):
+                    continue
+
+                if os.path.isfile(root_path):
+                    if root_path.lower().endswith(IMAGE_EXTS):
+                        image_files.append(root_path)
+                else:
+                    for root, dirs, files in os.walk(root_path):
+                        for file in files:
+                            if file.lower().endswith(IMAGE_EXTS):
+                                image_files.append(os.path.join(root, file))
+
+            print(f"[Phase 1] Found {len(image_files)} image files")
+
+            # Progress callback for WebSocket updates
+            scan_id = f"phase1-{uuid.uuid4().hex[:8]}"
+
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            # Run phase 1
+            result = get_workflow().phase1_refresh_images(image_files, progress_callback=progress_cb)
+            result['scan_id'] = scan_id
+
+            return result
+
+        except InterruptedError as e:
+            return {"error": "stopped", "message": str(e)}, 499
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Phase 1] Error: {error_msg}")
+            return {"error": error_msg}, 500
+
+
+@ns.route("/phase1/stop")
+class Phase1StopResource(Resource):
+    def post(self):
+        """Stop phase 1 (refresh)"""
+        get_workflow().set_stop()
+        return {"message": "Phase 1 stop signal sent"}
+
+
+@ns.route("/phase2/build")
+class Phase2BuildResource(Resource):
+    def post(self):
+        """
+        Phase 2: Build phash_similarities table
+        - Get all status='pending' images
+        - Compute distances (brute force + multiprocessing)
+        - Save to phash_similarities if distance ≤ threshold
+        - Mark as status='computed'
+
+        Request body:
+        {
+            "threshold_distance": 12  // optional, default 12 (80%)
+        }
+
+        Response:
+        {
+            "processed": 100,
+            "similarities_found": 250,
+            "elapsed": 60.2
+        }
+        """
+        try:
+            data = request.json or {}
+            threshold_distance = data.get('threshold_distance', 12)
+
+            # Progress callback for WebSocket updates
+            scan_id = f"phase2-{uuid.uuid4().hex[:8]}"
+
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            result = get_workflow().phase2_build_similarities(threshold_distance, progress_callback=progress_cb)
+            result['scan_id'] = scan_id
+
+            return result
+
+        except InterruptedError as e:
+            return {"error": "stopped", "message": str(e)}, 499
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Phase 2] Error: {error_msg}")
+            return {"error": error_msg}, 500
+
+
+@ns.route("/phase2/stop")
+class Phase2StopResource(Resource):
+    def post(self):
+        """Stop phase 2 (build similarities)"""
+        get_workflow().set_stop()
+        return {"message": "Phase 2 stop signal sent"}
+
+
+@ns.route("/phase3/get-duplicates")
+class Phase3GetDuplicatesResource(Resource):
+    def post(self):
+        """
+        Phase 3: Get duplicate groups
+        - Query phash_similarities
+        - Build connected components
+        - Filter out whitelist
+
+        Request body:
+        {
+            "threshold_percent": 90  // optional, default 90
+        }
+
+        Response:
+        {
+            "groups": [[{file_path, phash, ...}, ...], ...],
+            "total_groups": 10,
+            "total_duplicates": 50,
+            "elapsed": 0.5
+        }
+        """
+        try:
+            data = request.json or {}
+            threshold_percent = data.get('threshold_percent', 90)
+
+            # Progress callback for WebSocket updates
+            scan_id = f"phase3-{uuid.uuid4().hex[:8]}"
+
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            result = get_workflow().phase3_get_duplicates(threshold_percent, progress_callback=progress_cb)
+            result['scan_id'] = scan_id
+
+            return result
+
+        except InterruptedError as e:
+            return {"error": "stopped", "message": str(e)}, 499
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Phase 3] Error: {error_msg}")
+            return {"error": error_msg}, 500
+
+
+@ns.route("/phase3/stop")
+class Phase3StopResource(Resource):
+    def post(self):
+        """Stop phase 3 (get duplicates)"""
+        get_workflow().set_stop()
+        return {"message": "Phase 3 stop signal sent"}
+
 

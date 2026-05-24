@@ -6,6 +6,7 @@ Manages configuration for duplicate detection and deletion.
 import json
 from pathlib import Path
 from typing import Dict, Optional
+from multiprocessing import cpu_count
 
 # Settings file path
 SETTINGS_FILE = Path(__file__).parent / 'settings.json'
@@ -13,7 +14,7 @@ SETTINGS_FILE = Path(__file__).parent / 'settings.json'
 DEFAULT_SETTINGS = {
     'delete_target_path': '',
     'similarity_threshold': 90,
-    'max_cpu_usage_percent': 50  # Default to 50% of CPU cores
+    'max_cpu_cores': 1  # Default to 1 CPU core for precise control
 }
 
 class SettingsManager:
@@ -52,11 +53,16 @@ class SettingsManager:
         max_distance = 64
         return int((100 - threshold) / 100 * max_distance)
 
-    def get_max_cpu_usage_percent(self) -> int:
-        """Get configured maximum CPU usage percentage (1-100)"""
-        cpu_percent = self.get_settings().get('max_cpu_usage_percent', 50)
-        # Ensure within valid range
-        return max(1, min(100, cpu_percent))
+    def get_max_cpu_cores(self) -> int:
+        """Get configured maximum CPU cores to use (1 to cpu_count())"""
+        max_cores = self.get_settings().get('max_cpu_cores', 1)
+        # Ensure within valid range (1 to available cores)
+        available_cores = cpu_count()
+        return max(1, min(available_cores, max_cores))
+
+    def get_phash_db_path(self) -> Optional[str]:
+        """Get configured phash database path"""
+        return self.get_settings().get('phash_db_path', None)
 
 
 # Global instance

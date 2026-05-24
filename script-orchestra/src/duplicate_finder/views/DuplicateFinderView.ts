@@ -29,7 +29,7 @@ export function useDuplicateFinderView() {
     similarity_threshold: 90,
     folder_paths: [],
     folder_root_paths: {},
-    max_cpu_usage_percent: 50,
+    max_cpu_cores: 1,
     auto_selection_rules: {
       auto_mark_numbered_copies: true,
       auto_mark_copy_suffix: true,
@@ -40,6 +40,16 @@ export function useDuplicateFinderView() {
   const whitelist = ref<Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }>>([])
   const isLoadingWhitelist = ref(false)
   const isCleaning = ref(false)
+
+  // 3-Phase workflow states
+  const isPhase1Running = ref(false)
+  const isPhase2Running = ref(false)
+  const isPhase3Running = ref(false)
+  const phaseProgress = ref({
+    phase: 0,
+    message: '',
+    details: ''
+  })
 
   let socket: Socket | null = null
 
@@ -341,6 +351,257 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Phase 1: Refresh images - scan filesystem, sync DB, compute phash
+   */
+  async function runPhase1() {
+    if (selectedFolders.value.length === 0) {
+      ElMessage.warning('Please select at least one folder')
+      return
+    }
+
+    try {
+      isPhase1Running.value = true
+      phaseProgress.value = {
+        phase: 1,
+        message: 'Phase 1: Refreshing images...',
+        details: 'Starting...',
+        current: 0,
+        total: 0,
+        percentage: 0
+      }
+
+      // Ensure WebSocket is connected
+      if (!socket || !socket.connected) {
+        connectWebSocket()
+      }
+
+      const result = await DuplicateFinderService.phase1Refresh(selectedFolders.value)
+
+      // Listen for progress updates
+      if (result.scan_id) {
+        const startTime = Date.now()
+        socket?.on(`scan:${result.scan_id}:progress`, (data: any) => {
+          const elapsed = (Date.now() - startTime) / 1000
+          const rate = data.current > 0 ? data.current / elapsed : 0
+          const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+
+          phaseProgress.value = {
+            phase: 1,
+            message: data.message || 'Phase 1: Refreshing images...',
+            details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
+            current: data.current,
+            total: data.total,
+            percentage: data.percentage
+          }
+        })
+      }
+
+      phaseProgress.value.details = `Added: ${result.added}, Removed: ${result.removed}, Skipped: ${result.skipped}, Time: ${result.elapsed.toFixed(1)}s`
+
+      ElMessage.success(`Phase 1 complete: +${result.added}, -${result.removed}, skipped ${result.skipped} (${result.elapsed.toFixed(1)}s)`)
+
+      // Clean up listener
+      if (result.scan_id) {
+        socket?.off(`scan:${result.scan_id}:progress`)
+      }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Phase 1 failed:', error)
+      if (error.message && error.message.includes('stopped')) {
+        ElMessage.warning('Phase 1 stopped by user')
+      } else {
+        ElMessage.error(error.message || 'Phase 1 failed')
+      }
+    } finally {
+      isPhase1Running.value = false
+    }
+  }
+
+  /**
+   * Phase 1: Stop
+   */
+  async function stopPhase1() {
+    try {
+      await DuplicateFinderService.phase1Stop()
+      ElMessage.info('Phase 1 stop signal sent')
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Stop Phase 1 failed:', error)
+      ElMessage.error(error.message || 'Failed to stop Phase 1')
+    }
+  }
+
+  /**
+   * Phase 2: Build similarities table
+   */
+  async function runPhase2() {
+    try {
+      isPhase2Running.value = true
+      phaseProgress.value = {
+        phase: 2,
+        message: 'Phase 2: Building similarities...',
+        details: 'Starting...',
+        current: 0,
+        total: 0,
+        percentage: 0
+      }
+
+      // Ensure WebSocket is connected
+      if (!socket || !socket.connected) {
+        connectWebSocket()
+      }
+
+      // Convert threshold percentage to distance (80% = 12, 90% = 6)
+      const thresholdDistance = Math.round(64 * (100 - threshold.value) / 100)
+
+      const result = await DuplicateFinderService.phase2Build(thresholdDistance)
+
+      // Listen for progress updates
+      if (result.scan_id) {
+        const startTime = Date.now()
+        socket?.on(`scan:${result.scan_id}:progress`, (data: any) => {
+          const elapsed = (Date.now() - startTime) / 1000
+          const rate = data.current > 0 ? data.current / elapsed : 0
+          const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+
+          phaseProgress.value = {
+            phase: 2,
+            message: data.message || 'Phase 2: Building similarities...',
+            details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
+            current: data.current,
+            total: data.total,
+            percentage: data.percentage
+          }
+        })
+      }
+
+      phaseProgress.value.details = `Processed: ${result.processed}, Similarities: ${result.similarities_found}, Time: ${result.elapsed.toFixed(1)}s`
+
+      ElMessage.success(`Phase 2 complete: Processed ${result.processed} images, found ${result.similarities_found} similarities (${result.elapsed.toFixed(1)}s)`)
+
+      // Clean up listener
+      if (result.scan_id) {
+        socket?.off(`scan:${result.scan_id}:progress`)
+      }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Phase 2 failed:', error)
+      if (error.message && error.message.includes('stopped')) {
+        ElMessage.warning('Phase 2 stopped by user')
+      } else {
+        ElMessage.error(error.message || 'Phase 2 failed')
+      }
+    } finally {
+      isPhase2Running.value = false
+    }
+  }
+
+  /**
+   * Phase 2: Stop
+   */
+  async function stopPhase2() {
+    try {
+      await DuplicateFinderService.phase2Stop()
+      ElMessage.info('Phase 2 stop signal sent')
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Stop Phase 2 failed:', error)
+      ElMessage.error(error.message || 'Failed to stop Phase 2')
+    }
+  }
+
+  /**
+   * Phase 3: Get duplicates from similarities
+   */
+  async function runPhase3() {
+    try {
+      isPhase3Running.value = true
+      phaseProgress.value = {
+        phase: 3,
+        message: 'Phase 3: Getting duplicates...',
+        details: 'Starting...',
+        current: 0,
+        total: 0,
+        percentage: 0
+      }
+
+      // Ensure WebSocket is connected
+      if (!socket || !socket.connected) {
+        connectWebSocket()
+      }
+
+      const result = await DuplicateFinderService.phase3GetDuplicates(threshold.value)
+
+      // Listen for progress updates
+      if (result.scan_id) {
+        const startTime = Date.now()
+        socket?.on(`scan:${result.scan_id}:progress`, (data: any) => {
+          const elapsed = (Date.now() - startTime) / 1000
+          const rate = data.current > 0 ? data.current / elapsed : 0
+          const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+
+          phaseProgress.value = {
+            phase: 3,
+            message: data.message || 'Phase 3: Getting duplicates...',
+            details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
+            current: data.current,
+            total: data.total,
+            percentage: data.percentage
+          }
+        })
+      }
+
+      // Convert to ScanResult format
+      if (result.groups) {
+        result.groups = result.groups.map((group, index) => {
+          return Object.assign(group, { group_id: `group-${index}` })
+        })
+
+        scanResult.value = {
+          scan_id: 'phase3-' + Date.now(),
+          duplicate_groups: result.groups,
+          total_files: result.total_duplicates,
+          duplicate_count: result.total_duplicates
+        }
+
+        selectedForDelete.value.clear()
+
+        // Apply auto-selection rules
+        if (result.groups.length > 0) {
+          applyAutoSelectionRules(result.groups)
+        }
+      }
+
+      phaseProgress.value.details = `Groups: ${result.total_groups}, Duplicates: ${result.total_duplicates}, Time: ${result.elapsed.toFixed(3)}s`
+
+      ElMessage.success(`Phase 3 complete: Found ${result.total_groups} duplicate groups with ${result.total_duplicates} images (${result.elapsed.toFixed(3)}s)`)
+
+      // Clean up listener
+      if (result.scan_id) {
+        socket?.off(`scan:${result.scan_id}:progress`)
+      }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Phase 3 failed:', error)
+      if (error.message && error.message.includes('stopped')) {
+        ElMessage.warning('Phase 3 stopped by user')
+      } else {
+        ElMessage.error(error.message || 'Phase 3 failed')
+      }
+    } finally {
+      isPhase3Running.value = false
+    }
+  }
+
+  /**
+   * Phase 3: Stop
+   */
+  async function stopPhase3() {
+    try {
+      await DuplicateFinderService.phase3Stop()
+      ElMessage.info('Phase 3 stop signal sent')
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Stop Phase 3 failed:', error)
+      ElMessage.error(error.message || 'Failed to stop Phase 3')
+    }
+  }
+
+  /**
    * Toggle file selection for deletion
    */
   function toggleFileSelection(filePath: string) {
@@ -467,6 +728,21 @@ export function useDuplicateFinderView() {
     const sizes = ['B', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  /**
+   * Get CPU marks for slider based on system CPU count
+   */
+  function getCpuMarks() {
+    const cpuCount = settings.value.system_cpu_count || 12
+    const marks: Record<number, string> = { 1: '1' }
+
+    if (cpuCount >= 4) marks[4] = '4'
+    if (cpuCount >= 8) marks[8] = '8'
+    if (cpuCount >= 12) marks[12] = '12'
+    if (cpuCount > 12) marks[cpuCount] = String(cpuCount)
+
+    return marks
   }
 
   /**
@@ -824,8 +1100,6 @@ export function useDuplicateFinderView() {
   })
 
   return {
-    // Components
-    RecycleScroller,
     // Data
     selectedFolders,
     threshold,
@@ -843,10 +1117,22 @@ export function useDuplicateFinderView() {
     showWhitelistDrawer,
     whitelist,
     isLoadingWhitelist,
+    // 3-Phase workflow states
+    isPhase1Running,
+    isPhase2Running,
+    isPhase3Running,
+    phaseProgress,
     // Methods
     startScan,
     stopScan,
     rescanFromCache,
+    // 3-Phase workflow methods
+    runPhase1,
+    stopPhase1,
+    runPhase2,
+    stopPhase2,
+    runPhase3,
+    stopPhase3,
     toggleFileSelection,
     hasSelectedInGroup,
     getSelectedCountInGroup,
@@ -855,6 +1141,7 @@ export function useDuplicateFinderView() {
     getImageUrl,
     getRelativePath,
     formatFileSize,
+    getCpuMarks,
     saveFolderSettings,
     saveAdvancedSettings,
     addFolderPath,

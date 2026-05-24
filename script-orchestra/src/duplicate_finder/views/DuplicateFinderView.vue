@@ -22,12 +22,14 @@
 
           <div v-if="settings.folder_paths && settings.folder_paths.length > 0" class="folder-list-edit">
             <div v-for="(path, index) in settings.folder_paths" :key="index" class="folder-item-with-root">
-              <el-checkbox
-                v-model="selectedFolders"
-                :value="path"
-                size="large"
-                class="folder-checkbox"
-              />
+              <el-checkbox-group v-model="selectedFolders">
+                <el-checkbox
+                  :value="path"
+                  :label="path"
+                  size="large"
+                  class="folder-checkbox"
+                />
+              </el-checkbox-group>
               <div class="folder-input-group">
                 <el-input
                   v-model="settings.folder_paths[index]"
@@ -84,48 +86,75 @@
         </div>
       </div>
 
-      <!-- Scan Button -->
+      <!-- Action Buttons - 3 Phase Workflow -->
       <div class="action-buttons">
+        <!-- Phase 1 -->
         <el-button
-          v-if="!isScanning"
           type="primary"
           size="large"
-          :disabled="selectedFolders.length === 0"
-          @click="startScan"
-          class="scan-button"
+          :disabled="selectedFolders.length === 0 || isPhase1Running"
+          :loading="isPhase1Running"
+          @click="runPhase1"
         >
-          🔍 Scan {{ selectedFolders.length }} Folder{{ selectedFolders.length > 1 ? 's' : '' }}
+          {{ isPhase1Running ? 'Phase 1 Running...' : '1️⃣ Refresh Images' }}
+        </el-button>
+        <el-button
+          v-if="isPhase1Running"
+          type="warning"
+          size="large"
+          @click="stopPhase1"
+        >
+          ⏹️ Stop
         </el-button>
 
+        <!-- Phase 2 -->
         <el-button
-          v-if="!isScanning"
           type="success"
           size="large"
-          @click="rescanFromCache"
-          class="rescan-button"
+          :disabled="isPhase2Running"
+          :loading="isPhase2Running"
+          @click="runPhase2"
         >
-          🔄 Quick Rescan (Use Cache)
+          {{ isPhase2Running ? 'Phase 2 Running...' : '2️⃣ Build Similarities' }}
         </el-button>
-
         <el-button
-          v-if="isScanning"
-          type="danger"
+          v-if="isPhase2Running"
+          type="warning"
           size="large"
-          @click="stopScan"
-          class="stop-button"
+          @click="stopPhase2"
         >
-          ⏹️ Stop Scan
+          ⏹️ Stop
         </el-button>
 
+        <!-- Phase 3 -->
         <el-button
           type="info"
           size="large"
-          :loading="isVerifying"
-          :disabled="!hasResults || !scanResult"
-          @click="verifyAndCleanup"
+          :disabled="isPhase3Running"
+          :loading="isPhase3Running"
+          @click="runPhase3"
         >
-          {{ isVerifying ? 'Verifying...' : '🔍 Verify & Cleanup' }}
+          {{ isPhase3Running ? 'Phase 3 Running...' : '3️⃣ Get Duplicates' }}
         </el-button>
+        <el-button
+          v-if="isPhase3Running"
+          type="warning"
+          size="large"
+          @click="stopPhase3"
+        >
+          ⏹️ Stop
+        </el-button>
+      </div>
+
+      <!-- Phase Progress Display -->
+      <div v-if="phaseProgress.phase > 0" class="phase-progress-display">
+        <p class="phase-message">{{ phaseProgress.message }}</p>
+        <el-progress
+          v-if="phaseProgress.total > 0"
+          :percentage="phaseProgress.percentage"
+          :status="phaseProgress.percentage === 100 ? 'success' : undefined"
+        />
+        <p class="phase-details">{{ phaseProgress.details }}</p>
       </div>
       </div>
 
@@ -160,15 +189,13 @@
         </div>
       </el-card>
 
-      <!-- Duplicate Groups with Virtual Scrolling -->
-      <RecycleScroller
-        :items="scanResult.duplicate_groups"
-        :item-size="400"
-        key-field="group_id"
-        class="duplicate-groups-scroller"
-        v-slot="{ item: group, index: groupIndex }"
-      >
-        <div class="duplicate-group">
+      <!-- Duplicate Groups -->
+      <div class="duplicate-groups-container">
+        <div
+          v-for="(group, groupIndex) in scanResult.duplicate_groups"
+          :key="`group-${groupIndex}`"
+          class="duplicate-group"
+        >
           <el-card>
             <template #header>
               <div class="group-header">
@@ -230,7 +257,7 @@
             </div>
           </el-card>
         </div>
-      </RecycleScroller>
+      </div>
     </div>
 
     <!-- No Results -->
@@ -286,18 +313,18 @@
           </div>
 
           <div class="setting-item">
-            <label>Max CPU Usage: {{ settings.max_cpu_usage_percent || 50 }}%</label>
+            <label>Max CPU Cores: {{ settings.max_cpu_cores || 1 }} / {{ settings.system_cpu_count || '?' }}</label>
             <el-slider
-              v-model="settings.max_cpu_usage_percent"
-              :min="10"
-              :max="100"
-              :step="10"
-              :marks="{ 25: '25%', 50: '50%', 75: '75%', 100: '100%' }"
+              v-model="settings.max_cpu_cores"
+              :min="1"
+              :max="settings.system_cpu_count || 12"
+              :step="1"
+              :marks="getCpuMarks()"
               show-stops
             />
             <p class="settings-hint">
-              Percentage of CPU cores to use for hash computation. Lower values reduce system load.
-              Default: 50%
+              Number of CPU cores to use for hash computation. Lower values reduce system load.
+              Default: 1
             </p>
           </div>
 
@@ -446,6 +473,7 @@ import { CircleCheck } from '@element-plus/icons-vue'
 import { useDuplicateFinderView } from './DuplicateFinderView'
 
 const {
+  // Data
   selectedFolders,
   threshold,
   deepPathDelete,
@@ -461,9 +489,22 @@ const {
   showWhitelistDrawer,
   whitelist,
   isLoadingWhitelist,
+  // 3-Phase workflow states
+  isPhase1Running,
+  isPhase2Running,
+  isPhase3Running,
+  phaseProgress,
+  // Methods
   startScan,
   stopScan,
   rescanFromCache,
+  // 3-Phase workflow methods
+  runPhase1,
+  stopPhase1,
+  runPhase2,
+  stopPhase2,
+  runPhase3,
+  stopPhase3,
   toggleFileSelection,
   hasSelectedInGroup,
   getSelectedCountInGroup,
@@ -472,6 +513,7 @@ const {
   getImageUrl,
   getRelativePath,
   formatFileSize,
+  getCpuMarks,
   saveFolderSettings,
   saveAdvancedSettings,
   addFolderPath,
@@ -491,9 +533,10 @@ const {
 
 <style scoped>
 /* Virtual Scroller Styles */
-.duplicate-groups-scroller {
-  height: calc(100vh - 400px);
-  min-height: 500px;
+.duplicate-groups-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .duplicate-finder-container {
@@ -1080,5 +1123,36 @@ const {
   font-size: 13px;
   color: #606266;
   font-style: italic;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+/* Phase Progress Display */
+.phase-progress-display {
+  margin-top: 20px;
+  padding: 16px;
+  background: #f0f9ff;
+  border-radius: 8px;
+  border-left: 4px solid #409eff;
+}
+
+.phase-message {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.phase-details {
+  margin: 0;
+  font-size: 13px;
+  color: #606266;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
 }
 </style>

@@ -172,6 +172,7 @@ class PHashCache:
         """
         self.db_path = Path(db_path) if db_path else CACHE_DB
         self._conn = None  # Persistent connection for better performance
+        self._stop_event = None  # For stop control
         self._init_db()
 
     def _get_connection(self):
@@ -187,80 +188,74 @@ class PHashCache:
             self._conn = None
 
     def _init_db(self):
-        """Initialize database and create tables if needed"""
+        """Initialize database and create tables if needed (NEW SCHEMA)"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Migration check: if old schema exists, user should run migrate_to_new_schema.py first
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='image_hashes'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(image_hashes)")
+            columns = {col[1] for col in cursor.fetchall()}
+            if 'id' not in columns:
+                print("[ERROR] Old database schema detected!")
+                print("[ERROR] Please run: python migrate_to_new_schema.py")
+                raise RuntimeError("Database migration required. Run migrate_to_new_schema.py first.")
+
+        # Create new schema tables
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS image_hashes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
                 filesize INTEGER NOT NULL,
                 file_path TEXT NOT NULL,
                 phash TEXT NOT NULL,
-                mtime REAL NOT NULL,
                 resolution TEXT NOT NULL,
-                PRIMARY KEY (filename, filesize, file_path)
+                status TEXT NOT NULL DEFAULT 'pending',
+                UNIQUE (filename, filesize, file_path)
             )
         ''')
+
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
 
         # Create whitelist table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS whitelist (
-                filename TEXT NOT NULL,
-                filesize INTEGER NOT NULL,
+                image_id INTEGER PRIMARY KEY,
                 added_time REAL NOT NULL,
                 note TEXT,
-                preview_path TEXT,
-                PRIMARY KEY (filename, filesize)
+                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
-        # Migration: Add preview_path column if it doesn't exist
-        cursor.execute("PRAGMA table_info(whitelist)")
-        columns = [column[1] for column in cursor.fetchall()]
-        if 'preview_path' not in columns:
-            cursor.execute('ALTER TABLE whitelist ADD COLUMN preview_path TEXT')
-
-        # Create index for faster lookups
+        # Create phash_similarities table
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)
-        ''')
-
-        # Create index for filename+filesize lookups
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)
-        ''')
-
-        # Create scan cache table for caching duplicate scan results
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scan_cache (
-                file_list_hash TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS phash_similarities (
+                image_id_a INTEGER NOT NULL,
+                image_id_b INTEGER NOT NULL,
                 threshold INTEGER NOT NULL,
-                scan_result TEXT NOT NULL,
-                scan_time REAL NOT NULL,
-                file_count INTEGER NOT NULL,
-                PRIMARY KEY (file_list_hash, threshold)
-            )
-        ''')
-
-        # Create phash neighbors table for caching similarity relationships
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS phash_neighbors (
-                phash TEXT NOT NULL,
-                neighbor_phash TEXT NOT NULL,
                 distance INTEGER NOT NULL,
-                last_checked REAL NOT NULL,
-                PRIMARY KEY (phash, neighbor_phash)
+                PRIMARY KEY (image_id_a, image_id_b, threshold),
+                CHECK (image_id_a < image_id_b),
+                FOREIGN KEY (image_id_a) REFERENCES image_hashes(id) ON DELETE CASCADE,
+                FOREIGN KEY (image_id_b) REFERENCES image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
-        # Create indexes for phash_neighbors
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_neighbors_phash ON phash_neighbors(phash)
-        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_a_threshold ON phash_similarities(image_id_a, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_b_threshold ON phash_similarities(image_id_b, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_threshold ON phash_similarities(threshold)')
 
+        # Create view
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_neighbors_distance ON phash_neighbors(distance)
+            CREATE VIEW IF NOT EXISTS phash_similarities_view AS
+            SELECT image_id_a as image_id, image_id_b as neighbor_id, threshold, distance
+            FROM phash_similarities
+            UNION ALL
+            SELECT image_id_b as image_id, image_id_a as neighbor_id, threshold, distance
+            FROM phash_similarities
         ''')
 
         conn.commit()

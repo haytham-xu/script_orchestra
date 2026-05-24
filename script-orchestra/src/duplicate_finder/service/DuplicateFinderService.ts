@@ -33,7 +33,8 @@ export interface Settings {
   folder_paths?: string[]
   folder_root_paths?: { [key: string]: string }
   exclude_folder_paths?: string[]
-  max_cpu_usage_percent?: number
+  max_cpu_cores?: number
+  system_cpu_count?: number
   auto_selection_rules?: {
     auto_mark_numbered_copies?: boolean
     auto_mark_copy_suffix?: boolean
@@ -173,6 +174,54 @@ export class DuplicateFinderService {
    */
   static async rescanFromCache(threshold: number, verifyFiles: boolean = true): Promise<ScanResult> {
     const response = await postRequest(`${this.BASE_URL}/rescan-from-cache`, {}, { threshold, verify_files: verifyFiles })
+    return response
+  }
+
+  /**
+   * Phase 1: Refresh images - scan filesystem, sync DB, compute phash
+   */
+  static async phase1Refresh(paths: string[]): Promise<{ added: number; removed: number; skipped: number; errors: any[]; elapsed: number }> {
+    const response = await postRequest(`${this.BASE_URL}/phase1/refresh`, {}, { paths })
+    return response
+  }
+
+  /**
+   * Phase 1: Stop
+   */
+  static async phase1Stop(): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase1/stop`, {}, {})
+    return response
+  }
+
+  /**
+   * Phase 2: Build similarities table
+   */
+  static async phase2Build(thresholdDistance: number = 12): Promise<{ processed: number; similarities_found: number; elapsed: number }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2/build`, {}, { threshold_distance: thresholdDistance })
+    return response
+  }
+
+  /**
+   * Phase 2: Stop
+   */
+  static async phase2Stop(): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2/stop`, {}, {})
+    return response
+  }
+
+  /**
+   * Phase 3: Get duplicates from similarities
+   */
+  static async phase3GetDuplicates(thresholdPercent: number = 90): Promise<{ groups: ImageInfo[][]; total_groups: number; total_duplicates: number; elapsed: number }> {
+    const response = await postRequest(`${this.BASE_URL}/phase3/get-duplicates`, {}, { threshold_percent: thresholdPercent })
+    return response
+  }
+
+  /**
+   * Phase 3: Stop
+   */
+  static async phase3Stop(): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase3/stop`, {}, {})
     return response
   }
 }
