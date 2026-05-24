@@ -389,10 +389,12 @@ class DuplicateFinderWorkflow:
         # Multi-process distance computation
         from .settings_manager import settings_manager
         num_workers = settings_manager.get_max_cpu_cores()
-        batch_size = max(1, len(pending_images) // (num_workers * 4))  # Split into 4x workers batches
+        # Fixed batch size: 100 pending images per batch
+        # This ensures we commit every 100 pending images (not by similarity count)
+        batch_size = 100
 
         print(f"[Phase 2] Step 3: Settings check - max_cpu_cores from settings: {settings_manager.get_settings().get('max_cpu_cores', 'NOT_SET')}")
-        print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers (from get_max_cpu_cores()), batch size {batch_size}, total {len(pending_images) // batch_size + 1} batches")
+        print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers, FIXED batch size {batch_size}, total {(len(pending_images) + batch_size - 1) // batch_size} batches")
 
         # Split pending images into batches
         batches = []
@@ -402,12 +404,10 @@ class DuplicateFinderWorkflow:
 
         similarities_count = 0
         processed_count = 0
-        pending_ids_to_mark = []
-        similarities_buffer = []  # Buffer for similarities
-        SIMILARITY_COMMIT_THRESHOLD = 100  # Commit every 100 similarities
 
         # Process batches in parallel
-        print(f"[Phase 2 Main] Starting to process {len(batches)} batches, will commit every {SIMILARITY_COMMIT_THRESHOLD} similarities...")
+        # Each batch is 100 pending images, commit after EACH batch completes
+        print(f"[Phase 2 Main] Starting to process {len(batches)} batches (each batch = 100 pending images, commit after each batch)...")
         with Pool(processes=num_workers) as pool:
             for batch_idx, batch_similarities in enumerate(pool.imap(_compute_similarities_batch, batches)):
                 if self._stop_event.is_set():
@@ -417,41 +417,27 @@ class DuplicateFinderWorkflow:
                     print("[Phase 2 Main] Pool terminated")
                     raise InterruptedError("Phase 2 stopped by user")
 
-                # Mark batch images as computed (add to pending list)
+                # Get the pending images for this batch
                 batch_pending = batches[batch_idx][0]
-                for pending_id, _ in batch_pending:
-                    pending_ids_to_mark.append((pending_id,))
-                    processed_count += 1
+                batch_size_actual = len(batch_pending)
 
-                # Add to similarities buffer
+                # Insert all similarities from this batch
                 if batch_similarities:
-                    similarities_buffer.extend(batch_similarities)
-                    print(f"[Phase 2 Main] Received batch {batch_idx+1}/{len(batches)}: {len(batch_similarities)} similarities (buffer: {len(similarities_buffer)}, pending status updates: {len(pending_ids_to_mark)})")
+                    cursor.executemany('''
+                        INSERT OR REPLACE INTO phash_similarities
+                        (image_id_a, image_id_b, threshold, distance)
+                        VALUES (?, ?, 80, ?)
+                    ''', batch_similarities)
 
-                    # Commit when buffer reaches threshold
-                    while len(similarities_buffer) >= SIMILARITY_COMMIT_THRESHOLD:
-                        # Take first 100 from buffer
-                        to_insert = similarities_buffer[:SIMILARITY_COMMIT_THRESHOLD]
-                        similarities_buffer = similarities_buffer[SIMILARITY_COMMIT_THRESHOLD:]
+                # Update status for all images in this batch
+                pending_ids = [(pid,) for pid, _ in batch_pending]
+                cursor.executemany("UPDATE image_hashes SET status = 'computed' WHERE id = ?", pending_ids)
 
-                        # Insert similarities
-                        cursor.executemany('''
-                            INSERT OR REPLACE INTO phash_similarities
-                            (image_id_a, image_id_b, threshold, distance)
-                            VALUES (?, ?, 80, ?)
-                        ''', to_insert)
-
-                        # Also commit all pending status updates
-                        if pending_ids_to_mark:
-                            cursor.executemany("UPDATE image_hashes SET status = 'computed' WHERE id = ?", pending_ids_to_mark)
-                            status_count = len(pending_ids_to_mark)
-                            pending_ids_to_mark = []
-                        else:
-                            status_count = 0
-
-                        conn.commit()
-                        similarities_count += len(to_insert)
-                        print(f"[Phase 2 Main] ✓ Committed {len(to_insert)} similarities + {status_count} status updates (total similarities: {similarities_count}, buffer: {len(similarities_buffer)}, pending status: {len(pending_ids_to_mark)})")
+                # Commit after each batch (every ~100 pending images)
+                conn.commit()
+                processed_count += batch_size_actual
+                similarities_count += len(batch_similarities)
+                print(f"[Phase 2 Main] ✓ Committed batch {batch_idx+1}/{len(batches)}: {len(batch_similarities)} similarities + {batch_size_actual} status updates (total: {processed_count}/{len(pending_images)} images, {similarities_count} similarities)")
 
                 # Progress update every 10 batches
                 if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == len(batches):
@@ -459,24 +445,6 @@ class DuplicateFinderWorkflow:
                         progress_callback(processed_count, len(pending_images), f"Building similarities... ({processed_count}/{len(pending_images)})")
 
                     print(f"[Phase 2 Main] Progress Summary: batch {batch_idx+1}/{len(batches)}, processed {processed_count}/{len(pending_images)} images, found {similarities_count} similarities, stop_event={self._stop_event.is_set()}")
-
-        # Final commit for remaining similarities and status updates
-        if similarities_buffer or pending_ids_to_mark:
-            if similarities_buffer:
-                cursor.executemany('''
-                    INSERT OR REPLACE INTO phash_similarities
-                    (image_id_a, image_id_b, threshold, distance)
-                    VALUES (?, ?, 80, ?)
-                ''', similarities_buffer)
-                similarities_count += len(similarities_buffer)
-
-            if pending_ids_to_mark:
-                cursor.executemany("UPDATE image_hashes SET status = 'computed' WHERE id = ?", pending_ids_to_mark)
-
-            conn.commit()
-            print(f"[Phase 2 Main] ✓ Final commit: {len(similarities_buffer)} similarities + {len(pending_ids_to_mark)} status updates (total: {similarities_count})")
-
-        conn.commit()
 
         elapsed = time.time() - start_time
         print(f"[Phase 2] ✅ Completed in {elapsed:.1f}s: processed {processed_count}, found {similarities_count} similarities")
