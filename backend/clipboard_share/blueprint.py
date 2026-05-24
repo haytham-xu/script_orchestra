@@ -19,4 +19,4 @@ api = Api(
 )
 
 # Register namespace
-api.add_namespace(clipboard_ns, path='/')
+api.add_namespace(clipboard_ns, path='/clipboard')
