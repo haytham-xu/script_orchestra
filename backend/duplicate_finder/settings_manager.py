@@ -31,15 +31,19 @@ class SettingsManager:
         """Load settings from file"""
         try:
             with open(self.settings_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                loaded = json.load(f)
+                print(f"[SettingsManager] Loaded settings from {self.settings_file}: max_cpu_cores={loaded.get('max_cpu_cores', 'NOT_SET')}")
+                return loaded
         except Exception as e:
-            print(f"Error loading settings: {e}")
+            print(f"[SettingsManager] Error loading settings: {e}, using defaults")
             return DEFAULT_SETTINGS.copy()
 
     def save_settings(self, settings: Dict):
         """Save settings to file"""
+        print(f"[SettingsManager] Saving settings to {self.settings_file}: max_cpu_cores={settings.get('max_cpu_cores', 'NOT_SET')}")
         with open(self.settings_file, 'w', encoding='utf-8') as f:
             json.dump(settings, f, indent=2, ensure_ascii=False)
+        print(f"[SettingsManager] Settings saved successfully")
 
     def get_delete_target_path(self) -> str:
         """Get configured delete target path"""
@@ -55,10 +59,13 @@ class SettingsManager:
 
     def get_max_cpu_cores(self) -> int:
         """Get configured maximum CPU cores to use (1 to cpu_count())"""
-        max_cores = self.get_settings().get('max_cpu_cores', 1)
+        current_settings = self.get_settings()
+        max_cores = current_settings.get('max_cpu_cores', 1)
         # Ensure within valid range (1 to available cores)
         available_cores = cpu_count()
-        return max(1, min(available_cores, max_cores))
+        result = max(1, min(available_cores, max_cores))
+        print(f"[SettingsManager] get_max_cpu_cores() - raw value from settings: {max_cores}, available: {available_cores}, returning: {result}")
+        return result
 
     def get_phash_db_path(self) -> Optional[str]:
         """Get configured phash database path"""

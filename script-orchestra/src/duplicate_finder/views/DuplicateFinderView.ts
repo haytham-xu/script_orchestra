@@ -860,7 +860,8 @@ export function useDuplicateFinderView() {
       await DuplicateFinderService.updateSettings({
         similarity_threshold: threshold.value,
         delete_target_path: settings.value.delete_target_path,
-        phash_db_path: settings.value.phash_db_path
+        phash_db_path: settings.value.phash_db_path,
+        max_cpu_cores: settings.value.max_cpu_cores
       })
       // Update local settings
       settings.value.similarity_threshold = threshold.value
