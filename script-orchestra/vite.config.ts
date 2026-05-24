@@ -11,7 +11,7 @@ import AutoImport from 'unplugin-auto-import/vite'
 // https://vite.dev/config/
 export default defineConfig({
   server: {
-    host: '127.0.0.1',
+    host: '0.0.0.0', // Allow access from other devices on LAN
     port: 5173
   },
   plugins: [

@@ -14,6 +14,7 @@ import MangaImportView from '@/manga_viwer/views/MangaImportView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
+import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
@@ -97,6 +98,11 @@ const router = createRouter({
       path: '/duplicate-finder',
       name: 'duplicate-finder',
       component: DuplicateFinderView
+    },
+    {
+      path: '/clipboard-share',
+      name: 'clipboard-share',
+      component: ClipboardShareView
     },
     {
       path: '/file-git',

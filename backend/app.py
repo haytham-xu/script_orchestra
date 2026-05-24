@@ -11,6 +11,9 @@ from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
 # Import roadmap tool
 from roadmap.blueprint import blueprint as roadmap_blueprint
 
+# Import clipboard_share tool
+from clipboard_share.blueprint import blueprint as clipboard_share_blueprint
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 
@@ -23,6 +26,7 @@ import file_git.controller
 # Import websocket services from both tools
 from file_git import websocket_service as fg_websocket
 from duplicate_finder import websocket_service as df_websocket
+from clipboard_share import websocket_service as cs_websocket
 
 # Import Cypress support API for E2E testing
 from cypress_support.api import cypress_api
@@ -44,6 +48,9 @@ def create_app() -> Flask:
     # Register roadmap blueprint
     app.register_blueprint(roadmap_blueprint)
 
+    # Register clipboard_share blueprint
+    app.register_blueprint(clipboard_share_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -51,9 +58,11 @@ def create_app() -> Flask:
     # This creates a single shared socketio instance for all tools
     socketio = df_websocket.init_socketio(app)
 
-    # Share the same socketio instance with file_git
+    # Share the same socketio instance with file_git and clipboard_share
     if socketio:
         fg_websocket.socketio = socketio
+        cs_websocket.init_socketio(socketio)
+        cs_websocket.register_socketio_events()
 
     return app, socketio
 
@@ -83,12 +92,13 @@ if __name__ == "__main__":
 
     app, socketio = create_app()
     # Use port 5001 to avoid conflict with macOS AirPlay (port 5000)
+    # Bind to 0.0.0.0 to allow access from other devices on LAN
 
     if socketio:
         # Run with SocketIO if available
-        print("[App] Starting with WebSocket support")
-        socketio.run(app, debug=True, port=5001)
+        print("[App] Starting with WebSocket support on 0.0.0.0:5001")
+        socketio.run(app, debug=True, host='0.0.0.0', port=5001)
     else:
         # Fallback to regular Flask if SocketIO not available
-        print("[App] Starting without WebSocket (install flask-socketio to enable)")
-        app.run(debug=True, port=5001)
+        print("[App] Starting without WebSocket on 0.0.0.0:5001 (install flask-socketio to enable)")
+        app.run(debug=True, host='0.0.0.0', port=5001)
