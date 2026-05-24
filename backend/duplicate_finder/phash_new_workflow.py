@@ -10,8 +10,7 @@ import os
 import time
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
-from multiprocessing import Pool, cpu_count
-import threading
+from multiprocessing import Pool, cpu_count, Manager
 
 try:
     from .phash_cache import _compute_single_hash, CACHE_DB
@@ -30,13 +29,23 @@ def _compute_similarities_batch(args):
     Returns:
         List of similarity tuples: (id_a, id_b, distance)
     """
+    import os
+    import multiprocessing
+
     pending_batch, all_images, threshold_distance = args
     similarities = []
+
+    pid = os.getpid()
+    worker_name = multiprocessing.current_process().name
+
+    print(f"[Worker {worker_name} PID={pid}] START batch: {len(pending_batch)} pending vs {len(all_images)} total images")
 
     def hamming_distance(hash1: str, hash2: str) -> int:
         return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
 
+    processed = 0
     for pending_id, pending_phash in pending_batch:
+        matches = 0
         for other_id, other_phash in all_images:
             if pending_id == other_id:
                 continue
@@ -46,6 +55,13 @@ def _compute_similarities_batch(args):
                 # Ensure id_a < id_b
                 id_a, id_b = (pending_id, other_id) if pending_id < other_id else (other_id, pending_id)
                 similarities.append((id_a, id_b, distance))
+                matches += 1
+
+        processed += 1
+        if processed % 10 == 0 or processed == len(pending_batch):
+            print(f"[Worker {worker_name} PID={pid}] Progress: {processed}/{len(pending_batch)} images, found {len(similarities)} similarities so far")
+
+    print(f"[Worker {worker_name} PID={pid}] DONE batch: processed {len(pending_batch)} images, found {len(similarities)} total similarities")
 
     return similarities
 
@@ -59,7 +75,9 @@ class DuplicateFinderWorkflow:
     def __init__(self, db_path: str = None):
         self.db_path = Path(db_path) if db_path else CACHE_DB
         self._conn = None
-        self._stop_event = threading.Event()
+        # Use multiprocessing Manager for cross-process Event
+        self._manager = Manager()
+        self._stop_event = self._manager.Event()
         self._init_db()
 
     def _init_db(self):
@@ -134,10 +152,13 @@ class DuplicateFinderWorkflow:
 
     def set_stop(self):
         """Signal all phases to stop"""
+        print("[Workflow] STOP signal set!")
         self._stop_event.set()
+        print(f"[Workflow] Stop event is_set: {self._stop_event.is_set()}")
 
     def clear_stop(self):
         """Clear stop signal"""
+        print("[Workflow] STOP signal cleared")
         self._stop_event.clear()
 
     # ========== Phase 1: Refresh Images ==========
@@ -171,14 +192,17 @@ class DuplicateFinderWorkflow:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        print(f"[Phase 1] Refreshing image table for {len(file_paths)} files...")
+        print(f"[Phase 1] START: Refreshing image table for {len(file_paths)} files...")
 
         # Step 1: Remove missing files from DB
+        print(f"[Phase 1] Step 1: Checking for missing files in DB...")
         if progress_callback:
             progress_callback(0, len(file_paths), "Checking missing files...")
 
         cursor.execute("SELECT id, file_path FROM image_hashes")
         db_files = cursor.fetchall()
+        print(f"[Phase 1] Found {len(db_files)} files in DB")
+
         db_file_set = {file_path for _, file_path in db_files}
         fs_file_set = set(file_paths)
 
@@ -190,9 +214,10 @@ class DuplicateFinderWorkflow:
                 removed_count += 1
 
         conn.commit()
-        print(f"[Phase 1] Removed {removed_count} missing files from DB")
+        print(f"[Phase 1] Step 1 DONE: Removed {removed_count} missing files from DB")
 
         # Step 2: Check existing files
+        print(f"[Phase 1] Step 2: Checking which files need computation...")
         cursor.execute("SELECT file_path, status FROM image_hashes")
         db_status = {row[0]: row[1] for row in cursor.fetchall()}
 
@@ -212,7 +237,7 @@ class DuplicateFinderWorkflow:
                 files_to_compute.append(file_path)
             # status='pending' will also be computed
 
-        print(f"[Phase 1] Skipped {skipped_count} computed files, computing {len(files_to_compute)} new files")
+        print(f"[Phase 1] Step 2 DONE: Skipped {skipped_count} computed files, need to compute {len(files_to_compute)} files")
 
         # Step 3: Compute phash for new/pending files
         added_count = 0
@@ -223,37 +248,58 @@ class DuplicateFinderWorkflow:
             num_workers = settings_manager.get_max_cpu_cores()
             BATCH_SIZE = 100
 
+            print(f"[Phase 1] Step 3: Computing phash using {num_workers} workers, batch size {BATCH_SIZE}...")
+
             with Pool(processes=num_workers) as pool:
                 batch_buffer = []
                 completed = 0
 
                 for result in pool.imap_unordered(_compute_single_hash, files_to_compute):
                     if self._stop_event.is_set():
+                        print("[Phase 1 Main] STOP detected! Terminating pool...")
                         pool.terminate()
                         pool.join()
+                        print("[Phase 1 Main] Pool terminated")
                         raise InterruptedError("Phase 1 stopped during hash computation")
+
+                    filename = os.path.basename(result.get('file_path', 'unknown'))
 
                     if result.get('error'):
                         error_files.append(result)
+                        print(f"[Phase 1 Main] Received ERROR for: {filename}")
                     else:
                         batch_buffer.append(result)
+                        print(f"[Phase 1 Main] Received SUCCESS for: {filename} (batch: {len(batch_buffer)}/{BATCH_SIZE})")
 
                         if len(batch_buffer) >= BATCH_SIZE:
                             self._insert_images_batch(batch_buffer)
                             added_count += len(batch_buffer)
+                            print(f"[Phase 1 Main] Inserted batch of {len(batch_buffer)} images: {added_count} total so far")
                             batch_buffer = []
 
                     completed += 1
-                    if progress_callback and completed % 100 == 0:
+                    if completed % 10 == 0:  # Summary log every 10 files
+                        print(f"[Phase 1 Main] Progress Summary: {completed}/{len(files_to_compute)}, added={added_count}, errors={len(error_files)}, stop_event={self._stop_event.is_set()}")
+                    if progress_callback and completed % 10 == 0:  # More frequent updates
                         progress_callback(completed, len(files_to_compute), f"Computing phash... ({completed}/{len(files_to_compute)})")
 
                 # Final batch
                 if batch_buffer:
                     self._insert_images_batch(batch_buffer)
                     added_count += len(batch_buffer)
+        else:
+            # No files to compute, send completion progress
+            print(f"[Phase 1] No files to compute (all skipped)")
+            if progress_callback:
+                progress_callback(len(file_paths), len(file_paths), "All files already computed")
 
         elapsed = time.time() - start_time
         print(f"[Phase 1] ✅ Completed in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
+
+        # Send final 100% progress
+        if progress_callback:
+            total = len(file_paths)
+            progress_callback(total, total, f"Complete: +{added_count}, -{removed_count}, skipped {skipped_count}")
 
         return {
             'added': added_count,
@@ -308,9 +354,10 @@ class DuplicateFinderWorkflow:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        print(f"[Phase 2] Building similarities (threshold distance ≤ {threshold_distance})...")
+        print(f"[Phase 2] START: Building similarities (threshold distance ≤ {threshold_distance})...")
 
         # Get pending images
+        print(f"[Phase 2] Step 1: Getting pending images...")
         cursor.execute("SELECT id, phash FROM image_hashes WHERE status = 'pending'")
         pending_images = cursor.fetchall()
 
@@ -319,17 +366,18 @@ class DuplicateFinderWorkflow:
             return {'processed': 0, 'similarities_found': 0, 'elapsed': 0}
 
         # Get all images (for distance comparison)
+        print(f"[Phase 2] Step 2: Getting all images for comparison...")
         cursor.execute("SELECT id, phash FROM image_hashes")
         all_images = cursor.fetchall()
 
-        print(f"[Phase 2] Processing {len(pending_images)} pending images against {len(all_images)} total images")
+        print(f"[Phase 2] Step 2 DONE: Processing {len(pending_images)} pending images against {len(all_images)} total images")
 
         # Multi-process distance computation
         from .settings_manager import settings_manager
         num_workers = settings_manager.get_max_cpu_cores()
         batch_size = max(1, len(pending_images) // (num_workers * 4))  # Split into 4x workers batches
 
-        print(f"[Phase 2] Using {num_workers} workers with batch size {batch_size}")
+        print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers, batch size {batch_size}, total {len(pending_images) // batch_size + 1} batches")
 
         # Split pending images into batches
         batches = []
@@ -342,11 +390,14 @@ class DuplicateFinderWorkflow:
         pending_ids_to_mark = []
 
         # Process batches in parallel
+        print(f"[Phase 2 Main] Starting to process {len(batches)} batches...")
         with Pool(processes=num_workers) as pool:
             for batch_idx, batch_similarities in enumerate(pool.imap(_compute_similarities_batch, batches)):
                 if self._stop_event.is_set():
+                    print("[Phase 2 Main] STOP detected! Terminating pool...")
                     pool.terminate()
                     pool.join()
+                    print("[Phase 2 Main] Pool terminated")
                     raise InterruptedError("Phase 2 stopped by user")
 
                 # Insert similarities in batch
@@ -357,6 +408,7 @@ class DuplicateFinderWorkflow:
                         VALUES (?, ?, 80, ?)
                     ''', batch_similarities)
                     similarities_count += len(batch_similarities)
+                    print(f"[Phase 2 Main] Received batch {batch_idx+1}/{len(batches)}: inserted {len(batch_similarities)} similarities")
 
                 # Mark batch images as computed
                 batch_pending = batches[batch_idx][0]
@@ -365,7 +417,7 @@ class DuplicateFinderWorkflow:
                     processed_count += 1
 
                 # Commit every 10 batches
-                if (batch_idx + 1) % 10 == 0:
+                if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == len(batches):
                     cursor.executemany("UPDATE image_hashes SET status = 'computed' WHERE id = ?", pending_ids_to_mark)
                     conn.commit()
                     pending_ids_to_mark = []
@@ -373,7 +425,7 @@ class DuplicateFinderWorkflow:
                     if progress_callback:
                         progress_callback(processed_count, len(pending_images), f"Building similarities... ({processed_count}/{len(pending_images)})")
 
-                    print(f"[Phase 2] Progress: {processed_count}/{len(pending_images)}, found {similarities_count} similarities")
+                    print(f"[Phase 2 Main] Progress Summary: batch {batch_idx+1}/{len(batches)}, processed {processed_count}/{len(pending_images)} images, found {similarities_count} similarities, stop_event={self._stop_event.is_set()}")
 
         # Final commit for remaining marks
         if pending_ids_to_mark:
@@ -383,6 +435,11 @@ class DuplicateFinderWorkflow:
 
         elapsed = time.time() - start_time
         print(f"[Phase 2] ✅ Completed in {elapsed:.1f}s: processed {processed_count}, found {similarities_count} similarities")
+
+        # Send final 100% progress
+        if progress_callback:
+            total = len(pending_images)
+            progress_callback(total, total, f"Complete: processed {processed_count}, found {similarities_count} similarities")
 
         return {
             'processed': processed_count,
@@ -487,6 +544,10 @@ class DuplicateFinderWorkflow:
         elapsed = time.time() - start_time
         total_duplicates = sum(len(g) for g in result_groups)
         print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {len(result_groups)} groups, {total_duplicates} total duplicates")
+
+        # Send final 100% progress
+        if progress_callback and total_groups > 0:
+            progress_callback(total_groups, total_groups, f"Complete: {len(result_groups)} groups, {total_duplicates} duplicates")
 
         return {
             'groups': result_groups,

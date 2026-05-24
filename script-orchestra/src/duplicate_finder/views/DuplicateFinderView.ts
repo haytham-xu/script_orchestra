@@ -359,6 +359,9 @@ export function useDuplicateFinderView() {
       return
     }
 
+    // Generate scan_id FIRST
+    const scanId = `phase1-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
     try {
       isPhase1Running.value = true
       phaseProgress.value = {
@@ -373,37 +376,56 @@ export function useDuplicateFinderView() {
       // Ensure WebSocket is connected
       if (!socket || !socket.connected) {
         connectWebSocket()
+        // Wait a bit for connection
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
 
-      const result = await DuplicateFinderService.phase1Refresh(selectedFolders.value)
+      // Register listener BEFORE calling API
+      const startTime = Date.now()
 
-      // Listen for progress updates
-      if (result.scan_id) {
-        const startTime = Date.now()
-        socket?.on(`scan:${result.scan_id}:progress`, (data: any) => {
-          const elapsed = (Date.now() - startTime) / 1000
-          const rate = data.current > 0 ? data.current / elapsed : 0
-          const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+      console.log('[Phase 1] Registering WebSocket listener for:', `scan:${scanId}:progress`)
 
-          phaseProgress.value = {
-            phase: 1,
-            message: data.message || 'Phase 1: Refreshing images...',
-            details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
-            current: data.current,
-            total: data.total,
-            percentage: data.percentage
-          }
-        })
+      socket?.on(`scan:${scanId}:progress`, (data: any) => {
+        console.log('[Phase 1] Progress update:', data)
+        const elapsed = (Date.now() - startTime) / 1000
+        const rate = data.current > 0 ? data.current / elapsed : 0
+        const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+
+        phaseProgress.value = {
+          phase: 1,
+          message: data.message || 'Phase 1: Refreshing images...',
+          details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
+          current: data.current,
+          total: data.total,
+          percentage: data.percentage
+        }
+      })
+
+      // Now call API with the scan_id
+      console.log('[Phase 1] Calling API with scan_id:', scanId)
+      const result = await DuplicateFinderService.phase1Refresh(selectedFolders.value, scanId)
+
+      // Update to 100% complete
+      phaseProgress.value = {
+        phase: 1,
+        message: 'Phase 1: Complete',
+        details: `Added: ${result.added}, Removed: ${result.removed}, Skipped: ${result.skipped}, Time: ${result.elapsed.toFixed(1)}s`,
+        current: 100,
+        total: 100,
+        percentage: 100
       }
-
-      phaseProgress.value.details = `Added: ${result.added}, Removed: ${result.removed}, Skipped: ${result.skipped}, Time: ${result.elapsed.toFixed(1)}s`
 
       ElMessage.success(`Phase 1 complete: +${result.added}, -${result.removed}, skipped ${result.skipped} (${result.elapsed.toFixed(1)}s)`)
 
       // Clean up listener
-      if (result.scan_id) {
-        socket?.off(`scan:${result.scan_id}:progress`)
-      }
+      socket?.off(`scan:${scanId}:progress`)
+
+      // Clear progress after 2 seconds
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 1) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
     } catch (error: any) {
       console.error('[Duplicate Finder] Phase 1 failed:', error)
       if (error.message && error.message.includes('stopped')) {
@@ -473,7 +495,15 @@ export function useDuplicateFinderView() {
         })
       }
 
-      phaseProgress.value.details = `Processed: ${result.processed}, Similarities: ${result.similarities_found}, Time: ${result.elapsed.toFixed(1)}s`
+      // Update to 100% complete
+      phaseProgress.value = {
+        phase: 2,
+        message: 'Phase 2: Complete',
+        details: `Processed: ${result.processed}, Similarities: ${result.similarities_found}, Time: ${result.elapsed.toFixed(1)}s`,
+        current: 100,
+        total: 100,
+        percentage: 100
+      }
 
       ElMessage.success(`Phase 2 complete: Processed ${result.processed} images, found ${result.similarities_found} similarities (${result.elapsed.toFixed(1)}s)`)
 
@@ -481,6 +511,13 @@ export function useDuplicateFinderView() {
       if (result.scan_id) {
         socket?.off(`scan:${result.scan_id}:progress`)
       }
+
+      // Clear progress after 2 seconds
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 2) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
     } catch (error: any) {
       console.error('[Duplicate Finder] Phase 2 failed:', error)
       if (error.message && error.message.includes('stopped')) {
@@ -568,7 +605,15 @@ export function useDuplicateFinderView() {
         }
       }
 
-      phaseProgress.value.details = `Groups: ${result.total_groups}, Duplicates: ${result.total_duplicates}, Time: ${result.elapsed.toFixed(3)}s`
+      // Update to 100% complete
+      phaseProgress.value = {
+        phase: 3,
+        message: 'Phase 3: Complete',
+        details: `Groups: ${result.total_groups}, Duplicates: ${result.total_duplicates}, Time: ${result.elapsed.toFixed(3)}s`,
+        current: 100,
+        total: 100,
+        percentage: 100
+      }
 
       ElMessage.success(`Phase 3 complete: Found ${result.total_groups} duplicate groups with ${result.total_duplicates} images (${result.elapsed.toFixed(3)}s)`)
 
@@ -576,6 +621,13 @@ export function useDuplicateFinderView() {
       if (result.scan_id) {
         socket?.off(`scan:${result.scan_id}:progress`)
       }
+
+      // Clear progress after 2 seconds
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 3) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
     } catch (error: any) {
       console.error('[Duplicate Finder] Phase 3 failed:', error)
       if (error.message && error.message.includes('stopped')) {

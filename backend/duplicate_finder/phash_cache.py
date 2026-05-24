@@ -32,9 +32,19 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
         Success: {'file_path': ..., 'phash': ..., 'resolution': ..., 'filesize': ..., 'error': False}
         Error: {'error': True, 'file_path': ..., 'error_type': ..., 'error_msg': ...}
     """
+    import os
+    import multiprocessing
+
+    pid = os.getpid()
+    worker_name = multiprocessing.current_process().name
+    filename = os.path.basename(file_path)
+
+    print(f"[Worker {worker_name} PID={pid}] START processing: {filename}")
+
     try:
         # Check file exists
         if not os.path.exists(file_path):
+            print(f"[Worker {worker_name} PID={pid}] ERROR: File not found - {filename}")
             return {
                 'error': True,
                 'file_path': file_path,
@@ -47,6 +57,8 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
         phash = str(imagehash.phash(img, hash_size=16))
         resolution = f"{img.width}x{img.height}"
         filesize = os.path.getsize(file_path)
+
+        print(f"[Worker {worker_name} PID={pid}] SUCCESS: {filename} - phash={phash[:8]}..., res={resolution}, size={filesize}")
 
         return {
             'file_path': file_path,
@@ -65,6 +77,8 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
         else:
             error_type = 'io_error'
 
+        print(f"[Worker {worker_name} PID={pid}] ERROR: {error_type} - {filename}: {error_msg}")
+
         return {
             'error': True,
             'file_path': file_path,
@@ -73,6 +87,7 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
         }
     except Exception as e:
         # Catch all other errors
+        print(f"[Worker {worker_name} PID={pid}] ERROR: unknown_error - {filename}: {str(e)}")
         return {
             'error': True,
             'file_path': file_path,

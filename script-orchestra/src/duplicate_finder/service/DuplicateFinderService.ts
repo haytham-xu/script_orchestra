@@ -180,8 +180,8 @@ export class DuplicateFinderService {
   /**
    * Phase 1: Refresh images - scan filesystem, sync DB, compute phash
    */
-  static async phase1Refresh(paths: string[]): Promise<{ added: number; removed: number; skipped: number; errors: any[]; elapsed: number }> {
-    const response = await postRequest(`${this.BASE_URL}/phase1/refresh`, {}, { paths })
+  static async phase1Refresh(paths: string[], scanId?: string): Promise<{ added: number; removed: number; skipped: number; errors: any[]; elapsed: number; scan_id: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase1/refresh`, {}, { paths, scan_id: scanId })
     return response
   }
 

@@ -1081,41 +1081,53 @@ class Phase1RefreshResource(Resource):
                 return {"error": "Missing 'paths' in request"}, 400
 
             paths = data['paths']
+            scan_id = data.get('scan_id') or f"phase1-{uuid.uuid4().hex[:8]}"  # Use provided scan_id or generate one
+
+            print(f"[Phase 1 API] Received request to scan {len(paths)} paths: {paths[:3]}...")  # Show first 3
+            print(f"[Phase 1 API] Using scan_id: {scan_id}")
 
             # Collect all image files
             image_files = []
             for root_path in paths:
                 if not os.path.exists(root_path):
+                    print(f"[Phase 1 API] WARNING: Path does not exist: {root_path}")
                     continue
 
                 if os.path.isfile(root_path):
                     if root_path.lower().endswith(IMAGE_EXTS):
                         image_files.append(root_path)
                 else:
+                    print(f"[Phase 1 API] Scanning directory: {root_path}")
                     for root, dirs, files in os.walk(root_path):
                         for file in files:
                             if file.lower().endswith(IMAGE_EXTS):
                                 image_files.append(os.path.join(root, file))
 
-            print(f"[Phase 1] Found {len(image_files)} image files")
+            print(f"[Phase 1 API] Found {len(image_files)} image files to process")
 
             # Progress callback for WebSocket updates
-            scan_id = f"phase1-{uuid.uuid4().hex[:8]}"
+            print(f"[Phase 1 API] Starting phase 1 with scan_id: {scan_id}")
 
             def progress_cb(current, total, message):
+                print(f"[Phase 1 API] Progress: {current}/{total} - {message}")
                 emit_progress(scan_id, current, total, message)
 
             # Run phase 1
+            print(f"[Phase 1 API] Calling workflow.phase1_refresh_images...")
             result = get_workflow().phase1_refresh_images(image_files, progress_callback=progress_cb)
             result['scan_id'] = scan_id
 
+            print(f"[Phase 1 API] COMPLETE: Added={result['added']}, Removed={result['removed']}, Skipped={result['skipped']}, Time={result['elapsed']:.1f}s")
             return result
 
         except InterruptedError as e:
+            print(f"[Phase 1 API] Interrupted: {e}")
             return {"error": "stopped", "message": str(e)}, 499
         except Exception as e:
             error_msg = str(e)
-            print(f"[Phase 1] Error: {error_msg}")
+            print(f"[Phase 1 API] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return {"error": error_msg}, 500
 
 
@@ -1123,7 +1135,11 @@ class Phase1RefreshResource(Resource):
 class Phase1StopResource(Resource):
     def post(self):
         """Stop phase 1 (refresh)"""
-        get_workflow().set_stop()
+        print("[Phase 1 API] Received STOP request")
+        workflow = get_workflow()
+        print(f"[Phase 1 API] Workflow instance: {workflow}")
+        workflow.set_stop()
+        print("[Phase 1 API] Stop signal sent to workflow")
         return {"message": "Phase 1 stop signal sent"}
 
 
@@ -1176,7 +1192,10 @@ class Phase2BuildResource(Resource):
 class Phase2StopResource(Resource):
     def post(self):
         """Stop phase 2 (build similarities)"""
-        get_workflow().set_stop()
+        print("[Phase 2 API] Received STOP request")
+        workflow = get_workflow()
+        workflow.set_stop()
+        print("[Phase 2 API] Stop signal sent to workflow")
         return {"message": "Phase 2 stop signal sent"}
 
 
@@ -1229,7 +1248,10 @@ class Phase3GetDuplicatesResource(Resource):
 class Phase3StopResource(Resource):
     def post(self):
         """Stop phase 3 (get duplicates)"""
-        get_workflow().set_stop()
+        print("[Phase 3 API] Received STOP request")
+        workflow = get_workflow()
+        workflow.set_stop()
+        print("[Phase 3 API] Stop signal sent to workflow")
         return {"message": "Phase 3 stop signal sent"}
 
 
