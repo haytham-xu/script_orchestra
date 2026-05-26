@@ -57,6 +57,33 @@
           </div>
       </div>
 
+      <!-- Delete Settings Section -->
+      <div class="folder-section">
+        <h3>Delete Settings</h3>
+
+        <div class="setting-item">
+          <label>Delete Target Path</label>
+          <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder">
+            <template #append>
+              <el-button @click="saveFolderSettings">Save</el-button>
+            </template>
+          </el-input>
+          <p class="settings-hint">Where deleted files will be moved to</p>
+        </div>
+
+        <div class="setting-item">
+          <label>Deep Path Delete (Optional)</label>
+          <el-input v-model="deepPathDelete" placeholder="/path/to/folder - preserve folder structure">
+            <template #append>
+              <el-button @click="saveFolderSettings">Save</el-button>
+            </template>
+          </el-input>
+          <p class="settings-hint">
+            Preserve folder structure when deleting. Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg
+          </p>
+        </div>
+      </div>
+
       <!-- Exclude Folder Paths Section -->
       <div class="folder-section">
         <div class="folder-header">
@@ -189,17 +216,28 @@
         </div>
       </el-card>
 
-      <!-- Duplicate Groups -->
+      <!-- Duplicate Groups with Pagination -->
+      <div class="duplicate-groups-header">
+        <el-pagination
+          v-model:current-page="currentPage"
+          :page-size="pageSize"
+          :total="scanResult.duplicate_groups.length"
+          layout="total, prev, pager, next, jumper, sizes"
+          :page-sizes="[10, 20, 50, 100]"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
+
       <div class="duplicate-groups-container">
         <div
-          v-for="(group, groupIndex) in scanResult.duplicate_groups"
-          :key="`group-${groupIndex}`"
+          v-for="(group, groupIndex) in paginatedGroups"
+          :key="`group-${getActualGroupIndex(groupIndex)}`"
           class="duplicate-group"
         >
           <el-card>
             <template #header>
               <div class="group-header">
-                <span class="group-title">Group {{ groupIndex + 1 }} ({{ group.length }} similar images)</span>
+                <span class="group-title">Group {{ getActualGroupIndex(groupIndex) + 1 }} ({{ group.length }} similar images)</span>
                 <div class="group-actions">
                   <el-button
                     size="small"
@@ -225,9 +263,14 @@
                 :key="image.file_path"
                 :class="['image-item', { selected: selectedForDelete.has(image.file_path) }]"
                 @click="toggleFileSelection(image.file_path)"
+                style="cursor: pointer;"
               >
                 <div class="image-wrapper">
-                  <img :src="getImageUrl(image.file_path)" :alt="image.file_path" />
+                  <img
+                    :src="getImageUrl(image.file_path)"
+                    :alt="image.file_path"
+                    loading="lazy"
+                  />
                   <div v-if="selectedForDelete.has(image.file_path)" class="selected-overlay">
                     <el-icon :size="32"><CircleCheck /></el-icon>
                     <p class="selected-text">DELETE</p>
@@ -289,21 +332,6 @@
               show-stops
             />
             <p class="settings-hint">Higher = more strict (only very similar images). Range: 60%-100%</p>
-          </div>
-
-          <div class="setting-item">
-            <label>Delete Target Path</label>
-            <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder" />
-            <p class="settings-hint">Where deleted files will be moved to</p>
-          </div>
-
-          <div class="setting-item">
-            <label>Deep Path Delete (Optional)</label>
-            <el-input v-model="deepPathDelete" placeholder="/path/to/folder - preserve folder structure for files under this path" />
-            <p class="settings-hint">
-              When deleting files, if a file is under this path, preserve its relative folder structure in to_del.
-              Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg (instead of flat /to_del/file_a_folder1_sub.jpg)
-            </p>
           </div>
 
           <div class="setting-item">
@@ -489,6 +517,10 @@ const {
   showWhitelistDrawer,
   whitelist,
   isLoadingWhitelist,
+  // Pagination
+  currentPage,
+  pageSize,
+  paginatedGroups,
   // 3-Phase workflow states
   isPhase1Running,
   isPhase2Running,
@@ -514,6 +546,8 @@ const {
   getRelativePath,
   formatFileSize,
   getCpuMarks,
+  getActualGroupIndex,
+  handlePageSizeChange,
   saveFolderSettings,
   saveAdvancedSettings,
   addFolderPath,
@@ -532,6 +566,13 @@ const {
 </script>
 
 <style scoped>
+/* Pagination Styles */
+.duplicate-groups-header {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+}
+
 /* Virtual Scroller Styles */
 .duplicate-groups-container {
   display: flex;

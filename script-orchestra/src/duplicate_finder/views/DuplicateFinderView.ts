@@ -41,6 +41,10 @@ export function useDuplicateFinderView() {
   const isLoadingWhitelist = ref(false)
   const isCleaning = ref(false)
 
+  // Pagination for duplicate groups
+  const currentPage = ref(1)
+  const pageSize = ref(20)
+
   // 3-Phase workflow states
   const isPhase1Running = ref(false)
   const isPhase2Running = ref(false)
@@ -654,6 +658,33 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Computed: Get paginated groups (only render current page)
+   */
+  const paginatedGroups = computed(() => {
+    if (!scanResult.value || !scanResult.value.duplicate_groups) {
+      return []
+    }
+    const start = (currentPage.value - 1) * pageSize.value
+    const end = start + pageSize.value
+    return scanResult.value.duplicate_groups.slice(start, end)
+  })
+
+  /**
+   * Get actual group index (accounting for pagination)
+   */
+  function getActualGroupIndex(localIndex: number): number {
+    return (currentPage.value - 1) * pageSize.value + localIndex
+  }
+
+  /**
+   * Handle page size change
+   */
+  function handlePageSizeChange(newSize: number) {
+    pageSize.value = newSize
+    currentPage.value = 1  // Reset to first page
+  }
+
+  /**
    * Toggle file selection for deletion
    */
   function toggleFileSelection(filePath: string) {
@@ -1170,6 +1201,10 @@ export function useDuplicateFinderView() {
     showWhitelistDrawer,
     whitelist,
     isLoadingWhitelist,
+    // Pagination
+    currentPage,
+    pageSize,
+    paginatedGroups,
     // 3-Phase workflow states
     isPhase1Running,
     isPhase2Running,
@@ -1195,6 +1230,8 @@ export function useDuplicateFinderView() {
     getRelativePath,
     formatFileSize,
     getCpuMarks,
+    getActualGroupIndex,
+    handlePageSizeChange,
     saveFolderSettings,
     saveAdvancedSettings,
     addFolderPath,
