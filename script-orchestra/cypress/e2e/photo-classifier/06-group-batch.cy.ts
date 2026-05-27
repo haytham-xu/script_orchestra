@@ -13,6 +13,7 @@ describe('PhotoClassifier - Group Batch Operations', () => {
   const TEST_DATA_ROOT = '/Users/I353667/Documents/code/github/script_orchestra/backend/cypress_test_data/photo_classifier'
 
   before(() => {
+    // Enable test mode (saves snapshot and sets test config)
     cy.enableTestMode('photo_classifier', {
       rootPath: TEST_DATA_ROOT
     })
@@ -20,7 +21,9 @@ describe('PhotoClassifier - Group Batch Operations', () => {
   })
 
   after(() => {
-    // Config restore and cleanup are handled in 99-cleanup.cy.ts
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {
@@ -61,7 +64,7 @@ describe('PhotoClassifier - Group Batch Operations', () => {
 
       // Navigate to group batch mode
       cy.visit('/photo-classifier/group/0/batch')
-      cy.wait(2000) // Further increase wait time for batch page load
+      cy.wait(1000) // Wait for batch page load
 
       // Wait for grid to be visible
       cy.get('.image-grid', { timeout: 15000 }).should('be.visible')
@@ -125,7 +128,7 @@ describe('PhotoClassifier - Group Batch Operations', () => {
 
       // Go to batch mode
       cy.visit('/photo-classifier/group/0/batch')
-      cy.wait(2000) // Increase wait for batch page load
+      cy.wait(1000) // Wait for batch page load
 
       // Select 2 files
       cy.selectImageByIndex(0)
@@ -180,7 +183,7 @@ describe('PhotoClassifier - Group Batch Operations', () => {
 
       // Go to batch mode
       cy.visit('/photo-classifier/group/0/batch')
-      cy.wait(2000) // Increase wait for batch page load
+      cy.wait(1000) // Wait for batch page load
 
       // Shift select range from 2 to 6 (5 files)
       cy.shiftSelectImageRange(2, 6)
@@ -287,7 +290,7 @@ describe('PhotoClassifier - Group Batch Operations', () => {
 
       // Go to batch mode
       cy.visit('/photo-classifier/group/0/batch')
-      cy.wait(2000) // Increase wait for batch page load
+      cy.wait(1000) // Wait for batch page load
 
       // Try to remove without selecting anything - button should be disabled
       cy.contains('button', '移除选中').should('be.disabled')

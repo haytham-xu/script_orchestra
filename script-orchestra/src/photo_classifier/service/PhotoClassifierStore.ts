@@ -104,10 +104,10 @@ export const usePhotoClassifierStore = defineStore('photoClassifierStore', {
           this.initialized = true
           return true
         }
-        console.log('[Store] No state found')
+        console.log('[Store] No state found - starting fresh')
         return false
       } catch (error) {
-        console.error('Failed to load working state:', error)
+        console.error('[Store] Failed to load working state:', error)
         return false
       }
     },

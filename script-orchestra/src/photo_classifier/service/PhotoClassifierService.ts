@@ -1,5 +1,7 @@
 
 import {getRequest, postRequest, deleteRequest} from './http'
+import axios from 'axios'
+import {BACKEND_BASE_URL} from '../config/constants'
 import type {DefaultGroup, GroupList} from '@/photo_classifier/service/Model'
 import {PHOTO_CLASSIFIER_ENDPOINT_FOLDER} from '../config/constants'
 import {getRootPath} from '../config/settings'
@@ -43,10 +45,26 @@ export async function saveWorkingState(state: Omit<WorkingState, 'rootPath' | 't
 }
 
 export async function loadWorkingState(): Promise<WorkingState | null> {
-    const rootPath = getRootPath()
-    const params = rootPath ? { rootPath } : {}
-    const responseData = await getRequest<WorkingState | null>('/photo-classifier/working-state', params)
-    return responseData
+    try {
+        const rootPath = getRootPath()
+        const params = rootPath ? { rootPath } : {}
+        // Use custom axios config to treat 404 as success (working state doesn't exist yet)
+        const res = await axios.get(BACKEND_BASE_URL + '/photo-classifier/working-state', {
+            params,
+            validateStatus: (status) => status === 200 || status === 404
+        })
+
+        if (res.status === 404) {
+            console.log('[Service] Working state not found (404) - this is expected for new directories')
+            return null
+        }
+
+        return res.data as WorkingState
+    } catch (error: any) {
+        // Handle other errors
+        console.error('[Service] Failed to load working state:', error)
+        throw error
+    }
 }
 
 export async function clearWorkingState(targetRootPath?: string): Promise<void> {

@@ -14,6 +14,8 @@
     "test:e2e": "cypress run",
     "test:e2e:open": "cypress open",
     "test:e2e:headless": "cypress run --headless",
+    "test:e2e:photo": "cypress run --spec 'cypress/e2e/photo-classifier/**/*.cy.ts'",
+    "test:e2e:duplicate": "cypress run --spec 'cypress/e2e/duplicate-finder/**/*.cy.ts'",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix",

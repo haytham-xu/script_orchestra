@@ -23,8 +23,9 @@ describe('PhotoClassifier - File Categorization', () => {
   })
 
   after(() => {
-    // Note: Config restore and cleanup are handled in 99-cleanup.cy.ts
-    // This allows you to inspect test data when running tests manually
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {
@@ -160,8 +161,8 @@ describe('PhotoClassifier - File Categorization', () => {
           del: 0,
           remaining: 0
         },
-        maxRetries: 10,
-        retryDelay: 500
+        maxRetries: 15,  // Simple file move (4 files)
+        retryDelay: 1000
       })
 
       cy.log('✅ Test case 2 completed successfully')
@@ -225,8 +226,7 @@ describe('PhotoClassifier - File Categorization', () => {
       cy.pressKey('Enter')
       cy.log('✅ Applied changes at image 4')
 
-      // Wait for backend to process
-      cy.wait(1000)
+      // Don't wait - verifyFileDistribution will retry
 
       // Verify file distribution
       cy.verifyFileDistribution({
@@ -238,8 +238,8 @@ describe('PhotoClassifier - File Categorization', () => {
           del: 0,
           remaining: 0
         },
-        maxRetries: 10,
-        retryDelay: 500
+        maxRetries: 15,  // Simple file move (4 files)
+        retryDelay: 1000
       })
 
       cy.log('✅ Test case 3 completed successfully')

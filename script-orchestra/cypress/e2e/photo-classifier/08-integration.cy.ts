@@ -14,6 +14,7 @@ describe('PhotoClassifier - Integration Scenarios', () => {
   const TEST_DATA_ROOT = '/Users/I353667/Documents/code/github/script_orchestra/backend/cypress_test_data/photo_classifier'
 
   before(() => {
+    // Enable test mode (saves snapshot and sets test config)
     cy.enableTestMode('photo_classifier', {
       rootPath: TEST_DATA_ROOT
     })
@@ -21,7 +22,9 @@ describe('PhotoClassifier - Integration Scenarios', () => {
   })
 
   after(() => {
-    // Config restore and cleanup are handled in 99-cleanup.cy.ts
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {
@@ -218,20 +221,36 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       cy.wait(500)
 
       // Create group and mark files
-      cy.pressKey('KeyQ')
+      cy.pressKey('KeyQ')  // File 1 -> Group 0, Q auto-advances to file 2
       cy.wait(300)
-      cy.goToNextImage()
-      cy.markAs('best')
+      cy.markAs('best')  // File 2 -> best
 
       // Apply all
       cy.pressKey('Enter')
-      cy.wait(1000)
+      // Don't wait - verifyFileDistribution will retry
+
+      // Verify file distribution (file 2 moved to best, others remain)
+      cy.verifyFileDistribution({
+        testDir: testDir,
+        expected: {
+          best: 1,
+          remaining: 5  // File 1 in group but not applied, files 3-6 unprocessed
+        },
+        maxRetries: 15,
+        retryDelay: 1000
+      })
 
       // Working state should be cleared after apply
-      // We can't directly check backend, but we can verify by reloading
-      // and checking if state persists (it shouldn't)
+      // Verify by reloading and checking if state persists (it shouldn't)
+      cy.reload()
+      cy.wait(1000)
+      cy.visit('/photo-classifier')
+      cy.wait(500)
 
-      cy.log('✅ Case 36 completed - working state cleared')
+      // Should only have default group (custom groups cleared)
+      cy.get('.group-card').should('have.length', 1)
+
+      cy.log('✅ Case 36 completed - working state cleared and verified')
     })
   })
 
@@ -256,20 +275,17 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       cy.wait(500)
 
       // Create 2 groups
-      cy.pressKey('KeyQ')
+      cy.pressKey('KeyQ')  // File 1 -> Group 0, Q auto-advances to file 2
       cy.wait(300)
-      cy.goToNextImage()
-      cy.pressKey('KeyW')
+      cy.pressKey('KeyW')  // File 2 -> Group 0, W auto-advances to file 3
       cy.wait(300)
-      cy.goToNextImage()
-      cy.pressKey('KeyQ')
+      cy.pressKey('KeyQ')  // File 3 -> Group 1, Q auto-advances to file 4
       cy.wait(300)
 
-      // Mark some files
+      // Mark some files (now at file 4 after Q auto-advance)
+      cy.markAs('best')  // File 4 -> best
       cy.goToNextImage()
-      cy.markAs('best')
-      cy.goToNextImage()
-      cy.markAs('normal')
+      cy.markAs('normal')  // File 5 -> normal
 
       // Go to dashboard and click reset
       cy.visit('/photo-classifier')
@@ -312,37 +328,76 @@ describe('PhotoClassifier - Integration Scenarios', () => {
       const testDir = setup.testDir
 
       cy.loadTestMedia(testDir)
-      cy.goToDefaultGroup()
 
-      cy.get('.main-image').should('be.visible')
-      cy.wait(500)
+      // Query file list to identify image and video positions
+      cy.request({
+        method: 'GET',
+        url: 'http://localhost:5001/photo-classifier/folder',
+        qs: { rootPath: testDir }
+      }).then((response) => {
+        const files = response.body.files
+        cy.log(`📋 Total files: ${files.length}`)
 
-      // Should show 5 total files
-      cy.verifyIndexDisplay('1 / 5')
+        // Find first image and first video
+        const firstImageIndex = files.findIndex(f => f.fileType === 'image')
+        const firstVideoIndex = files.findIndex(f => f.fileType === 'video')
 
-      // Mark files (mix of images and videos)
-      cy.markAs('best')
-      cy.goToNextImage()
-      cy.goToNextImage()
-      cy.markAs('normal')
+        cy.log(`📷 First image at index: ${firstImageIndex}`)
+        cy.log(`🎬 First video at index: ${firstVideoIndex}`)
 
-      // Apply
-      cy.pressKey('Enter')
-      // Don't wait - verifyFileDistribution will retry
+        expect(firstImageIndex).to.be.at.least(0, 'Should have at least one image')
+        expect(firstVideoIndex).to.be.at.least(0, 'Should have at least one video')
 
-      // Verify distribution (1 best, 1 normal, 3 unprocessed)
-      cy.verifyFileDistribution({
-        testDir: testDir,
-        expected: {
-          best: 1,
-          normal: 1,
-          remaining: 3
-        },
-        maxRetries: 15,
-        retryDelay: 1000
+        cy.goToDefaultGroup()
+        cy.get('.main-image').should('be.visible')
+        cy.wait(500)
+
+        // Should show 5 total files
+        cy.verifyIndexDisplay('1 / 5')
+
+        // Navigate to first image (currentIndex is 0-based in store, but display is 1-based)
+        // Start at index 0, navigate to first image
+        if (firstImageIndex > 0) {
+          for (let i = 0; i < firstImageIndex; i++) {
+            cy.goToNextImage()
+          }
+        }
+        cy.markAs('best') // Mark image as best
+        cy.log(`✓ Marked file at index ${firstImageIndex} (image) as best`)
+
+        // Navigate to first video from first image position
+        const stepsToVideo = firstVideoIndex - firstImageIndex
+        if (stepsToVideo > 0) {
+          for (let i = 0; i < stepsToVideo; i++) {
+            cy.goToNextImage()
+          }
+        } else if (stepsToVideo < 0) {
+          // Video comes before image - use ArrowLeft
+          for (let i = 0; i < Math.abs(stepsToVideo); i++) {
+            cy.pressKey('ArrowLeft')
+          }
+        }
+        cy.markAs('normal') // Mark video as normal
+        cy.log(`✓ Marked file at index ${firstVideoIndex} (video) as normal`)
+
+        // Apply
+        cy.pressKey('Enter')
+        // Don't wait - verifyFileDistribution will retry
+
+        // Verify distribution (1 best, 1 normal, 3 unprocessed)
+        cy.verifyFileDistribution({
+          testDir: testDir,
+          expected: {
+            best: 1,
+            normal: 1,
+            remaining: 3
+          },
+          maxRetries: 15,
+          retryDelay: 1000
+        })
+
+        cy.log('✅ Case 38 completed - verified mixed media handling (image→best, video→normal)')
       })
-
-      cy.log('✅ Case 38 completed')
     })
   })
 

@@ -24,8 +24,9 @@ describe('PhotoClassifier - Basic Media Loading', () => {
   })
 
   after(() => {
-    // Note: Config restore and cleanup are handled in 99-cleanup.cy.ts
-    // This allows you to inspect test data when running tests manually
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {

@@ -13,6 +13,7 @@ describe('PhotoClassifier - Small Group Operations', () => {
   const TEST_DATA_ROOT = '/Users/I353667/Documents/code/github/script_orchestra/backend/cypress_test_data/photo_classifier'
 
   before(() => {
+    // Enable test mode (saves snapshot and sets test config)
     cy.enableTestMode('photo_classifier', {
       rootPath: TEST_DATA_ROOT
     })
@@ -20,7 +21,9 @@ describe('PhotoClassifier - Small Group Operations', () => {
   })
 
   after(() => {
-    // Config restore and cleanup are handled in 99-cleanup.cy.ts
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {
@@ -86,8 +89,8 @@ describe('PhotoClassifier - Small Group Operations', () => {
           best: 1,
           remaining: 0
         },
-        maxRetries: 25, // Increase retries to handle file system delays
-        retryDelay: 1500 // Increase retry delay
+        maxRetries: 15, // Simple file move (4 files)
+        retryDelay: 1000
       })
 
       cy.log('✅ Case 15 completed')
@@ -201,7 +204,7 @@ describe('PhotoClassifier - Small Group Operations', () => {
       // Navigate to group 0
       cy.visit('/photo-classifier/group/0')
       cy.get('.main-image', { timeout: 10000 }).should('be.visible')
-      cy.wait(1500) // Further increase wait time for store initialization and reactive updates
+      cy.wait(500) // Wait for Vue reactivity after page navigation
 
       // Should start at 1/3
       cy.get('.header-progress', { timeout: 15000 }).should('contain', '1 / 3')

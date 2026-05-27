@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import time
 import os
+import json
 from .media_generator import MediaGenerator
 from .config_manager import ConfigManager
 
@@ -419,34 +420,60 @@ def _verify_files_exist(file_paths, max_wait=2.0):
 config_manager = ConfigManager()
 
 
-@cypress_api.route('/config/snapshot', methods=['POST'])
-def save_config_snapshot():
+@cypress_api.route('/config/snapshot', methods=['POST', 'GET'])
+def config_snapshot():
     """
-    Save current configuration as snapshot
+    POST: Save current configuration as snapshot
+    GET: Read existing snapshot
 
-    Request JSON:
+    POST Request JSON:
         {
             "tool": "photo_classifier"
         }
+
+    GET Query params:
+        tool=photo_classifier
 
     Response:
         {
             "snapshot_path": "/path/to/.cypress_snapshot.json",
             "snapshot_created": true,
-            "timestamp": "2026-05-15T14:30:00Z"
+            "timestamp": "2026-05-15T14:30:00Z",
+            "config": {...}  // Only in GET response
         }
     """
-    data = request.json
-    tool = data.get('tool')
+    if request.method == 'POST':
+        data = request.json
+        tool = data.get('tool')
 
-    if not tool:
-        return jsonify({'error': 'tool parameter is required'}), 400
+        if not tool:
+            return jsonify({'error': 'tool parameter is required'}), 400
 
-    try:
-        result = config_manager.save_snapshot(tool)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        try:
+            result = config_manager.save_snapshot(tool)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    else:  # GET
+        tool = request.args.get('tool')
+
+        if not tool:
+            return jsonify({'error': 'tool parameter is required'}), 400
+
+        try:
+            check_result = config_manager.check_snapshot(tool)
+            if not check_result['has_snapshot']:
+                return jsonify({'error': f'No snapshot found for {tool}'}), 404
+
+            # Read snapshot content
+            snapshot_path = Path(check_result['snapshot_path'])
+            with open(snapshot_path, 'r', encoding='utf-8') as f:
+                snapshot_data = json.load(f)
+
+            return jsonify(snapshot_data)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
 
 @cypress_api.route('/config/set-test', methods=['POST'])

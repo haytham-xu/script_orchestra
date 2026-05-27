@@ -48,6 +48,12 @@ export default defineConfig({
           return null
         },
 
+        // Check if a file exists
+        fileExists(filePath) {
+          const fs = require('fs')
+          return fs.existsSync(filePath)
+        },
+
         // Health check
         async checkBackendHealth() {
           try {
@@ -191,6 +197,23 @@ export default defineConfig({
             return response.data
           } catch (error) {
             console.error(`❌ Error restoring config for ${tool}:`, error.message)
+            throw error
+          }
+        },
+
+        async readSnapshot(tool) {
+          try {
+            const response = await axios.get(`${BACKEND_URL}/api/cypress/config/snapshot`, {
+              params: { tool: tool }
+            })
+            console.log(`✅ Snapshot read for ${tool}`)
+            return response.data
+          } catch (error) {
+            if (error.response?.status === 404) {
+              console.log(`⚠️  No snapshot found for ${tool}`)
+              return null
+            }
+            console.error(`❌ Error reading snapshot for ${tool}:`, error.message)
             throw error
           }
         }

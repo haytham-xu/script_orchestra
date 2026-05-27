@@ -16,6 +16,7 @@ describe('PhotoClassifier - Batch Select Operations', () => {
   const TEST_DATA_ROOT = '/Users/I353667/Documents/code/github/script_orchestra/backend/cypress_test_data/photo_classifier'
 
   before(() => {
+    // Enable test mode (saves snapshot and sets test config)
     cy.enableTestMode('photo_classifier', {
       rootPath: TEST_DATA_ROOT
     })
@@ -23,7 +24,9 @@ describe('PhotoClassifier - Batch Select Operations', () => {
   })
 
   after(() => {
-    // Config restore and cleanup are handled in 99-cleanup.cy.ts
+    // Restore config and cleanup test data after this file completes
+    cy.disableTestMode('photo_classifier')
+    cy.cleanupTest()
   })
 
   beforeEach(() => {

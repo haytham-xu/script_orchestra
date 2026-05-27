@@ -47,7 +47,7 @@
         <el-image
           v-else
           :src="photoClassifierStore.defaultGroupAvatar"
-          fit="cover"
+          fit="contain"
           class="card-image"
         ></el-image>
       </template>
@@ -71,7 +71,7 @@
         <el-image
           v-else
           :src="photoClassifierStore.groupAvatar(index)"
-          fit="cover"
+          fit="contain"
           class="card-image"
         ></el-image>
       </template>
@@ -147,7 +147,7 @@
 .card-image {
   width: 100%;
   height: 300px;
-  object-fit: cover;
+  object-fit: contain;  /* Changed from cover to contain - show full image */
   border-radius: 6px;
 }
 </style>
