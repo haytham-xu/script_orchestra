@@ -85,7 +85,8 @@ class FolderUpdateResource(Resource):
         if not isinstance(folder_models, dict):
             return {"error": "invalid payload"}, 400
 
-        main_map = {"bou": "boutique", "arch": "archive"}
+        # Get category folder mapping from settings
+        main_map = settings_manager.get_setting('category_folder_mapping', {})
         invalid_chars = set('<>:"/\\|?*')
 
         for folder_id, incoming in folder_models.items():
@@ -480,8 +481,8 @@ class ImportMoveResource(Resource):
         if not category_main or not category_sub:
             return {"error": "category_main and category_sub are required"}, 400
 
-        # Build target path
-        main_map = {"bou": "boutique", "arch": "archive"}
+        # Build target path - get category folder mapping from settings
+        main_map = settings_manager.get_setting('category_folder_mapping', {})
         main_folder_name = main_map.get(category_main, category_main)
         main_folder_path = os.path.join(category_paths_abs, main_folder_name)
         sub_folder_name = f"{category_main}_{category_sub}"

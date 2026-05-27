@@ -718,7 +718,7 @@ export default defineComponent({
 
     function getRelativePath(fullPath: string): string {
       // Get relative path from root_path to parent folder (exclude folder name)
-      // Example: /root/manga/boutique/bou_hf/FolderName -> boutique/bou_hf
+      // Example: /root/manga/category_folder/main_sub/FolderName -> category_folder/main_sub
       if (!fullPath || !rootPath.value) return ''
 
       try {
