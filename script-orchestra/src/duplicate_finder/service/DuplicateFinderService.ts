@@ -196,8 +196,11 @@ export class DuplicateFinderService {
   /**
    * Phase 2: Build similarities table
    */
-  static async phase2Build(thresholdDistance: number = 12): Promise<{ processed: number; similarities_found: number; elapsed: number }> {
-    const response = await postRequest(`${this.BASE_URL}/phase2/build`, {}, { threshold_distance: thresholdDistance })
+  static async phase2Build(thresholdDistance: number = 12, scanId?: string): Promise<{ processed: number; similarities_found: number; elapsed: number }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2/build`, {}, {
+      threshold_distance: thresholdDistance,
+      scan_id: scanId
+    })
     return response
   }
 

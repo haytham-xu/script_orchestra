@@ -11,179 +11,162 @@
         </div>
       </template>
 
-      <!-- Input Section -->
-      <div class="input-section">
-        <!-- Folder Paths Section -->
-        <div class="folder-section">
-          <div class="folder-header">
-            <h3>Scan Folders</h3>
-            <el-button size="small" @click="addFolderPath">+ Add Folder</el-button>
-          </div>
+      <!-- Action Buttons with Deep Path Delete -->
+      <div class="action-section">
+        <!-- 3 Phase Workflow Buttons -->
+        <div class="action-buttons">
+          <!-- Phase 1 -->
+          <el-button
+            type="primary"
+            size="large"
+            :disabled="!settings.folder_paths || settings.folder_paths.length === 0 || isPhase1Running"
+            :loading="isPhase1Running"
+            @click="runPhase1"
+          >
+            {{ isPhase1Running ? 'Phase 1 Running...' : '1️⃣ Refresh Images' }}
+          </el-button>
+          <el-button
+            v-if="isPhase1Running"
+            type="warning"
+            size="large"
+            @click="stopPhase1"
+          >
+            ⏹️ Stop
+          </el-button>
 
-          <div v-if="settings.folder_paths && settings.folder_paths.length > 0" class="folder-list-edit">
-            <div v-for="(path, index) in settings.folder_paths" :key="index" class="folder-item-with-root">
-              <el-checkbox-group v-model="selectedFolders">
-                <el-checkbox
-                  :value="path"
-                  :label="path"
-                  size="large"
-                  class="folder-checkbox"
-                />
-              </el-checkbox-group>
-              <div class="folder-input-group">
-                <el-input
-                  v-model="settings.folder_paths[index]"
-                  placeholder="Folder Path: /path/to/folder"
-                  class="folder-path-input"
-                />
-                <el-input
-                  v-model="settings.folder_root_paths[path]"
-                  placeholder="Root Path: /path/to/root"
-                  class="root-path-input"
-                />
-              </div>
-              <el-button
-                @click="removeFolderPath(index)"
-                type="danger"
-                size="small"
-                :icon="'Delete'"
-              >
-                Remove
-              </el-button>
-            </div>
-          </div>
-          <div v-else class="no-folders">
-            <p>No folder paths configured. Click "Add Folder" to add paths.</p>
-          </div>
-      </div>
+          <!-- Phase 2 -->
+          <el-button
+            type="success"
+            size="large"
+            :disabled="isPhase2Running"
+            :loading="isPhase2Running"
+            @click="runPhase2"
+          >
+            {{ isPhase2Running ? 'Phase 2 Running...' : '2️⃣ Build Similarities' }}
+          </el-button>
+          <el-button
+            v-if="isPhase2Running"
+            type="warning"
+            size="large"
+            @click="stopPhase2"
+          >
+            ⏹️ Stop
+          </el-button>
 
-      <!-- Delete Settings Section -->
-      <div class="folder-section">
-        <h3>Delete Settings</h3>
-
-        <div class="setting-item">
-          <label>Delete Target Path</label>
-          <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder">
-            <template #append>
-              <el-button @click="saveFolderSettings">Save</el-button>
-            </template>
-          </el-input>
-          <p class="settings-hint">Where deleted files will be moved to</p>
+          <!-- Phase 3 -->
+          <el-button
+            type="info"
+            size="large"
+            :disabled="isPhase3Running"
+            :loading="isPhase3Running"
+            @click="runPhase3"
+          >
+            {{ isPhase3Running ? 'Phase 3 Running...' : '3️⃣ Get Duplicates' }}
+          </el-button>
+          <el-button
+            v-if="isPhase3Running"
+            type="warning"
+            size="large"
+            @click="stopPhase3"
+          >
+            ⏹️ Stop
+          </el-button>
         </div>
 
-        <div class="setting-item">
-          <label>Deep Path Delete (Optional)</label>
-          <el-input v-model="deepPathDelete" placeholder="/path/to/folder - preserve folder structure">
-            <template #append>
-              <el-button @click="saveFolderSettings">Save</el-button>
-            </template>
-          </el-input>
-          <p class="settings-hint">
-            Preserve folder structure when deleting. Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg
-          </p>
-        </div>
-      </div>
-
-      <!-- Exclude Folder Paths Section -->
-      <div class="folder-section">
-        <div class="folder-header">
-          <h3>Exclude Folders</h3>
-          <el-button size="small" @click="addExcludeFolderPath">+ Add Exclude Folder</el-button>
-        </div>
-
-        <div v-if="settings.exclude_folder_paths && settings.exclude_folder_paths.length > 0" class="folder-list-edit">
-          <div v-for="(path, index) in settings.exclude_folder_paths" :key="index" class="folder-item">
+        <!-- Deep Path Delete - Compact -->
+        <div class="deep-delete-inline">
+          <el-tooltip content="Preserve folder structure when deleting. Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg" placement="top">
             <el-input
-              v-model="settings.exclude_folder_paths[index]"
-              placeholder="/path/to/exclude/folder"
-              style="flex: 1"
+              v-model="deepPathDelete"
+              placeholder="Deep Path Delete"
+              style="width: 560px;"
+              size="default"
             />
-            <el-button
-              @click="removeExcludeFolderPath(index)"
-              type="danger"
-              size="small"
-              :icon="'Delete'"
-            >
-              Remove
-            </el-button>
-          </div>
+          </el-tooltip>
+          <el-button
+            type="danger"
+            @click="executeDeepPathDelete"
+            :loading="isDeleting"
+            size="default"
+          >
+            🗑️ Delete
+          </el-button>
         </div>
-        <div v-else class="no-folders">
-          <p>No exclude folders configured.</p>
-        </div>
-      </div>
-
-      <!-- Action Buttons - 3 Phase Workflow -->
-      <div class="action-buttons">
-        <!-- Phase 1 -->
-        <el-button
-          type="primary"
-          size="large"
-          :disabled="selectedFolders.length === 0 || isPhase1Running"
-          :loading="isPhase1Running"
-          @click="runPhase1"
-        >
-          {{ isPhase1Running ? 'Phase 1 Running...' : '1️⃣ Refresh Images' }}
-        </el-button>
-        <el-button
-          v-if="isPhase1Running"
-          type="warning"
-          size="large"
-          @click="stopPhase1"
-        >
-          ⏹️ Stop
-        </el-button>
-
-        <!-- Phase 2 -->
-        <el-button
-          type="success"
-          size="large"
-          :disabled="isPhase2Running"
-          :loading="isPhase2Running"
-          @click="runPhase2"
-        >
-          {{ isPhase2Running ? 'Phase 2 Running...' : '2️⃣ Build Similarities' }}
-        </el-button>
-        <el-button
-          v-if="isPhase2Running"
-          type="warning"
-          size="large"
-          @click="stopPhase2"
-        >
-          ⏹️ Stop
-        </el-button>
-
-        <!-- Phase 3 -->
-        <el-button
-          type="info"
-          size="large"
-          :disabled="isPhase3Running"
-          :loading="isPhase3Running"
-          @click="runPhase3"
-        >
-          {{ isPhase3Running ? 'Phase 3 Running...' : '3️⃣ Get Duplicates' }}
-        </el-button>
-        <el-button
-          v-if="isPhase3Running"
-          type="warning"
-          size="large"
-          @click="stopPhase3"
-        >
-          ⏹️ Stop
-        </el-button>
       </div>
 
       <!-- Phase Progress Display -->
       <div v-if="phaseProgress.phase > 0" class="phase-progress-display">
         <p class="phase-message">{{ phaseProgress.message }}</p>
         <el-progress
-          v-if="phaseProgress.total > 0"
           :percentage="phaseProgress.percentage"
           :status="phaseProgress.percentage === 100 ? 'success' : undefined"
         />
         <p class="phase-details">{{ phaseProgress.details }}</p>
       </div>
-      </div>
+
+      <!-- Phase 1 Summary (when complete) -->
+      <el-card v-if="phase1Summary" class="summary-card" style="margin-top: 20px;">
+        <template #header>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span>📊 Phase 1 Summary</span>
+            <el-button
+              type="text"
+              size="small"
+              @click="phase1Summary = null"
+            >
+              ✕
+            </el-button>
+          </div>
+        </template>
+        <div class="summary-content">
+          <div class="summary-item">
+            <span class="summary-label">Images Added:</span>
+            <span class="summary-value highlight">+{{ phase1Summary.added }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Images Removed:</span>
+            <span class="summary-value">-{{ phase1Summary.removed }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Images Skipped:</span>
+            <span class="summary-value">{{ phase1Summary.skipped }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Time Elapsed:</span>
+            <span class="summary-value">{{ phase1Summary.elapsed }}s</span>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- Phase 2 Summary (when complete) -->
+      <el-card v-if="phase2Summary" class="summary-card" style="margin-top: 20px;">
+        <template #header>
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span>📊 Phase 2 Summary</span>
+            <el-button
+              type="text"
+              size="small"
+              @click="phase2Summary = null"
+            >
+              ✕
+            </el-button>
+          </div>
+        </template>
+        <div class="summary-content">
+          <div class="summary-item">
+            <span class="summary-label">Images Processed:</span>
+            <span class="summary-value highlight">{{ phase2Summary.processed }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Similarities Found:</span>
+            <span class="summary-value highlight">{{ phase2Summary.similarities_found }}</span>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Time Elapsed:</span>
+            <span class="summary-value">{{ phase2Summary.elapsed }}s</span>
+          </div>
+        </div>
+      </el-card>
 
       <!-- Progress Section -->
       <div v-if="isScanning" class="progress-section">
@@ -319,9 +302,89 @@
       :size="600"
     >
       <div class="whitelist-content">
+        <!-- Folder Configuration -->
+        <div class="settings-section-drawer">
+          <h3>📁 Scan Folders</h3>
+          <div style="margin-bottom: 12px;">
+            <el-button size="small" @click="addFolderPath">+ Add Folder</el-button>
+          </div>
+
+          <div v-if="settings.folder_paths && settings.folder_paths.length > 0" class="folder-list-drawer">
+            <div v-for="(path, index) in settings.folder_paths" :key="index" class="folder-item-drawer">
+              <div class="folder-inputs-drawer">
+                <el-input
+                  v-model="settings.folder_paths[index]"
+                  placeholder="Folder Path (Required)"
+                  size="small"
+                  style="margin-bottom: 4px;"
+                  required
+                />
+                <el-input
+                  v-model="settings.folder_root_paths[path]"
+                  placeholder="Root Path (Optional)"
+                  size="small"
+                />
+              </div>
+              <el-button
+                @click="removeFolderPath(index)"
+                type="danger"
+                size="small"
+                :icon="'Delete'"
+              >
+                Remove
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="no-folders-drawer">
+            <p>No folder paths configured.</p>
+          </div>
+        </div>
+
+        <el-divider />
+
+        <!-- Exclude Folders -->
+        <div class="settings-section-drawer">
+          <h3>🚫 Exclude Folders</h3>
+          <div style="margin-bottom: 12px;">
+            <el-button size="small" @click="addExcludeFolderPath">+ Add Exclude Folder</el-button>
+          </div>
+
+          <div v-if="settings.exclude_folder_paths && settings.exclude_folder_paths.length > 0" class="folder-list-drawer">
+            <div v-for="(path, index) in settings.exclude_folder_paths" :key="index" class="exclude-item-drawer">
+              <el-input
+                v-model="settings.exclude_folder_paths[index]"
+                placeholder="/path/to/exclude/folder"
+                size="small"
+                style="flex: 1"
+              />
+              <el-button
+                @click="removeExcludeFolderPath(index)"
+                type="danger"
+                size="small"
+                :icon="'Delete'"
+              >
+                Remove
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="no-folders-drawer">
+            <p>No exclude folders configured.</p>
+          </div>
+        </div>
+
+        <el-divider />
+
         <!-- Advanced Settings -->
         <div class="settings-section-drawer">
           <h3>Advanced Settings</h3>
+
+          <div class="setting-item">
+            <label>Delete Target Path</label>
+            <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder" />
+            <p class="settings-hint">Where deleted files will be moved to</p>
+          </div>
+
+          <el-divider />
 
           <div class="setting-item">
             <label>Similarity Threshold: {{ threshold }}%</label>
@@ -356,14 +419,192 @@
             </p>
           </div>
 
-          <el-button
-            type="primary"
-            @click="saveAdvancedSettings"
-            :loading="isSaving"
-            style="margin-top: 12px"
-          >
-            💾 Save Advanced Settings
-          </el-button>
+          <el-divider />
+
+          <h4 style="margin: 16px 0 12px 0; font-size: 14px; color: #606266;">Performance Settings</h4>
+          <p class="settings-hint" style="margin-bottom: 16px;">
+            Configure performance parameters for each phase. Add delays to reduce CPU/disk load or test with slower execution.
+          </p>
+
+          <!-- Phase 1 Settings -->
+          <div class="phase-settings-group">
+            <h5>Phase 1: Scan & Compute Hash</h5>
+            <div class="performance-inputs-row">
+              <div class="performance-input-item">
+                <label>Worker Handler Size</label>
+                <el-tooltip content="Number of files each worker processes at once. Recommended: 1 (best progress granularity)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.worker_handler_size"
+                    :min="1"
+                    :max="100"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 1</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>DB Commit Batch</label>
+                <el-tooltip content="Accumulate N results before committing to database. Recommended: 100 (normal), 1000 (large scale)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.db_commit_batch_size"
+                    :min="1"
+                    :max="10000"
+                    :step="10"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 100</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>Progress Update Interval</label>
+                <el-tooltip content="Send progress update every N files. Recommended: 100 (normal), 1000 (large scale)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.progress_update_interval"
+                    :min="1"
+                    :max="10000"
+                    :step="10"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 100</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>IPC Chunk Size</label>
+                <el-tooltip content="Batch tasks for IPC optimization. Recommended: 10 (fixed, rarely needs tuning)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.ipc_chunk_size"
+                    :min="1"
+                    :max="1000"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 10</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>Scan Delay (s)</label>
+                <el-tooltip content="Delay between file scans. For testing only." placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.scan_delay"
+                    :min="0"
+                    :max="5"
+                    :step="0.1"
+                    :precision="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">0s (no delay)</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>Compute Delay (s)</label>
+                <el-tooltip content="Delay between hash computations. For testing only." placement="top">
+                  <el-input-number
+                    v-model="settings.phase1.compute_delay"
+                    :min="0"
+                    :max="5"
+                    :step="0.1"
+                    :precision="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">0s (no delay)</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Phase 2 Settings -->
+          <div class="phase-settings-group">
+            <h5>Phase 2: Compare Similarities</h5>
+            <div class="performance-inputs-row">
+              <div class="performance-input-item">
+                <label>Worker Handler Size</label>
+                <el-tooltip content="Number of files each worker processes at once. Recommended: 1 (best progress granularity)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase2.worker_handler_size"
+                    :min="1"
+                    :max="100"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 1</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>DB Commit Batch</label>
+                <el-tooltip content="Accumulate N results before committing to database. Recommended: 100 (normal), 1000 (large scale)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase2.db_commit_batch_size"
+                    :min="1"
+                    :max="10000"
+                    :step="10"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 100</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>Progress Update Interval</label>
+                <el-tooltip content="Send progress update every N files. Recommended: 100 (normal), 1000 (large scale)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase2.progress_update_interval"
+                    :min="1"
+                    :max="10000"
+                    :step="10"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 100</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>IPC Chunk Size</label>
+                <el-tooltip content="Batch tasks for IPC optimization. Recommended: 10 (fixed, rarely needs tuning)" placement="top">
+                  <el-input-number
+                    v-model="settings.phase2.ipc_chunk_size"
+                    :min="1"
+                    :max="1000"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">Recommended: 10</p>
+              </div>
+
+              <div class="performance-input-item">
+                <label>Compare Delay (s)</label>
+                <el-tooltip content="Delay between similarity comparisons. For testing only." placement="top">
+                  <el-input-number
+                    v-model="settings.phase2.compare_delay"
+                    :min="0"
+                    :max="5"
+                    :step="0.1"
+                    :precision="1"
+                    size="small"
+                    controls-position="right"
+                  />
+                </el-tooltip>
+                <p class="settings-hint-small">0s (no delay)</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <el-divider />
@@ -417,15 +658,6 @@
               + Add Preferred Folder
             </el-button>
           </div>
-
-          <el-button
-            type="primary"
-            @click="saveAdvancedSettings"
-            :loading="isSaving"
-            style="margin-top: 12px"
-          >
-            💾 Save Advanced Settings
-          </el-button>
         </div>
 
         <el-divider />
@@ -491,6 +723,19 @@
             This will scan all configured folder paths and remove stale database entries. Use this periodically to keep database healthy.
           </p>
         </div>
+
+        <!-- Unified Save Button -->
+        <div style="padding: 20px; border-top: 1px solid #dcdfe6; margin-top: 20px; background: #fafafa;">
+          <el-button
+            type="primary"
+            size="large"
+            @click="saveAllSettings"
+            :loading="isSaving"
+            style="width: 100%;"
+          >
+            💾 Save All Settings
+          </el-button>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -507,6 +752,7 @@ const {
   deepPathDelete,
   isScanning,
   isSaving,
+  isDeleting,
   isCleaning,
   isVerifying,
   scanProgress,
@@ -526,6 +772,8 @@ const {
   isPhase2Running,
   isPhase3Running,
   phaseProgress,
+  phase1Summary,
+  phase2Summary,
   // Methods
   startScan,
   stopScan,
@@ -550,10 +798,12 @@ const {
   handlePageSizeChange,
   saveFolderSettings,
   saveAdvancedSettings,
+  saveAllSettings,
   addFolderPath,
   removeFolderPath,
   addExcludeFolderPath,
   removeExcludeFolderPath,
+  executeDeepPathDelete,
   addGroupToWhitelist,
   loadWhitelist,
   removeFromWhitelist,
@@ -612,6 +862,12 @@ const {
   font-size: 14px;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 /* Input Section */
 .input-section {
   display: flex;
@@ -654,11 +910,102 @@ const {
   color: #909399;
 }
 
-/* Folder Section */
+.settings-hint-small {
+  margin: 4px 0 0 0;
+  font-size: 11px;
+  color: #909399;
+}
+
+.performance-inputs-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.performance-input-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.performance-input-item label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #606266;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.performance-input-item .el-input-number {
+  width: 100px;
+}
+
+.phase-settings-group {
+  margin-bottom: 20px;
+  padding: 15px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.phase-settings-group h5 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #606266;
+  font-weight: 600;
+}
+
+/* Settings Container with Collapse */
+.settings-container {
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.settings-collapse {
+  background: transparent;
+}
+
+.settings-collapse :deep(.el-collapse-item__header) {
+  font-size: 15px;
+  font-weight: 500;
+  background: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.settings-collapse :deep(.el-collapse-item__content) {
+  padding: 16px;
+  background: white;
+  border-radius: 0 0 6px 6px;
+  margin-top: -8px;
+  margin-bottom: 8px;
+}
+
+.collapse-content {
+  padding: 0;
+}
+
+/* Folder Section - Keep for other uses */
 .folder-section {
   padding: 20px;
   background: #f5f7fa;
   border-radius: 8px;
+}
+
+.folder-section h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.folder-section h4 {
+  margin: 16px 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #606266;
 }
 
 .folder-header {
@@ -671,7 +1018,7 @@ const {
 .folder-list-edit {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .folder-item-with-root {
@@ -679,9 +1026,15 @@ const {
   gap: 12px;
   align-items: center;
   padding: 12px;
-  background: white;
+  background: #fafafa;
   border-radius: 6px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid #e4e7ed;
+}
+
+.folder-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .folder-checkbox {
@@ -703,6 +1056,43 @@ const {
 .root-path-input {
   flex: 1;
   min-width: 0;
+}
+
+.no-folders {
+  padding: 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px dashed #dcdfe6;
+}
+
+/* Action Section */
+.action-section {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+/* Action Buttons - 3 Phase Workflow */
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+/* Deep Path Delete Inline */
+.deep-delete-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fef0f0;
+  border-radius: 6px;
+  border: 1px solid #fde2e2;
 }
 
 /* Remove old styles that are no longer used */
@@ -765,12 +1155,6 @@ const {
   margin: 0;
   color: #909399;
   font-size: 13px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 12px;
-  align-items: center;
 }
 
 .scan-button {
@@ -1048,6 +1432,50 @@ const {
   color: #606266;
 }
 
+/* Folder List in Drawer */
+.folder-list-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.folder-item-drawer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+}
+
+.folder-inputs-drawer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.exclude-item-drawer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+}
+
+.no-folders-drawer {
+  padding: 16px;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px dashed #dcdfe6;
+}
+
 .settings-hint-text {
   margin: 0 0 16px 0;
   padding: 12px;
@@ -1167,12 +1595,6 @@ const {
 }
 
 /* Action Buttons */
-.action-buttons {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 24px;
-}
 
 /* Phase Progress Display */
 .phase-progress-display {

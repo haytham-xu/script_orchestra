@@ -19,7 +19,41 @@ except ImportError:
     print("[Warning] psutil not available, memory optimization disabled")
 
 # Cache database path - use non-hidden file
-CACHE_DB = Path(__file__).parent / 'phash_cache.db'
+# Default path if not configured in settings
+DEFAULT_CACHE_DB = Path(__file__).parent / 'phash_cache.db'
+
+
+def get_default_cache_path():
+    """
+    Get the cache database path from settings, or use default if not configured.
+    This ensures all code uses the same database path.
+    """
+    try:
+        from .settings_manager import settings_manager
+        configured_path = settings_manager.get_phash_db_path()
+        if configured_path:
+            return Path(configured_path)
+    except Exception as e:
+        print(f"[PHashCache] Could not load configured DB path: {e}")
+    return DEFAULT_CACHE_DB
+
+# Global variable for compute delay (accessible by multiprocessing workers)
+_COMPUTE_DELAY = 0.0
+
+
+def set_compute_delay(delay: float):
+    """Set global compute delay for multiprocessing workers"""
+    global _COMPUTE_DELAY
+    _COMPUTE_DELAY = delay
+
+
+def _compute_single_hash_with_delay(args):
+    """Wrapper that accepts (file_path, delay) tuple for multiprocessing"""
+    file_path, compute_delay = args
+    # Apply compute delay
+    if compute_delay > 0:
+        time.sleep(compute_delay)
+    return _compute_single_hash(file_path)
 
 
 def _compute_single_hash(file_path: str) -> Optional[Dict]:
@@ -183,9 +217,14 @@ class PHashCache:
         """
         Initialize PHash cache
         Args:
-            db_path: Optional custom database path. If None, uses default location.
+            db_path: Optional custom database path. If None, uses configured path from settings or default.
         """
-        self.db_path = Path(db_path) if db_path else CACHE_DB
+        if db_path:
+            self.db_path = Path(db_path)
+        else:
+            self.db_path = get_default_cache_path()
+
+        print(f"[PHashCache] Using database: {self.db_path}")
         self._conn = None  # Persistent connection for better performance
         self._stop_event = None  # For stop control
         self._init_db()

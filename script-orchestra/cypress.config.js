@@ -1,5 +1,6 @@
 import { defineConfig } from 'cypress'
 import axios from 'axios'
+import fs from 'fs'
 
 const BACKEND_URL = 'http://localhost:5001'
 
@@ -50,7 +51,6 @@ export default defineConfig({
 
         // Check if a file exists
         fileExists(filePath) {
-          const fs = require('fs')
           return fs.existsSync(filePath)
         },
 

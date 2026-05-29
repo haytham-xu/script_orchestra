@@ -25,3 +25,6 @@ backend/file_git/default_settings.json
 backend/manga_viewer/manga_viewer_settings.json
 /log
 cypress_test_data
+
+# Cypress Chinese documentation (not tracked)
+**/cypress_test_case_chinese_gitignore.md

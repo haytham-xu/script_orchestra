@@ -16,6 +16,7 @@ from clipboard_share.blueprint import blueprint as clipboard_share_blueprint
 
 import manga_viewer.controller
 import manga_viewer.settings_controller
+from manga_viewer.cypress_test_support import register_cypress_test_support
 
 import pdf_converter.controller
 
@@ -38,6 +39,9 @@ def create_app() -> Flask:
     CORS(app, resources={r"/*": {"origins": "*"}})
 
     restx_api.init_app(app)
+
+    # Register manga viewer cypress test support
+    register_cypress_test_support(app)
 
     # Register photo_classifier blueprint
     app.register_blueprint(photo_classifier_blueprint)

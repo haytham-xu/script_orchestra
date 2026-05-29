@@ -11,6 +11,7 @@ from .phash_cache import PHashCache
 from .settings_manager import settings_manager
 from .websocket_service import emit_progress, emit_complete, emit_error
 from .scan_manager import scan_manager
+from .cypress_test_support import TestDataSetup
 
 ns = Namespace("")
 
@@ -1037,16 +1038,21 @@ from .phash_new_workflow import DuplicateFinderWorkflow
 _workflow = None
 
 def get_workflow():
-    """Get workflow instance with current settings"""
+    """Get workflow instance with current settings
+
+    IMPORTANT: Once created, the workflow instance is NEVER recreated to preserve
+    the _stop_event across Phase 1/2/3 operations and stop signals.
+    """
     global _workflow
     db_path = settings_manager.get_phash_db_path()
 
-    # Recreate workflow if db_path changed
-    if _workflow is None or (hasattr(_workflow, 'db_path') and str(_workflow.db_path) != str(db_path)):
-        if _workflow:
-            _workflow.close()
+    # Create workflow only if it doesn't exist
+    if _workflow is None:
         _workflow = DuplicateFinderWorkflow(db_path=db_path)
         print(f"[Workflow] Initialized with database: {db_path}")
+    elif hasattr(_workflow, 'db_path') and str(_workflow.db_path) != str(db_path):
+        # Log warning if db_path changed, but DON'T recreate (to preserve _stop_event)
+        print(f"[Workflow] WARNING: DB path changed from {_workflow.db_path} to {db_path}, but keeping existing workflow instance to preserve stop_event")
 
     return _workflow
 
@@ -1113,11 +1119,14 @@ class Phase1RefreshResource(Resource):
                 emit_progress(scan_id, current, total, message)
 
             # Run phase 1
+            workflow = get_workflow()
+            print(f"[Phase 1 API] 🚀 Starting Phase 1 with workflow instance id={id(workflow)}")
+            print(f"[Phase 1 API] Initial _stop_event.is_set() = {workflow._stop_event.is_set()}")
             print(f"[Phase 1 API] Calling workflow.phase1_refresh_images...")
-            result = get_workflow().phase1_refresh_images(image_files, progress_callback=progress_cb)
+            result = workflow.phase1_refresh_images(image_files, progress_callback=progress_cb)
             result['scan_id'] = scan_id
 
-            print(f"[Phase 1 API] COMPLETE: Added={result['added']}, Removed={result['removed']}, Skipped={result['skipped']}, Time={result['elapsed']:.1f}s")
+            print(f"[Phase 1 API] COMPLETE: Added={result['added']}, Removed={result['removed']}, Skipped={result['skipped']}, Time={result['elapsed']:.1f}s, Stopped={result.get('stopped', False)}")
             return result
 
         except InterruptedError as e:
@@ -1135,11 +1144,15 @@ class Phase1RefreshResource(Resource):
 class Phase1StopResource(Resource):
     def post(self):
         """Stop phase 1 (refresh)"""
-        print("[Phase 1 API] Received STOP request")
+        print("=" * 80)
+        print("[Phase 1 API] 🛑 STOP request received")
         workflow = get_workflow()
-        print(f"[Phase 1 API] Workflow instance: {workflow}")
+        print(f"[Phase 1 API] Workflow instance: {workflow}, id={id(workflow)}")
+        print(f"[Phase 1 API] Before set_stop: _stop_event.is_set() = {workflow._stop_event.is_set()}")
         workflow.set_stop()
-        print("[Phase 1 API] Stop signal sent to workflow")
+        print(f"[Phase 1 API] After set_stop: _stop_event.is_set() = {workflow._stop_event.is_set()}")
+        print("[Phase 1 API] ✅ Stop signal sent to workflow")
+        print("=" * 80)
         return {"message": "Phase 1 stop signal sent"}
 
 
@@ -1168,16 +1181,22 @@ class Phase2BuildResource(Resource):
         try:
             data = request.json or {}
             threshold_distance = data.get('threshold_distance', 12)
+            scan_id = data.get('scan_id')  # Get scan_id from client if provided
 
-            # Progress callback for WebSocket updates
-            scan_id = f"phase2-{uuid.uuid4().hex[:8]}"
+            # Generate scan_id if not provided by client
+            if not scan_id:
+                scan_id = f"phase2-{uuid.uuid4().hex[:8]}"
 
             def progress_cb(current, total, message):
                 emit_progress(scan_id, current, total, message)
 
-            result = get_workflow().phase2_build_similarities(threshold_distance, progress_callback=progress_cb)
+            workflow = get_workflow()
+            print(f"[Phase 2 API] 🚀 Starting Phase 2 with workflow instance id={id(workflow)}")
+            print(f"[Phase 2 API] Initial _stop_event.is_set() = {workflow._stop_event.is_set()}")
+            result = workflow.phase2_build_similarities(threshold_distance, progress_callback=progress_cb)
             result['scan_id'] = scan_id
 
+            print(f"[Phase 2 API] COMPLETE: Processed={result['processed']}, Similarities={result['similarities_found']}, Time={result['elapsed']:.1f}s, Stopped={result.get('stopped', False)}")
             return result
 
         except InterruptedError as e:
@@ -1192,10 +1211,15 @@ class Phase2BuildResource(Resource):
 class Phase2StopResource(Resource):
     def post(self):
         """Stop phase 2 (build similarities)"""
-        print("[Phase 2 API] Received STOP request")
+        print("=" * 80)
+        print("[Phase 2 API] 🛑 STOP request received")
         workflow = get_workflow()
+        print(f"[Phase 2 API] Workflow instance: {workflow}, id={id(workflow)}")
+        print(f"[Phase 2 API] Before set_stop: _stop_event.is_set() = {workflow._stop_event.is_set()}")
         workflow.set_stop()
-        print("[Phase 2 API] Stop signal sent to workflow")
+        print(f"[Phase 2 API] After set_stop: _stop_event.is_set() = {workflow._stop_event.is_set()}")
+        print("[Phase 2 API] ✅ Stop signal sent to workflow")
+        print("=" * 80)
         return {"message": "Phase 2 stop signal sent"}
 
 
@@ -1253,5 +1277,102 @@ class Phase3StopResource(Resource):
         workflow.set_stop()
         print("[Phase 3 API] Stop signal sent to workflow")
         return {"message": "Phase 3 stop signal sent"}
+
+
+# ========== Cypress Test Support Endpoints ==========
+
+@ns.route("/cypress/duplicate-finder/setup")
+class CypressTestSetupResource(Resource):
+    def post(self):
+        """
+        Setup test data for Cypress tests
+
+        Request body:
+        {
+            "test_type": "minimal" | "performance",
+            "base_dir": "/path/to/test/dir",
+            "count": 50  // Optional, only for performance type
+        }
+        """
+        data = request.json
+        test_type = data.get('test_type', 'minimal')
+        base_dir = data.get('base_dir')
+
+        if not base_dir:
+            return {'error': 'base_dir required'}, 400
+
+        try:
+            if test_type == 'minimal':
+                result = TestDataSetup.create_minimal_test_set(base_dir)
+            elif test_type == 'performance':
+                count = data.get('count', 50)
+                result = TestDataSetup.create_performance_test_set(base_dir, count)
+            else:
+                return {'error': f'Unknown test_type: {test_type}'}, 400
+
+            return {
+                'success': True,
+                'test_dir': base_dir,
+                'result': result
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Cypress Setup] Error: {e}")
+            print(traceback.format_exc())
+            return {'error': str(e)}, 500
+
+
+@ns.route("/cypress/clear-db")
+class CypressClearDbResource(Resource):
+    def post(self):
+        """Clear all data from duplicate finder database (for testing only)"""
+        try:
+            # PHashCache will automatically use configured DB path from settings
+            cache = PHashCache()
+            conn = cache._get_connection()
+            cursor = conn.cursor()
+
+            # Clear all tables
+            cursor.execute("DELETE FROM phash_similarities")
+            cursor.execute("DELETE FROM whitelist")
+            cursor.execute("DELETE FROM image_hashes")
+            conn.commit()
+
+            print(f"[Cypress] Cleared all data from duplicate finder database: {cache.db_path}")
+
+            return {
+                "success": True,
+                "message": f"Database cleared: {cache.db_path}"
+            }
+        except Exception as e:
+            print(f"[Cypress] Error clearing database: {str(e)}")
+            return {"error": str(e)}, 500
+
+
+@ns.route("/cypress/duplicate-finder/cleanup")
+class CypressTestCleanupResource(Resource):
+    def post(self):
+        """
+        Cleanup test data
+
+        Request body:
+        {
+            "base_dir": "/path/to/test/dir"
+        }
+        """
+        data = request.json
+        base_dir = data.get('base_dir')
+
+        if not base_dir:
+            return {'error': 'base_dir required'}, 400
+
+        try:
+            TestDataSetup.cleanup_test_data(base_dir)
+            return {'success': True}
+        except Exception as e:
+            import traceback
+            print(f"[Cypress Cleanup] Error: {e}")
+            print(traceback.format_exc())
+            return {'error': str(e)}, 500
 
 

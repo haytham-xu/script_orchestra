@@ -13,9 +13,20 @@ from typing import List, Dict, Optional, Callable
 from multiprocessing import Pool, cpu_count, Manager
 
 try:
-    from .phash_cache import _compute_single_hash, CACHE_DB
+    from .phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay
 except ImportError:
-    from phash_cache import _compute_single_hash, CACHE_DB
+    from phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay
+
+# Global variables for performance settings (accessible by multiprocessing workers)
+_SCAN_DELAY = 0.0
+_COMPARE_DELAY = 0.0
+
+
+def set_performance_delays(scan_delay: float = 0.0, compare_delay: float = 0.0):
+    """Set global performance delays for multiprocessing workers"""
+    global _SCAN_DELAY, _COMPARE_DELAY
+    _SCAN_DELAY = scan_delay
+    _COMPARE_DELAY = compare_delay
 
 
 def _compute_similarities_batch(args):
@@ -24,15 +35,16 @@ def _compute_similarities_batch(args):
     This function is used by multiprocessing.
 
     Args:
-        args: tuple of (pending_batch, all_images, threshold_distance)
+        args: tuple of (pending_batch, all_images, threshold_distance, compare_delay)
 
     Returns:
         List of similarity tuples: (id_a, id_b, distance)
     """
     import os
+    import time
     import multiprocessing
 
-    pending_batch, all_images, threshold_distance = args
+    pending_batch, all_images, threshold_distance, compare_delay = args
     similarities = []
 
     pid = os.getpid()
@@ -45,6 +57,10 @@ def _compute_similarities_batch(args):
 
     processed = 0
     for pending_id, pending_phash in pending_batch:
+        # Apply compare delay once per pending image (not per comparison)
+        if compare_delay > 0:
+            time.sleep(compare_delay)
+
         matches = 0
         for other_id, other_phash in all_images:
             if pending_id == other_id:
@@ -66,6 +82,69 @@ def _compute_similarities_batch(args):
     return similarities
 
 
+# ========== Phase 2 Single Image Worker (New Architecture) ==========
+
+# Global variable to store all_images in each worker process
+_PHASE2_ALL_IMAGES = None
+
+
+def _phase2_worker_init(all_images):
+    """
+    Worker process initializer for Phase 2.
+    Called once per worker process at startup.
+    Stores all_images in global variable to avoid repeated transmission.
+
+    Args:
+        all_images: List of (id, phash) tuples for all images in database
+    """
+    global _PHASE2_ALL_IMAGES
+    _PHASE2_ALL_IMAGES = all_images
+
+    import os
+    import multiprocessing
+    pid = os.getpid()
+    worker_name = multiprocessing.current_process().name
+    print(f"[Worker {worker_name} PID={pid}] Phase 2 initialized with {len(all_images)} images in memory")
+
+
+def _compute_similarities_single(args):
+    """
+    Compute similarities for a SINGLE pending image vs all images.
+    Uses global _PHASE2_ALL_IMAGES initialized once per worker.
+
+    Args:
+        args: tuple of (img_id, img_phash, threshold_distance, compare_delay)
+
+    Returns:
+        Tuple of (img_id, similarities_list) where similarities_list contains (id_a, id_b, distance) tuples
+    """
+    global _PHASE2_ALL_IMAGES
+    img_id, img_phash, threshold_distance, compare_delay = args
+
+    def hamming_distance(hash1: str, hash2: str) -> int:
+        return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
+
+    similarities = []
+
+    # Apply compare delay once per image (before processing)
+    if compare_delay > 0:
+        import time
+        time.sleep(compare_delay)
+
+    # Compare with all images
+    for other_id, other_phash in _PHASE2_ALL_IMAGES:
+        if img_id == other_id:
+            continue
+
+        distance = hamming_distance(img_phash, other_phash)
+        if distance <= threshold_distance:
+            # Ensure id_a < id_b
+            id_a, id_b = (img_id, other_id) if img_id < other_id else (other_id, img_id)
+            similarities.append((id_a, id_b, distance))
+
+    return (img_id, similarities)
+
+
 class DuplicateFinderWorkflow:
     """
     New workflow manager for duplicate finder.
@@ -73,7 +152,12 @@ class DuplicateFinderWorkflow:
     """
 
     def __init__(self, db_path: str = None):
-        self.db_path = Path(db_path) if db_path else CACHE_DB
+        if db_path:
+            self.db_path = Path(db_path)
+        else:
+            self.db_path = get_default_cache_path()
+
+        print(f"[Workflow] Using database: {self.db_path}")
         self._conn = None
         # Use multiprocessing Manager for cross-process Event
         self._manager = Manager()
@@ -194,6 +278,33 @@ class DuplicateFinderWorkflow:
 
         print(f"[Phase 1] START: Refreshing image table for {len(file_paths)} files...")
 
+        # Load performance settings
+        try:
+            from .settings_manager import settings_manager
+            scan_delay = settings_manager.get_phase1_scan_delay()
+            compute_delay = settings_manager.get_phase1_compute_delay()
+            progress_interval = settings_manager.get_phase1_progress_update_interval()
+            ipc_chunk_size = settings_manager.get_phase1_ipc_chunk_size()
+            db_commit_batch_size = settings_manager.get_phase1_db_commit_batch_size()
+
+            set_performance_delays(scan_delay=scan_delay, compare_delay=0.0)
+            set_compute_delay(compute_delay)
+
+            if scan_delay > 0:
+                print(f"[Phase 1] Scan delay enabled: {scan_delay}s per file")
+            if compute_delay > 0:
+                print(f"[Phase 1] Compute delay enabled: {compute_delay}s per file")
+            print(f"[Phase 1] Progress update interval: every {progress_interval} files")
+            print(f"[Phase 1] IPC chunk size: {ipc_chunk_size}")
+            print(f"[Phase 1] DB commit batch size: {db_commit_batch_size}")
+        except Exception as e:
+            print(f"[Warning] Could not load performance settings: {e}")
+            set_performance_delays(0.0, 0.0)
+            set_compute_delay(0.0)
+            progress_interval = 100
+            ipc_chunk_size = 10
+            db_commit_batch_size = 100
+
         # Step 1: Remove missing files from DB
         print(f"[Phase 1] Step 1: Checking for missing files in DB...")
         if progress_callback:
@@ -230,11 +341,19 @@ class DuplicateFinderWorkflow:
 
         files_to_compute = []
         skipped_count = 0
+        checked_count = 0
+        total_files = len(file_paths)
+        scan_stopped = False
 
         for file_path in file_paths:
             if self._stop_event.is_set():
-                print("[Phase 1] Stop signal received")
-                raise InterruptedError("Phase 1 stopped by user")
+                print("[Phase 1] ⏸️ Stop signal received during scan")
+                scan_stopped = True
+                break  # Exit scan loop, return partial results
+
+            # Apply scan delay from settings (for CPU load reduction or testing)
+            if _SCAN_DELAY > 0:
+                time.sleep(_SCAN_DELAY)
 
             status = db_status.get(file_path)
             if status == 'computed':
@@ -244,7 +363,19 @@ class DuplicateFinderWorkflow:
                 files_to_compute.append(file_path)
             # status='pending' will also be computed
 
-        print(f"[Phase 1] Step 2 DONE: Skipped {skipped_count} computed files, need to compute {len(files_to_compute)} files")
+            checked_count += 1
+            # Send progress updates during file checking
+            if progress_callback and (checked_count % progress_interval == 0 or checked_count == total_files):
+                progress_callback(
+                    checked_count,
+                    total_files,
+                    f"Checking files... ({checked_count}/{total_files})"
+                )
+
+        if scan_stopped:
+            print(f"[Phase 1] ⏸️ Scan stopped: checked {checked_count}/{total_files} files, found {len(files_to_compute)} to compute")
+        else:
+            print(f"[Phase 1] Step 2 DONE: Skipped {skipped_count} computed files, need to compute {len(files_to_compute)} files")
 
         # Step 3: Compute phash for new/pending files
         added_count = 0
@@ -253,68 +384,138 @@ class DuplicateFinderWorkflow:
         if files_to_compute:
             from .settings_manager import settings_manager
             num_workers = settings_manager.get_max_cpu_cores()
-            BATCH_SIZE = 100
+            # Use the already loaded values from Phase 1 settings
+            # compute_delay, db_commit_batch_size, ipc_chunk_size are already loaded above
 
             print(f"[Phase 1] Step 3: Settings check - max_cpu_cores from settings: {settings_manager.get_settings().get('max_cpu_cores', 'NOT_SET')}")
-            print(f"[Phase 1] Step 3: Computing phash using {num_workers} workers (from get_max_cpu_cores()), batch size {BATCH_SIZE}...")
+            print(f"[Phase 1] Step 3: Computing phash using {num_workers} workers, db_commit_batch_size={db_commit_batch_size}, ipc_chunk_size={ipc_chunk_size}...")
 
+            # Use apply_async for true control over task submission
             with Pool(processes=num_workers) as pool:
                 batch_buffer = []
                 completed = 0
+                stop_requested = False
+                pending_results = []  # Store AsyncResult objects
+                submitted_count = 0
+                max_pending = num_workers * 2  # Allow 2x workers pending tasks
 
-                for result in pool.imap_unordered(_compute_single_hash, files_to_compute):
+                print(f"[Phase 1] Submitting tasks with max_pending={max_pending}")
+
+                # Submit initial batch of tasks
+                for idx in range(min(max_pending, len(files_to_compute))):
                     if self._stop_event.is_set():
-                        print("[Phase 1 Main] STOP detected! Terminating pool...")
-                        pool.terminate()
-                        pool.join()
-                        print("[Phase 1 Main] Pool terminated")
-                        raise InterruptedError("Phase 1 stopped during hash computation")
+                        print(f"[Phase 1 Submit] 🛑 STOP detected before submitting task {idx+1}")
+                        stop_requested = True
+                        break
+                    file_path = files_to_compute[idx]
+                    async_result = pool.apply_async(_compute_single_hash_with_delay, ((file_path, compute_delay),))
+                    pending_results.append((async_result, file_path))
+                    submitted_count += 1
+                    if submitted_count <= 20:
+                        print(f"[Phase 1 Submit] Submitted task {submitted_count}/{len(files_to_compute)}: {os.path.basename(file_path)}")
 
-                    filename = os.path.basename(result.get('file_path', 'unknown'))
+                # Process results and submit new tasks as slots become available
+                while pending_results:
+                    # Check stop event
+                    if self._stop_event.is_set() and not stop_requested:
+                        print("=" * 80)
+                        print(f"[Phase 1 Main] 🛑 STOP EVENT DETECTED!")
+                        print(f"[Phase 1 Main] Submitted: {submitted_count}/{len(files_to_compute)}, Completed: {completed}/{len(files_to_compute)}")
+                        print(f"[Phase 1 Main] Pending results: {len(pending_results)} tasks still in flight")
+                        print("[Phase 1 Main] ⏸️ Will not submit new tasks, waiting for in-flight tasks...")
+                        print("=" * 80)
+                        stop_requested = True
 
-                    if result.get('error'):
-                        error_files.append(result)
-                        print(f"[Phase 1 Main] Received ERROR for: {filename}")
-                    else:
-                        batch_buffer.append(result)
-                        print(f"[Phase 1 Main] Received SUCCESS for: {filename} (batch: {len(batch_buffer)}/{BATCH_SIZE})")
+                    # Poll for completed results (non-blocking)
+                    for async_result, file_path in pending_results[:]:
+                        if async_result.ready():
+                            # Get result
+                            try:
+                                result = async_result.get(timeout=0.1)
+                                filename = os.path.basename(result.get('file_path', 'unknown'))
 
-                        if len(batch_buffer) >= BATCH_SIZE:
-                            self._insert_images_batch(batch_buffer)
-                            added_count += len(batch_buffer)
-                            print(f"[Phase 1 Main] Inserted batch of {len(batch_buffer)} images: {added_count} total so far")
-                            batch_buffer = []
+                                if result.get('error'):
+                                    error_files.append(result)
+                                    print(f"[Phase 1 Main] Received ERROR for: {filename}")
+                                else:
+                                    batch_buffer.append(result)
+                                    if stop_requested:
+                                        print(f"[Phase 1 Main] (STOP mode) Received SUCCESS for: {filename}")
+                                    else:
+                                        print(f"[Phase 1 Main] Received SUCCESS for: {filename} (batch: {len(batch_buffer)}/{db_commit_batch_size})")
 
-                    completed += 1
-                    if completed % 10 == 0:  # Summary log every 10 files
-                        print(f"[Phase 1 Main] Progress Summary: {completed}/{len(files_to_compute)}, added={added_count}, errors={len(error_files)}, stop_event={self._stop_event.is_set()}")
-                    if progress_callback and completed % 10 == 0:  # More frequent updates
-                        progress_callback(completed, len(files_to_compute), f"Computing phash... ({completed}/{len(files_to_compute)})")
+                                    if len(batch_buffer) >= db_commit_batch_size:
+                                        self._insert_images_batch(batch_buffer)
+                                        added_count += len(batch_buffer)
+                                        batch_buffer = []
+
+                                completed += 1
+                                if completed % progress_interval == 0:
+                                    print(f"[Phase 1 Main] Progress: {completed}/{len(files_to_compute)}, stop_event={self._stop_event.is_set()}")
+                                if progress_callback and (completed % progress_interval == 0 or completed == len(files_to_compute)):
+                                    progress_callback(completed, len(files_to_compute), f"Computing phash... ({completed}/{len(files_to_compute)})")
+
+                            except Exception as e:
+                                print(f"[Phase 1 Main] Error getting result for {os.path.basename(file_path)}: {e}")
+
+                            # Remove from pending
+                            pending_results.remove((async_result, file_path))
+
+                            # Submit next task if not stopped and more tasks available
+                            if not stop_requested and submitted_count < len(files_to_compute):
+                                next_idx = submitted_count
+                                next_file = files_to_compute[next_idx]
+                                async_result = pool.apply_async(_compute_single_hash_with_delay, ((next_file, compute_delay),))
+                                pending_results.append((async_result, next_file))
+                                submitted_count += 1
+                                if submitted_count <= 20 or submitted_count % 100 == 0:
+                                    print(f"[Phase 1 Submit] Submitted task {submitted_count}/{len(files_to_compute)}: {os.path.basename(next_file)}")
+
+                            break  # Check next result
+
+                    # Small sleep to avoid busy loop
+                    if pending_results:
+                        time.sleep(0.01)
 
                 # Final batch
                 if batch_buffer:
                     self._insert_images_batch(batch_buffer)
                     added_count += len(batch_buffer)
+
+                if stop_requested:
+                    print(f"[Phase 1 Main] ⏸️ Stopped: Submitted {submitted_count}/{len(files_to_compute)}, Completed {completed}/{len(files_to_compute)}")
         else:
             # No files to compute, send completion progress
-            print(f"[Phase 1] No files to compute (all skipped)")
+            print(f"[Phase 1] No files to compute: skipped={skipped_count}, total={len(file_paths)}")
             if progress_callback:
-                progress_callback(len(file_paths), len(file_paths), "All files already computed")
+                progress_callback(len(file_paths), len(file_paths), f"All files already computed (skipped {skipped_count})")
+            stop_requested = False  # No multiprocessing, so no stop
+
+        # Combine scan_stopped and compute stop_requested
+        any_stopped = scan_stopped or stop_requested
 
         elapsed = time.time() - start_time
-        print(f"[Phase 1] ✅ Completed in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
 
-        # Send final 100% progress
+        if any_stopped:
+            print(f"[Phase 1] ⏸️ Stopped by user in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
+        else:
+            print(f"[Phase 1] ✅ Completed in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
+
+        # Send final progress
         if progress_callback:
             total = len(file_paths)
-            progress_callback(total, total, f"Complete: +{added_count}, -{removed_count}, skipped {skipped_count}")
+            if any_stopped:
+                progress_callback(completed if 'completed' in locals() else checked_count, len(files_to_compute) if files_to_compute else total, f"Stopped: +{added_count}, -{removed_count}, skipped {skipped_count}")
+            else:
+                progress_callback(total, total, f"Complete: +{added_count}, -{removed_count}, skipped {skipped_count}")
 
         return {
             'added': added_count,
             'removed': removed_count,
             'skipped': skipped_count,
             'errors': error_files,
-            'elapsed': elapsed
+            'elapsed': elapsed,
+            'stopped': any_stopped  # 合并两个停止标志
         }
 
     def _insert_images_batch(self, batch: List[Dict]):
@@ -370,6 +571,31 @@ class DuplicateFinderWorkflow:
 
         print(f"[Phase 2] START: Building similarities (threshold distance ≤ {threshold_distance})...")
 
+        # Load performance settings
+        try:
+            from .settings_manager import settings_manager
+            compare_delay = settings_manager.get_phase2_compare_delay()
+            db_commit_batch_size = settings_manager.get_phase2_db_commit_batch_size()
+            progress_interval = settings_manager.get_phase2_progress_update_interval()
+            ipc_chunk_size = settings_manager.get_phase2_ipc_chunk_size()
+            num_workers = settings_manager.get_max_cpu_cores()
+
+            set_performance_delays(scan_delay=0.0, compare_delay=compare_delay)
+
+            if compare_delay > 0:
+                print(f"[Phase 2] Compare delay enabled: {compare_delay}s per comparison")
+            print(f"[Phase 2] DB commit batch size: {db_commit_batch_size}")
+            print(f"[Phase 2] Progress update interval: every {progress_interval} images")
+            print(f"[Phase 2] IPC chunk size: {ipc_chunk_size}")
+        except Exception as e:
+            print(f"[Warning] Could not load performance settings: {e}")
+            set_performance_delays(0.0, 0.0)
+            compare_delay = 0.0
+            db_commit_batch_size = 100
+            progress_interval = 100
+            ipc_chunk_size = 10
+            num_workers = 1
+
         # Get pending images
         print(f"[Phase 2] Step 1: Getting pending images...")
         cursor.execute("SELECT id, phash FROM image_hashes WHERE status = 'pending'")
@@ -386,78 +612,127 @@ class DuplicateFinderWorkflow:
 
         print(f"[Phase 2] Step 2 DONE: Processing {len(pending_images)} pending images against {len(all_images)} total images")
 
-        # Multi-process distance computation
-        from .settings_manager import settings_manager
-        num_workers = settings_manager.get_max_cpu_cores()
-        # Fixed batch size: 100 pending images per batch
-        # This ensures we commit every 100 pending images (not by similarity count)
-        batch_size = 100
-
-        print(f"[Phase 2] Step 3: Settings check - max_cpu_cores from settings: {settings_manager.get_settings().get('max_cpu_cores', 'NOT_SET')}")
-        print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers, FIXED batch size {batch_size}, total {(len(pending_images) + batch_size - 1) // batch_size} batches")
-
-        # Split pending images into batches
-        batches = []
-        for i in range(0, len(pending_images), batch_size):
-            batch = pending_images[i:i + batch_size]
-            batches.append((batch, all_images, threshold_distance))
+        print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers, db_commit_batch_size={db_commit_batch_size}, ipc_chunk_size={ipc_chunk_size}")
+        print(f"[Phase 2] Using NEW architecture: Pool(initializer) - all_images transmitted only {num_workers} times (once per worker)")
 
         similarities_count = 0
         processed_count = 0
 
-        # Process batches in parallel
-        # Each batch is 100 pending images, commit after EACH batch completes
-        print(f"[Phase 2 Main] Starting to process {len(batches)} batches (each batch = 100 pending images, commit after each batch)...")
-        with Pool(processes=num_workers) as pool:
-            for batch_idx, batch_similarities in enumerate(pool.imap(_compute_similarities_batch, batches)):
+        # Use apply_async for true control over task submission
+        with Pool(processes=num_workers, initializer=_phase2_worker_init, initargs=(all_images,)) as pool:
+            stop_requested = False
+            pending_results = []  # Store (AsyncResult, img_id) tuples
+            submitted_count = 0
+            max_pending = num_workers * 2  # Allow 2x workers pending tasks
+
+            print(f"[Phase 2] Submitting tasks with max_pending={max_pending}")
+
+            # Submit initial batch of tasks
+            for idx in range(min(max_pending, len(pending_images))):
                 if self._stop_event.is_set():
-                    print("[Phase 2 Main] STOP detected! Terminating pool...")
-                    pool.terminate()
-                    pool.join()
-                    print("[Phase 2 Main] Pool terminated")
-                    raise InterruptedError("Phase 2 stopped by user")
+                    print(f"[Phase 2 Submit] 🛑 STOP detected before submitting task {idx+1}")
+                    stop_requested = True
+                    break
+                img = pending_images[idx]
+                task_args = (img[0], img[1], threshold_distance, compare_delay)
+                async_result = pool.apply_async(_compute_similarities_single, (task_args,))
+                pending_results.append((async_result, img[0]))
+                submitted_count += 1
+                if submitted_count <= 20:
+                    print(f"[Phase 2 Submit] Submitted task {submitted_count}/{len(pending_images)}: image_id={img[0]}")
 
-                # Get the pending images for this batch
-                batch_pending = batches[batch_idx][0]
-                batch_size_actual = len(batch_pending)
+            # Process results and submit new tasks as slots become available
+            while pending_results:
+                # Check stop event
+                if self._stop_event.is_set() and not stop_requested:
+                    print("=" * 80)
+                    print(f"[Phase 2 Main] 🛑 STOP EVENT DETECTED!")
+                    print(f"[Phase 2 Main] Submitted: {submitted_count}/{len(pending_images)}, Processed: {processed_count}/{len(pending_images)}")
+                    print(f"[Phase 2 Main] Pending results: {len(pending_results)} tasks still in flight")
+                    print("[Phase 2 Main] ⏸️ Will not submit new tasks, waiting for in-flight tasks...")
+                    print("=" * 80)
+                    stop_requested = True
 
-                # Insert all similarities from this batch
-                if batch_similarities:
-                    cursor.executemany('''
-                        INSERT OR REPLACE INTO phash_similarities
-                        (image_id_a, image_id_b, threshold, distance)
-                        VALUES (?, ?, 80, ?)
-                    ''', batch_similarities)
+                # Poll for completed results (non-blocking)
+                for async_result, img_id in pending_results[:]:
+                    if async_result.ready():
+                        # Get result
+                        try:
+                            result = async_result.get(timeout=0.1)
+                            # result is tuple: (img_id, similarities_list)
+                            result_img_id, similarities_list = result
+                            processed_count += 1
 
-                # Update status for all images in this batch
-                pending_ids = [(pid,) for pid, _ in batch_pending]
-                cursor.executemany("UPDATE image_hashes SET status = 'computed' WHERE id = ?", pending_ids)
+                            # ⚠️ CRITICAL: Commit similarities BEFORE updating status
+                            if similarities_list:
+                                cursor.executemany('''
+                                    INSERT OR REPLACE INTO phash_similarities
+                                    (image_id_a, image_id_b, threshold, distance)
+                                    VALUES (?, ?, 80, ?)
+                                ''', similarities_list)
+                                conn.commit()
+                                similarities_count += len(similarities_list)
+                                if stop_requested:
+                                    print(f"[Phase 2 Main] (STOP mode) Committed {len(similarities_list)} similarities for image {result_img_id}")
+                                else:
+                                    print(f"[Phase 2 Main] ✓ Committed {len(similarities_list)} similarities for image {result_img_id}")
 
-                # Commit after each batch (every ~100 pending images)
-                conn.commit()
-                processed_count += batch_size_actual
-                similarities_count += len(batch_similarities)
-                print(f"[Phase 2 Main] ✓ Committed batch {batch_idx+1}/{len(batches)}: {len(batch_similarities)} similarities + {batch_size_actual} status updates (total: {processed_count}/{len(pending_images)} images, {similarities_count} similarities)")
+                            # 2. NOW it's safe to update status to 'computed'
+                            cursor.execute("UPDATE image_hashes SET status = 'computed' WHERE id = ?", (result_img_id,))
+                            conn.commit()
 
-                # Progress update every 10 batches
-                if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == len(batches):
-                    if progress_callback:
-                        progress_callback(processed_count, len(pending_images), f"Building similarities... ({processed_count}/{len(pending_images)})")
+                            # Progress update
+                            if progress_callback and (processed_count % progress_interval == 0 or processed_count == len(pending_images)):
+                                progress_callback(processed_count, len(pending_images), f"Building similarities... ({processed_count}/{len(pending_images)})")
 
-                    print(f"[Phase 2 Main] Progress Summary: batch {batch_idx+1}/{len(batches)}, processed {processed_count}/{len(pending_images)} images, found {similarities_count} similarities, stop_event={self._stop_event.is_set()}")
+                            if processed_count % progress_interval == 0 or processed_count == len(pending_images):
+                                print(f"[Phase 2 Main] Progress: {processed_count}/{len(pending_images)}, stop_event={self._stop_event.is_set()}")
+
+                        except Exception as e:
+                            print(f"[Phase 2 Main] Error getting result for image {img_id}: {e}")
+
+                        # Remove from pending
+                        pending_results.remove((async_result, img_id))
+
+                        # Submit next task if not stopped and more tasks available
+                        if not stop_requested and submitted_count < len(pending_images):
+                            next_idx = submitted_count
+                            next_img = pending_images[next_idx]
+                            task_args = (next_img[0], next_img[1], threshold_distance, compare_delay)
+                            async_result = pool.apply_async(_compute_similarities_single, (task_args,))
+                            pending_results.append((async_result, next_img[0]))
+                            submitted_count += 1
+                            if submitted_count <= 20 or submitted_count % 100 == 0:
+                                print(f"[Phase 2 Submit] Submitted task {submitted_count}/{len(pending_images)}: image_id={next_img[0]}")
+
+                        break  # Check next result
+
+                # Small sleep to avoid busy loop
+                if pending_results:
+                    time.sleep(0.01)
+
+            if stop_requested:
+                print(f"[Phase 2 Main] ⏸️ Stopped: Submitted {submitted_count}/{len(pending_images)}, Processed {processed_count}/{len(pending_images)}")
 
         elapsed = time.time() - start_time
-        print(f"[Phase 2] ✅ Completed in {elapsed:.1f}s: processed {processed_count}, found {similarities_count} similarities")
 
-        # Send final 100% progress
+        if stop_requested:
+            print(f"[Phase 2] ⏸️ Stopped by user in {elapsed:.1f}s: processed {processed_count}/{len(pending_images)}, found {similarities_count} similarities")
+        else:
+            print(f"[Phase 2] ✅ Completed in {elapsed:.1f}s: processed {processed_count}, found {similarities_count} similarities")
+
+        # Send final progress
         if progress_callback:
-            total = len(pending_images)
-            progress_callback(total, total, f"Complete: processed {processed_count}, found {similarities_count} similarities")
+            if stop_requested:
+                progress_callback(processed_count, len(pending_images), f"Stopped: saved {processed_count}/{len(pending_images)} images")
+            else:
+                progress_callback(len(pending_images), len(pending_images), f"Complete: processed {processed_count}, found {similarities_count} similarities")
 
         return {
             'processed': processed_count,
             'similarities_found': similarities_count,
-            'elapsed': elapsed
+            'elapsed': elapsed,
+            'stopped': stop_requested  # 新增标志
         }
 
     def _hamming_distance(self, hash1: str, hash2: str) -> int:
@@ -523,50 +798,79 @@ class DuplicateFinderWorkflow:
         # Build graph and find connected components
         groups = self._build_groups(filtered_edges)
 
-        # Get full image info for each group
+        # Get full image info for each group - OPTIMIZED: bulk query instead of N individual queries
         result_groups = []
         total_groups = len(groups)
-        for group_idx, group_ids in enumerate(groups):
-            if self._stop_event.is_set():
-                raise InterruptedError("Phase 3 stopped by user")
 
-            group_images = []
-            for image_id in group_ids:
-                cursor.execute('''
-                    SELECT id, filename, filesize, file_path, phash, resolution
-                    FROM image_hashes WHERE id = ?
-                ''', (image_id,))
-                row = cursor.fetchone()
-                if row:
-                    group_images.append({
-                        'id': row[0],
-                        'filename': row[1],
-                        'filesize': row[2],
-                        'file_path': row[3],
-                        'phash': row[4],
-                        'resolution': row[5]
-                    })
+        # Collect all unique image IDs from all groups
+        all_duplicate_ids = list(set(img_id for group in groups for img_id in group))
 
-            if len(group_images) >= 2:
-                result_groups.append(group_images)
+        print(f"[Phase 3] Fetching details for {len(all_duplicate_ids)} unique duplicate images (from {total_groups} groups)...")
 
-            # Progress update every 10 groups
-            if progress_callback and (group_idx + 1) % 10 == 0:
-                progress_callback(group_idx + 1, total_groups, f"Loading groups... ({group_idx + 1}/{total_groups})")
+        if all_duplicate_ids:
+            # Bulk query: fetch all image details in ONE query
+            placeholders = ','.join('?' * len(all_duplicate_ids))
+            cursor.execute(f'''
+                SELECT id, filename, filesize, file_path, phash, resolution
+                FROM image_hashes
+                WHERE id IN ({placeholders})
+            ''', all_duplicate_ids)
+
+            # Build lookup dictionary
+            all_images_dict = {}
+            for row in cursor.fetchall():
+                all_images_dict[row[0]] = {
+                    'id': row[0],
+                    'filename': row[1],
+                    'filesize': row[2],
+                    'file_path': row[3],
+                    'phash': row[4],
+                    'resolution': row[5]
+                }
+
+            print(f"[Phase 3] Fetched {len(all_images_dict)} image details, now assembling groups...")
+
+            # Assemble groups from lookup dictionary (fast, in-memory operation)
+            stop_requested = False
+            for group_idx, group_ids in enumerate(groups):
+                if self._stop_event.is_set():
+                    print(f"[Phase 3] ⏸️ Stop requested, returning partial results...")
+                    stop_requested = True
+                    break  # Exit early, return partial results
+
+                group_images = [all_images_dict[img_id] for img_id in group_ids if img_id in all_images_dict]
+
+                if len(group_images) >= 2:
+                    result_groups.append(group_images)
+
+                    # Progress update every 10 groups
+                if progress_callback and (group_idx + 1) % 10 == 0:
+                    progress_callback(group_idx + 1, total_groups, f"Loading groups... ({group_idx + 1}/{total_groups})")
+        else:
+            print(f"[Phase 3] No duplicate images to fetch")
+            stop_requested = False
 
         elapsed = time.time() - start_time
         total_duplicates = sum(len(g) for g in result_groups)
-        print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {len(result_groups)} groups, {total_duplicates} total duplicates")
 
-        # Send final 100% progress
-        if progress_callback and total_groups > 0:
-            progress_callback(total_groups, total_groups, f"Complete: {len(result_groups)} groups, {total_duplicates} duplicates")
+        if stop_requested:
+            print(f"[Phase 3] ⏸️ Stopped by user in {elapsed:.1f}s: {len(result_groups)}/{total_groups} groups loaded, {total_duplicates} duplicates")
+        else:
+            print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {len(result_groups)} groups, {total_duplicates} total duplicates")
+
+        # Send final progress
+        if progress_callback:
+            if stop_requested:
+                progress_callback(len(result_groups), total_groups, f"Stopped: {len(result_groups)}/{total_groups} groups")
+            elif total_groups > 0:
+                progress_callback(total_groups, total_groups, f"Complete: {len(result_groups)} groups, {total_duplicates} duplicates")
 
         return {
             'groups': result_groups,
             'total_groups': len(result_groups),
             'total_duplicates': total_duplicates,
-            'elapsed': elapsed
+            'elapsed': elapsed,
+            'stopped': stop_requested  # 新增标志
         }
 
     def _build_groups(self, edges: List[tuple]) -> List[List[int]]:

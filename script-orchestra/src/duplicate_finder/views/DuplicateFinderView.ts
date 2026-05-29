@@ -14,6 +14,7 @@ export function useDuplicateFinderView() {
   const threshold = ref(90)
   const isScanning = ref(false)
   const isSaving = ref(false)
+  const isDeleting = ref(false)
   const deepPathDelete = ref<string>('')
   const currentScanId = ref<string | null>(null)
   const scanProgress = ref({
@@ -34,6 +35,29 @@ export function useDuplicateFinderView() {
       auto_mark_numbered_copies: true,
       auto_mark_copy_suffix: true,
       prefer_folders: []
+    },
+    phase1: {
+      worker_handler_size: 1,
+      db_commit_batch_size: 100,
+      progress_update_interval: 100,
+      ipc_chunk_size: 10,
+      scan_delay: 0.0,
+      compute_delay: 0.0
+    },
+    phase2: {
+      worker_handler_size: 1,
+      db_commit_batch_size: 100,
+      progress_update_interval: 100,
+      ipc_chunk_size: 10,
+      compare_delay: 0.0
+    },
+    // Keep old performance for backward compatibility
+    performance: {
+      scan_delay: 0.0,
+      compute_delay: 0.0,
+      compare_delay: 0.0,
+      chunk_size: 100,
+      progress_update_interval: 100
     }
   })
   const showWhitelistDrawer = ref(false)
@@ -52,8 +76,24 @@ export function useDuplicateFinderView() {
   const phaseProgress = ref({
     phase: 0,
     message: '',
-    details: ''
+    details: '',
+    current: 0,
+    total: 0,
+    percentage: 0
   })
+
+  const phase1Summary = ref<{
+    added: number
+    removed: number
+    skipped: number
+    elapsed: string
+  } | null>(null)
+
+  const phase2Summary = ref<{
+    processed: number
+    similarities_found: number
+    elapsed: string
+  } | null>(null)
 
   let socket: Socket | null = null
 
@@ -170,8 +210,15 @@ export function useDuplicateFinderView() {
    * Start scan
    */
   async function startScan() {
-    if (selectedFolders.value.length === 0) {
-      ElMessage.warning('Please select at least one folder')
+    if (!settings.value.folder_paths || settings.value.folder_paths.length === 0) {
+      ElMessage.warning('Please add at least one folder in Settings')
+      return
+    }
+
+    // Filter out empty paths before sending to API
+    const validPaths = settings.value.folder_paths.filter(path => path && path.trim() !== '')
+    if (validPaths.length === 0) {
+      ElMessage.warning('Please add at least one valid folder path in Settings')
       return
     }
 
@@ -252,10 +299,10 @@ export function useDuplicateFinderView() {
       isScanning.value = false
     })
 
-    // Start scan - HTTP API returns the full result
+    // Start scan - HTTP API returns the full result - use filtered valid paths
     try {
       const result = await DuplicateFinderService.scan({
-        paths: selectedFolders.value,
+        paths: validPaths,
         threshold: threshold.value,
         scan_id: currentScanId.value
       })
@@ -358,8 +405,15 @@ export function useDuplicateFinderView() {
    * Phase 1: Refresh images - scan filesystem, sync DB, compute phash
    */
   async function runPhase1() {
-    if (selectedFolders.value.length === 0) {
-      ElMessage.warning('Please select at least one folder')
+    if (!settings.value.folder_paths || settings.value.folder_paths.length === 0) {
+      ElMessage.warning('Please add at least one folder in Settings')
+      return
+    }
+
+    // Filter out empty paths before sending to API
+    const validPaths = settings.value.folder_paths.filter(path => path && path.trim() !== '')
+    if (validPaths.length === 0) {
+      ElMessage.warning('Please add at least one valid folder path in Settings')
       return
     }
 
@@ -405,9 +459,9 @@ export function useDuplicateFinderView() {
         }
       })
 
-      // Now call API with the scan_id
+      // Now call API with the scan_id - use filtered valid paths
       console.log('[Phase 1] Calling API with scan_id:', scanId)
-      const result = await DuplicateFinderService.phase1Refresh(selectedFolders.value, scanId)
+      const result = await DuplicateFinderService.phase1Refresh(validPaths, scanId)
 
       // Update to 100% complete
       phaseProgress.value = {
@@ -417,6 +471,14 @@ export function useDuplicateFinderView() {
         current: 100,
         total: 100,
         percentage: 100
+      }
+
+      // Set Phase 1 Summary
+      phase1Summary.value = {
+        added: result.added,
+        removed: result.removed,
+        skipped: result.skipped,
+        elapsed: result.elapsed.toFixed(1)
       }
 
       ElMessage.success(`Phase 1 complete: +${result.added}, -${result.removed}, skipped ${result.skipped} (${result.elapsed.toFixed(1)}s)`)
@@ -431,10 +493,16 @@ export function useDuplicateFinderView() {
         }
       }, 2000)
     } catch (error: any) {
-      console.error('[Duplicate Finder] Phase 1 failed:', error)
-      if (error.message && error.message.includes('stopped')) {
+      // Check if error is due to stop (499 = Client Closed Request, or ERR_BAD_REQUEST, or contains 'stopped')
+      const isStopped = error.status === 499 ||
+                        error.code === 'ERR_BAD_REQUEST' ||
+                        (error.message && error.message.includes('stopped'))
+
+      if (isStopped) {
+        console.log('[Duplicate Finder] Phase 1 stopped by user')
         ElMessage.warning('Phase 1 stopped by user')
       } else {
+        console.error('[Duplicate Finder] Phase 1 failed:', error)
         ElMessage.error(error.message || 'Phase 1 failed')
       }
     } finally {
@@ -447,10 +515,13 @@ export function useDuplicateFinderView() {
    */
   async function stopPhase1() {
     try {
-      await DuplicateFinderService.phase1Stop()
+      console.log('[Frontend] 🛑 User clicked STOP for Phase 1')
+      console.log('[Frontend] Calling API: /duplicate-finder/phase1/stop')
+      const response = await DuplicateFinderService.phase1Stop()
+      console.log('[Frontend] ✅ Phase 1 stop API response:', response)
       ElMessage.info('Phase 1 stop signal sent')
     } catch (error: any) {
-      console.error('[Duplicate Finder] Stop Phase 1 failed:', error)
+      console.error('[Frontend] ❌ Stop Phase 1 failed:', error)
       ElMessage.error(error.message || 'Failed to stop Phase 1')
     }
   }
@@ -473,31 +544,38 @@ export function useDuplicateFinderView() {
       // Ensure WebSocket is connected
       if (!socket || !socket.connected) {
         connectWebSocket()
+        // Wait a bit for connection
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
+
+      // Generate scan_id and register listener BEFORE calling API
+      const scanId = `phase2-${Date.now()}-${Math.random().toString(36).substring(7)}`
+      const startTime = Date.now()
+
+      console.log('[Phase 2] Registering WebSocket listener for:', `scan:${scanId}:progress`)
+
+      socket?.on(`scan:${scanId}:progress`, (data: any) => {
+        console.log('[Phase 2] Progress update:', data)
+        const elapsed = (Date.now() - startTime) / 1000
+        const rate = data.current > 0 ? data.current / elapsed : 0
+        const remaining = rate > 0 ? (data.total - data.current) / rate : 0
+
+        phaseProgress.value = {
+          phase: 2,
+          message: data.message || 'Phase 2: Building similarities...',
+          details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
+          current: data.current,
+          total: data.total,
+          percentage: data.percentage
+        }
+      })
 
       // Convert threshold percentage to distance (80% = 12, 90% = 6)
       const thresholdDistance = Math.round(64 * (100 - threshold.value) / 100)
 
-      const result = await DuplicateFinderService.phase2Build(thresholdDistance)
-
-      // Listen for progress updates
-      if (result.scan_id) {
-        const startTime = Date.now()
-        socket?.on(`scan:${result.scan_id}:progress`, (data: any) => {
-          const elapsed = (Date.now() - startTime) / 1000
-          const rate = data.current > 0 ? data.current / elapsed : 0
-          const remaining = rate > 0 ? (data.total - data.current) / rate : 0
-
-          phaseProgress.value = {
-            phase: 2,
-            message: data.message || 'Phase 2: Building similarities...',
-            details: `${data.current}/${data.total} - ETA: ${remaining > 0 ? Math.ceil(remaining) + 's' : 'N/A'}`,
-            current: data.current,
-            total: data.total,
-            percentage: data.percentage
-          }
-        })
-      }
+      // Now call API with the scan_id
+      console.log('[Phase 2] Calling API with scan_id:', scanId)
+      const result = await DuplicateFinderService.phase2Build(thresholdDistance, scanId)
 
       // Update to 100% complete
       phaseProgress.value = {
@@ -509,12 +587,17 @@ export function useDuplicateFinderView() {
         percentage: 100
       }
 
+      // Set Phase 2 Summary
+      phase2Summary.value = {
+        processed: result.processed,
+        similarities_found: result.similarities_found,
+        elapsed: result.elapsed.toFixed(1)
+      }
+
       ElMessage.success(`Phase 2 complete: Processed ${result.processed} images, found ${result.similarities_found} similarities (${result.elapsed.toFixed(1)}s)`)
 
       // Clean up listener
-      if (result.scan_id) {
-        socket?.off(`scan:${result.scan_id}:progress`)
-      }
+      socket?.off(`scan:${scanId}:progress`)
 
       // Clear progress after 2 seconds
       setTimeout(() => {
@@ -523,10 +606,16 @@ export function useDuplicateFinderView() {
         }
       }, 2000)
     } catch (error: any) {
-      console.error('[Duplicate Finder] Phase 2 failed:', error)
-      if (error.message && error.message.includes('stopped')) {
+      // Check if error is due to stop (499 = Client Closed Request, or ERR_BAD_REQUEST, or contains 'stopped')
+      const isStopped = error.status === 499 ||
+                        error.code === 'ERR_BAD_REQUEST' ||
+                        (error.message && error.message.includes('stopped'))
+
+      if (isStopped) {
+        console.log('[Duplicate Finder] Phase 2 stopped by user')
         ElMessage.warning('Phase 2 stopped by user')
       } else {
+        console.error('[Duplicate Finder] Phase 2 failed:', error)
         ElMessage.error(error.message || 'Phase 2 failed')
       }
     } finally {
@@ -539,10 +628,13 @@ export function useDuplicateFinderView() {
    */
   async function stopPhase2() {
     try {
-      await DuplicateFinderService.phase2Stop()
+      console.log('[Frontend] 🛑 User clicked STOP for Phase 2')
+      console.log('[Frontend] Calling API: /duplicate-finder/phase2/stop')
+      const response = await DuplicateFinderService.phase2Stop()
+      console.log('[Frontend] ✅ Phase 2 stop API response:', response)
       ElMessage.info('Phase 2 stop signal sent')
     } catch (error: any) {
-      console.error('[Duplicate Finder] Stop Phase 2 failed:', error)
+      console.error('[Frontend] ❌ Stop Phase 2 failed:', error)
       ElMessage.error(error.message || 'Failed to stop Phase 2')
     }
   }
@@ -633,10 +725,16 @@ export function useDuplicateFinderView() {
         }
       }, 2000)
     } catch (error: any) {
-      console.error('[Duplicate Finder] Phase 3 failed:', error)
-      if (error.message && error.message.includes('stopped')) {
+      // Check if error is due to stop (499 = Client Closed Request, or ERR_BAD_REQUEST, or contains 'stopped')
+      const isStopped = error.status === 499 ||
+                        error.code === 'ERR_BAD_REQUEST' ||
+                        (error.message && error.message.includes('stopped'))
+
+      if (isStopped) {
+        console.log('[Duplicate Finder] Phase 3 stopped by user')
         ElMessage.warning('Phase 3 stopped by user')
       } else {
+        console.error('[Duplicate Finder] Phase 3 failed:', error)
         ElMessage.error(error.message || 'Phase 3 failed')
       }
     } finally {
@@ -851,10 +949,51 @@ export function useDuplicateFinderView() {
         }
       }
 
-      // Auto-select all folders on load
-      if (result.folder_paths && result.folder_paths.length > 0) {
-        selectedFolders.value = [...result.folder_paths]
+      // Initialize performance settings if not present (backward compatibility)
+      if (!settings.value.performance) {
+        settings.value.performance = {
+          scan_delay: 0.0,
+          compute_delay: 0.0,
+          compare_delay: 0.0,
+          chunk_size: 100,
+          progress_update_interval: 100
+        }
+      } else {
+        // Ensure all performance settings exist
+        if (!settings.value.performance.compute_delay) {
+          settings.value.performance.compute_delay = 0.0
+        }
+        if (!settings.value.performance.progress_update_interval) {
+          settings.value.performance.progress_update_interval = 100
+        }
       }
+
+      // Initialize phase1/phase2 settings from old performance if needed (backward compatibility)
+      if (!settings.value.phase1 && settings.value.performance) {
+        settings.value.phase1 = {
+          worker_handler_size: 1,
+          db_commit_batch_size: settings.value.performance.chunk_size || 100,
+          progress_update_interval: settings.value.performance.progress_update_interval || 100,
+          ipc_chunk_size: 10,
+          scan_delay: settings.value.performance.scan_delay || 0.0,
+          compute_delay: settings.value.performance.compute_delay || 0.0
+        }
+      }
+
+      if (!settings.value.phase2 && settings.value.performance) {
+        settings.value.phase2 = {
+          worker_handler_size: 1,
+          db_commit_batch_size: settings.value.performance.chunk_size || 100,
+          progress_update_interval: settings.value.performance.progress_update_interval || 100,
+          ipc_chunk_size: 10,
+          compare_delay: settings.value.performance.compare_delay || 0.0
+        }
+      }
+
+      // Auto-select all folders on load - no longer needed, all folders are scanned automatically
+      // if (result.folder_paths && result.folder_paths.length > 0) {
+      //   selectedFolders.value = [...result.folder_paths]
+      // }
     } catch (error: any) {
       console.error('[Duplicate Finder] Failed to load settings:', error)
     }
@@ -874,6 +1013,46 @@ export function useDuplicateFinderView() {
 
       // Reload settings to update UI
       await loadSettings()
+
+      // Auto-close drawer after successful save
+      showWhitelistDrawer.value = false
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to save settings:', error)
+      ElMessage.error(error.message || 'Failed to save settings')
+    } finally {
+      isSaving.value = false
+    }
+  }
+
+  /**
+   * Save all settings (unified save function for drawer)
+   */
+  async function saveAllSettings() {
+    isSaving.value = true
+    try {
+      // Validate folder paths - must not be empty
+      if (settings.value.folder_paths && settings.value.folder_paths.length > 0) {
+        const emptyPaths = settings.value.folder_paths.filter(path => !path || path.trim() === '')
+        if (emptyPaths.length > 0) {
+          ElMessage.error('Folder Path cannot be empty. Please fill in all folder paths or remove empty ones.')
+          isSaving.value = false
+          return
+        }
+      }
+
+      // Save all settings including folders, advanced settings, and auto-selection rules
+      await DuplicateFinderService.updateSettings({
+        ...settings.value,
+        similarity_threshold: threshold.value
+      })
+
+      // Update local threshold
+      settings.value.similarity_threshold = threshold.value
+
+      ElMessage.success('All settings saved successfully')
+
+      // Auto-close drawer after successful save
+      showWhitelistDrawer.value = false
     } catch (error: any) {
       console.error('[Duplicate Finder] Failed to save settings:', error)
       ElMessage.error(error.message || 'Failed to save settings')
@@ -974,6 +1153,49 @@ export function useDuplicateFinderView() {
   function removePreferFolder(index: number) {
     if (settings.value.auto_selection_rules?.prefer_folders) {
       settings.value.auto_selection_rules.prefer_folders.splice(index, 1)
+    }
+  }
+
+  /**
+   * Execute deep path delete
+   */
+  async function executeDeepPathDelete() {
+    if (!deepPathDelete.value || deepPathDelete.value.trim() === '') {
+      ElMessage.warning('Please enter a deep path to delete')
+      return
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        `This will delete all files in duplicate groups under "${deepPathDelete.value}" while preserving folder structure. This action cannot be undone. Continue?`,
+        'Confirm Deep Path Delete',
+        {
+          confirmButtonText: 'Execute',
+          cancelButtonText: 'Cancel',
+          type: 'warning'
+        }
+      )
+
+      isDeleting.value = true
+
+      // TODO: Implement deep path delete functionality
+      // This requires gathering all files under the specified path from duplicate groups
+      // and calling DuplicateFinderService.deleteFiles with deepPathDelete parameter
+      ElMessage.info('Deep path delete functionality will be implemented')
+
+      // Example implementation:
+      // const filesToDelete = gatherFilesUnderPath(deepPathDelete.value)
+      // await DuplicateFinderService.deleteFiles(filesToDelete, deepPathDelete.value)
+
+      // Refresh results after deletion
+      // await loadSettings()
+    } catch (error: any) {
+      if (error !== 'cancel') {
+        console.error('[Duplicate Finder] Failed to execute deep path delete:', error)
+        ElMessage.error(error.message || 'Failed to execute deep path delete')
+      }
+    } finally {
+      isDeleting.value = false
     }
   }
 
@@ -1191,6 +1413,7 @@ export function useDuplicateFinderView() {
     currentScanId,
     isScanning,
     isSaving,
+    isDeleting,
     isCleaning,
     isVerifying,
     scanProgress,
@@ -1210,6 +1433,8 @@ export function useDuplicateFinderView() {
     isPhase2Running,
     isPhase3Running,
     phaseProgress,
+    phase1Summary,
+    phase2Summary,
     // Methods
     startScan,
     stopScan,
@@ -1234,10 +1459,12 @@ export function useDuplicateFinderView() {
     handlePageSizeChange,
     saveFolderSettings,
     saveAdvancedSettings,
+    saveAllSettings,
     addFolderPath,
     removeFolderPath,
     addExcludeFolderPath,
     removeExcludeFolderPath,
+    executeDeepPathDelete,
     addGroupToWhitelist,
     loadWhitelist,
     removeFromWhitelist,
