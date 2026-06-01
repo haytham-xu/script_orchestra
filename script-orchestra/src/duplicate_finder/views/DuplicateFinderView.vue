@@ -262,8 +262,8 @@
                   <div v-if="imageIndex === 0" class="highest-badge">🏆 HIGHEST RESOLUTION</div>
                 </div>
                 <div class="image-info">
-                  <p class="image-filename" :title="image.filename || image.file_path.split('/').pop()">
-                    {{ image.filename || image.file_path.split('/').pop() }}
+                  <p class="image-filename" :title="image.filename || getFilenameFromPath(image.file_path)">
+                    {{ image.filename || getFilenameFromPath(image.file_path) }}
                   </p>
                   <p class="image-path" :title="image.display_path || image.file_path">
                     {{ image.display_path || getRelativePath(image.file_path) }}
@@ -840,6 +840,9 @@ const {
   showDeepDeleteDialog,
   deepDeletePreview,
   deepDeleteFileListRelative,
+  // Helper functions
+  getFilenameFromPath,
+  splitPath,
   // Methods
   startScan,
   stopScan,

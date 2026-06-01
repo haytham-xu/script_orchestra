@@ -77,6 +77,22 @@ export function useDuplicateFinderView() {
   const isLoadingWhitelist = ref(false)
   const isCleaning = ref(false)
 
+  /**
+   * Helper: Get filename from path (cross-platform)
+   */
+  function getFilenameFromPath(filePath: string): string {
+    const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+    return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath
+  }
+
+  /**
+   * Helper: Split path into parts (cross-platform)
+   */
+  function splitPath(filePath: string): string[] {
+    // Normalize path separators to forward slash, then split
+    return filePath.replace(/\\/g, '/').split('/')
+  }
+
   // Pagination for duplicate groups
   const currentPage = ref(1)
   const pageSize = ref(20)
@@ -150,7 +166,7 @@ export function useDuplicateFinderView() {
 
       // Extract filenames without extensions for comparison
       const getBaseName = (filePath: string) => {
-        const fileName = filePath.split('/').pop() || ''
+        const fileName = getFilenameFromPath(filePath)
         return fileName.replace(/\.[^/.]+$/, '') // Remove extension
       }
 
@@ -977,7 +993,7 @@ export function useDuplicateFinderView() {
   function getRelativePath(filePath: string): string {
     if (!settings.value || !settings.value.folder_paths) {
       // Fallback: show last 2-3 parts of the path
-      const parts = filePath.split('/')
+      const parts = splitPath(filePath)
       if (parts.length >= 2) {
         return '.../' + parts.slice(-3).join('/')
       }
@@ -989,7 +1005,10 @@ export function useDuplicateFinderView() {
     const folderPaths = settings.value.folder_paths
 
     for (const folder of folderPaths) {
-      if (filePath.startsWith(folder + '/') || filePath === folder) {
+      // Handle both / and \ for matching
+      const normalizedPath = filePath.replace(/\\/g, '/')
+      const normalizedFolder = folder.replace(/\\/g, '/')
+      if (normalizedPath.startsWith(normalizedFolder + '/') || normalizedPath === normalizedFolder) {
         scanFolder = folder
         break
       }
@@ -997,8 +1016,10 @@ export function useDuplicateFinderView() {
 
     if (scanFolder) {
       // Calculate relative path from scan folder
-      if (filePath.startsWith(scanFolder + '/')) {
-        const relativePath = filePath.substring(scanFolder.length + 1)
+      const normalizedPath = filePath.replace(/\\/g, '/')
+      const normalizedFolder = scanFolder.replace(/\\/g, '/')
+      if (normalizedPath.startsWith(normalizedFolder + '/')) {
+        const relativePath = normalizedPath.substring(normalizedFolder.length + 1)
         // Remove filename, keep only directory path
         const lastSlash = relativePath.lastIndexOf('/')
         if (lastSlash > 0) {
@@ -1009,7 +1030,7 @@ export function useDuplicateFinderView() {
     }
 
     // Fallback: show last 2-3 parts of the path
-    const parts = filePath.split('/')
+    const parts = splitPath(filePath)
     if (parts.length >= 2) {
       return '.../' + parts.slice(-3).join('/')
     }
@@ -1369,7 +1390,13 @@ export function useDuplicateFinderView() {
     if (group.length === 0) return
 
     const firstImage = group[0]
-    const filename = firstImage.filename || firstImage.file_path.split('/').pop() || ''
+    // Handle both Unix (/) and Windows (\) path separators
+    let filename = firstImage.filename
+    if (!filename && firstImage.file_path) {
+      const lastSlash = Math.max(firstImage.file_path.lastIndexOf('/'), firstImage.file_path.lastIndexOf('\\'))
+      filename = lastSlash >= 0 ? firstImage.file_path.substring(lastSlash + 1) : firstImage.file_path
+    }
+    filename = filename || ''
     const filesize = firstImage.filesize
 
     try {
@@ -1605,6 +1632,9 @@ export function useDuplicateFinderView() {
     showDeepDeleteDialog,
     deepDeletePreview,
     deepDeleteFileListRelative,
+    // Helper functions
+    getFilenameFromPath,
+    splitPath,
     // Methods
     startScan,
     stopScan,
