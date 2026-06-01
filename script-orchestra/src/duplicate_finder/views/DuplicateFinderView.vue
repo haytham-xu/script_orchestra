@@ -204,9 +204,10 @@
         <el-pagination
           v-model:current-page="currentPage"
           :page-size="pageSize"
-          :total="scanResult.duplicate_groups.length"
+          :total="totalGroupsAll"
           layout="total, prev, pager, next, jumper, sizes"
           :page-sizes="[10, 20, 50, 100]"
+          @current-change="handlePageChange"
           @size-change="handlePageSizeChange"
         />
       </div>
@@ -314,14 +315,7 @@
               <div class="folder-inputs-drawer">
                 <el-input
                   v-model="settings.folder_paths[index]"
-                  placeholder="Folder Path (Required)"
-                  size="small"
-                  style="margin-bottom: 4px;"
-                  required
-                />
-                <el-input
-                  v-model="settings.folder_root_paths[path]"
-                  placeholder="Root Path (Optional)"
+                  placeholder="Folder Path"
                   size="small"
                 />
               </div>
@@ -738,6 +732,71 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- Deep Path Delete Confirmation Dialog -->
+    <el-dialog
+      v-model="showDeepDeleteDialog"
+      title="Confirm Global Deep Path Delete"
+      width="700px"
+      :close-on-click-modal="false"
+    >
+      <div class="deep-delete-dialog">
+        <el-alert
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 16px;"
+        >
+          <template #title>
+            <div style="font-size: 14px; font-weight: 600;">
+              ⚠️ This action cannot be undone
+            </div>
+          </template>
+          <div style="font-size: 13px; margin-top: 8px;">
+            Files will be moved to the delete target folder while preserving their relative structure.
+          </div>
+        </el-alert>
+
+        <div class="deep-delete-info">
+          <div class="info-label">Found Files:</div>
+          <div class="info-value">{{ deepDeletePreview.matchedCount }} duplicate files</div>
+        </div>
+
+        <div class="deep-delete-info">
+          <div class="info-label">Under Path:</div>
+          <div class="info-value path-value">{{ deepDeletePreview.deepPath }}</div>
+        </div>
+
+        <div class="file-list-section">
+          <div class="file-list-header">
+            <span>File List:</span>
+            <span class="file-count">({{ deepDeleteFileListRelative.length }} files)</span>
+          </div>
+          <div class="file-list-container">
+            <div
+              v-for="(file, index) in deepDeleteFileListRelative"
+              :key="index"
+              class="file-list-item"
+            >
+              <span class="file-icon">📄</span>
+              <span class="file-path">{{ file }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="cancelDeepDelete">Cancel</el-button>
+          <el-button
+            type="danger"
+            @click="confirmDeepDelete"
+            :loading="isDeleting"
+          >
+            Delete {{ deepDeletePreview.matchedCount }} Files
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -766,6 +825,9 @@ const {
   // Pagination
   currentPage,
   pageSize,
+  totalPages,
+  totalGroupsAll,
+  isLoadingPage,
   paginatedGroups,
   // 3-Phase workflow states
   isPhase1Running,
@@ -774,6 +836,10 @@ const {
   phaseProgress,
   phase1Summary,
   phase2Summary,
+  // Deep delete dialog
+  showDeepDeleteDialog,
+  deepDeletePreview,
+  deepDeleteFileListRelative,
   // Methods
   startScan,
   stopScan,
@@ -795,6 +861,7 @@ const {
   formatFileSize,
   getCpuMarks,
   getActualGroupIndex,
+  handlePageChange,
   handlePageSizeChange,
   saveFolderSettings,
   saveAdvancedSettings,
@@ -804,6 +871,8 @@ const {
   addExcludeFolderPath,
   removeExcludeFolderPath,
   executeDeepPathDelete,
+  confirmDeepDelete,
+  cancelDeepDelete,
   addGroupToWhitelist,
   loadWhitelist,
   removeFromWhitelist,
@@ -1617,5 +1686,106 @@ const {
   font-size: 13px;
   color: #606266;
   font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+}
+
+/* Deep Delete Dialog */
+.deep-delete-dialog {
+  padding: 0;
+}
+
+.deep-delete-info {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.info-label {
+  font-weight: 600;
+  color: #606266;
+  min-width: 120px;
+  font-size: 14px;
+}
+
+.info-value {
+  flex: 1;
+  color: #303133;
+  font-size: 14px;
+}
+
+.path-value {
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 12px;
+  word-break: break-all;
+  background: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #dcdfe6;
+}
+
+.file-list-section {
+  margin-top: 20px;
+}
+
+.file-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: #303133;
+  font-size: 14px;
+}
+
+.file-count {
+  color: #909399;
+  font-weight: normal;
+  font-size: 13px;
+}
+
+.file-list-container {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.file-list-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+.file-list-item:last-child {
+  border-bottom: none;
+}
+
+.file-list-item:hover {
+  background: #f5f7fa;
+}
+
+.file-icon {
+  margin-right: 8px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.file-path {
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 12px;
+  color: #606266;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 </style>

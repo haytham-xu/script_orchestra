@@ -66,6 +66,27 @@ export class DuplicateFinderService {
   }
 
   /**
+   * Batch delete files by path (preview or execute)
+   * This scans ALL duplicate groups for files under the specified path
+   */
+  static async batchDeleteByPath(
+    deepPath: string,
+    previewOnly: boolean = true
+  ): Promise<{
+    matched_files?: number
+    file_list?: string[]
+    deleted?: number
+    failed?: number
+    preview: boolean
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/batch-delete-by-path`, {}, {
+      deep_path: deepPath,
+      preview_only: previewOnly
+    })
+    return response
+  }
+
+  /**
    * Get settings
    */
   static async getSettings(): Promise<Settings> {
@@ -215,8 +236,25 @@ export class DuplicateFinderService {
   /**
    * Phase 3: Get duplicates from similarities
    */
-  static async phase3GetDuplicates(thresholdPercent: number = 90): Promise<{ groups: ImageInfo[][]; total_groups: number; total_duplicates: number; elapsed: number }> {
-    const response = await postRequest(`${this.BASE_URL}/phase3/get-duplicates`, {}, { threshold_percent: thresholdPercent })
+  static async phase3GetDuplicates(
+    thresholdPercent: number = 90,
+    page: number = 1,
+    pageSize: number = 20
+  ): Promise<{
+    groups: ImageInfo[][]
+    total_groups: number
+    total_duplicates: number
+    current_page: number
+    page_size: number
+    total_pages: number
+    elapsed: number
+    scan_id?: string
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/phase3/get-duplicates`, {}, {
+      threshold_percent: thresholdPercent,
+      page: page,
+      page_size: pageSize
+    })
     return response
   }
 

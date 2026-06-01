@@ -25,11 +25,23 @@ export function useDuplicateFinderView() {
   })
   const scanResult = ref<ScanResult | null>(null)
   const selectedForDelete = ref<Set<string>>(new Set())
+
+  // Deep path delete confirmation dialog
+  const showDeepDeleteDialog = ref(false)
+  const deepDeletePreview = ref<{
+    deepPath: string
+    matchedCount: number
+    fileList: string[]
+  }>({
+    deepPath: '',
+    matchedCount: 0,
+    fileList: []
+  })
+
   const settings = ref<Settings>({
     delete_target_path: '',
     similarity_threshold: 90,
     folder_paths: [],
-    folder_root_paths: {},
     max_cpu_cores: 1,
     auto_selection_rules: {
       auto_mark_numbered_copies: true,
@@ -68,6 +80,9 @@ export function useDuplicateFinderView() {
   // Pagination for duplicate groups
   const currentPage = ref(1)
   const pageSize = ref(20)
+  const totalPages = ref(1)
+  const totalGroupsAll = ref(0)  // Total groups across all pages
+  const isLoadingPage = ref(false)  // Loading indicator for page changes
 
   // 3-Phase workflow states
   const isPhase1Running = ref(false)
@@ -642,12 +657,25 @@ export function useDuplicateFinderView() {
   /**
    * Phase 3: Get duplicates from similarities
    */
+  /**
+   * Phase 3: Get duplicates (initial load or page change)
+   */
   async function runPhase3() {
+    await loadDuplicatesPage(1)  // Start from page 1
+  }
+
+  /**
+   * Load duplicates for a specific page
+   */
+  async function loadDuplicatesPage(page: number) {
     try {
+      console.log(`[Phase 3 Frontend] 📥 Requesting page ${page} (page_size: ${pageSize.value})`)
+
       isPhase3Running.value = true
+      isLoadingPage.value = true
       phaseProgress.value = {
         phase: 3,
-        message: 'Phase 3: Getting duplicates...',
+        message: `Phase 3: Loading page ${page}...`,
         details: 'Starting...',
         current: 0,
         total: 0,
@@ -659,7 +687,18 @@ export function useDuplicateFinderView() {
         connectWebSocket()
       }
 
-      const result = await DuplicateFinderService.phase3GetDuplicates(threshold.value)
+      const result = await DuplicateFinderService.phase3GetDuplicates(
+        threshold.value,
+        page,
+        pageSize.value
+      )
+
+      console.log(`[Phase 3 Frontend] ✅ Response received:`)
+      console.log(`[Phase 3 Frontend]   - Groups received: ${result.groups?.length || 0}`)
+      console.log(`[Phase 3 Frontend]   - Total groups (all pages): ${result.total_groups}`)
+      console.log(`[Phase 3 Frontend]   - Current page: ${result.current_page}`)
+      console.log(`[Phase 3 Frontend]   - Total pages: ${result.total_pages}`)
+      console.log(`[Phase 3 Frontend]   - Total duplicates (all pages): ${result.total_duplicates}`)
 
       // Listen for progress updates
       if (result.scan_id) {
@@ -686,16 +725,33 @@ export function useDuplicateFinderView() {
           return Object.assign(group, { group_id: `group-${index}` })
         })
 
+        // Count total files in current page groups
+        const filesInCurrentPage = result.groups.reduce((sum, group) => sum + group.length, 0)
+
+        console.log(`[Phase 3 Frontend] 📊 Storing in scanResult:`)
+        console.log(`[Phase 3 Frontend]   - Groups in memory: ${result.groups.length}`)
+        console.log(`[Phase 3 Frontend]   - Files in memory: ${filesInCurrentPage}`)
+
         scanResult.value = {
-          scan_id: 'phase3-' + Date.now(),
-          duplicate_groups: result.groups,
+          scan_id: result.scan_id || 'phase3-' + Date.now(),
+          duplicate_groups: result.groups,  // Only current page groups
           total_files: result.total_duplicates,
           duplicate_count: result.total_duplicates
         }
 
+        // Update pagination info
+        currentPage.value = result.current_page
+        totalPages.value = result.total_pages
+        totalGroupsAll.value = result.total_groups
+
+        console.log(`[Phase 3 Frontend] 🖼️  Images that will be loaded:`)
+        result.groups.forEach((group, groupIdx) => {
+          console.log(`[Phase 3 Frontend]   - Group ${groupIdx + 1}: ${group.length} images`)
+        })
+
         selectedForDelete.value.clear()
 
-        // Apply auto-selection rules
+        // Apply auto-selection rules to current page
         if (result.groups.length > 0) {
           applyAutoSelectionRules(result.groups)
         }
@@ -704,14 +760,18 @@ export function useDuplicateFinderView() {
       // Update to 100% complete
       phaseProgress.value = {
         phase: 3,
-        message: 'Phase 3: Complete',
+        message: page === 1 ? 'Phase 3: Complete' : `Page ${page} loaded`,
         details: `Groups: ${result.total_groups}, Duplicates: ${result.total_duplicates}, Time: ${result.elapsed.toFixed(3)}s`,
         current: 100,
         total: 100,
         percentage: 100
       }
 
-      ElMessage.success(`Phase 3 complete: Found ${result.total_groups} duplicate groups with ${result.total_duplicates} images (${result.elapsed.toFixed(3)}s)`)
+      if (page === 1) {
+        ElMessage.success(`Phase 3 complete: Found ${result.total_groups} duplicate groups with ${result.total_duplicates} images (${result.elapsed.toFixed(3)}s)`)
+      } else {
+        ElMessage.success(`Loaded page ${page} (${result.groups.length} groups)`)
+      }
 
       // Clean up listener
       if (result.scan_id) {
@@ -739,6 +799,7 @@ export function useDuplicateFinderView() {
       }
     } finally {
       isPhase3Running.value = false
+      isLoadingPage.value = false
     }
   }
 
@@ -756,15 +817,14 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Computed: Get paginated groups (only render current page)
+   * Computed: Get paginated groups (now just returns current page data directly)
    */
   const paginatedGroups = computed(() => {
     if (!scanResult.value || !scanResult.value.duplicate_groups) {
       return []
     }
-    const start = (currentPage.value - 1) * pageSize.value
-    const end = start + pageSize.value
-    return scanResult.value.duplicate_groups.slice(start, end)
+    // Backend already returned only current page data, no need to slice
+    return scanResult.value.duplicate_groups
   })
 
   /**
@@ -775,11 +835,21 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Handle page change
+   */
+  async function handlePageChange(newPage: number) {
+    console.log(`[Pagination] 📄 Page changed from ${currentPage.value} to ${newPage}`)
+    await loadDuplicatesPage(newPage)
+  }
+
+  /**
    * Handle page size change
    */
-  function handlePageSizeChange(newSize: number) {
+  async function handlePageSizeChange(newSize: number) {
+    console.log(`[Pagination] 📏 Page size changed from ${pageSize.value} to ${newSize}`)
     pageSize.value = newSize
     currentPage.value = 1  // Reset to first page
+    await loadDuplicatesPage(1)
   }
 
   /**
@@ -891,10 +961,47 @@ export function useDuplicateFinderView() {
   /**
    * Get relative path for display (show parent folder/filename)
    */
+  /**
+   * Get relative path for display (based on folder_paths as root)
+   * This is a fallback when display_path is not provided by backend
+   */
   function getRelativePath(filePath: string): string {
+    if (!settings.value || !settings.value.folder_paths) {
+      // Fallback: show last 2-3 parts of the path
+      const parts = filePath.split('/')
+      if (parts.length >= 2) {
+        return '.../' + parts.slice(-3).join('/')
+      }
+      return filePath
+    }
+
+    // Find the scan folder that contains this file (use it as root)
+    let scanFolder: string | null = null
+    const folderPaths = settings.value.folder_paths
+
+    for (const folder of folderPaths) {
+      if (filePath.startsWith(folder + '/') || filePath === folder) {
+        scanFolder = folder
+        break
+      }
+    }
+
+    if (scanFolder) {
+      // Calculate relative path from scan folder
+      if (filePath.startsWith(scanFolder + '/')) {
+        const relativePath = filePath.substring(scanFolder.length + 1)
+        // Remove filename, keep only directory path
+        const lastSlash = relativePath.lastIndexOf('/')
+        if (lastSlash > 0) {
+          return relativePath.substring(0, lastSlash)
+        }
+        return '/'
+      }
+    }
+
+    // Fallback: show last 2-3 parts of the path
     const parts = filePath.split('/')
     if (parts.length >= 2) {
-      // Show last 2-3 parts of the path
       return '.../' + parts.slice(-3).join('/')
     }
     return filePath
@@ -934,11 +1041,6 @@ export function useDuplicateFinderView() {
       const result = await DuplicateFinderService.getSettings()
       settings.value = result
       threshold.value = result.similarity_threshold || 90
-
-      // Initialize folder_root_paths if not present (backward compatibility)
-      if (!settings.value.folder_root_paths) {
-        settings.value.folder_root_paths = {}
-      }
 
       // Initialize auto_selection_rules if not present (backward compatibility)
       if (!settings.value.auto_selection_rules) {
@@ -1091,9 +1193,6 @@ export function useDuplicateFinderView() {
     if (!settings.value.folder_paths) {
       settings.value.folder_paths = []
     }
-    if (!settings.value.folder_root_paths) {
-      settings.value.folder_root_paths = {}
-    }
     settings.value.folder_paths.push('')
   }
 
@@ -1102,12 +1201,7 @@ export function useDuplicateFinderView() {
    */
   function removeFolderPath(index: number) {
     if (settings.value.folder_paths) {
-      const pathToRemove = settings.value.folder_paths[index]
       settings.value.folder_paths.splice(index, 1)
-      // Also remove from folder_root_paths
-      if (settings.value.folder_root_paths && pathToRemove) {
-        delete settings.value.folder_root_paths[pathToRemove]
-      }
     }
   }
 
@@ -1157,7 +1251,7 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Execute deep path delete
+   * Execute deep path delete (全局批量删除指定路径下的所有duplicate文件)
    */
   async function executeDeepPathDelete() {
     if (!deepPathDelete.value || deepPathDelete.value.trim() === '') {
@@ -1166,38 +1260,98 @@ export function useDuplicateFinderView() {
     }
 
     try {
-      await ElMessageBox.confirm(
-        `This will delete all files in duplicate groups under "${deepPathDelete.value}" while preserving folder structure. This action cannot be undone. Continue?`,
-        'Confirm Deep Path Delete',
-        {
-          confirmButtonText: 'Execute',
-          cancelButtonText: 'Cancel',
-          type: 'warning'
-        }
+      // Step 1: Preview - get list of files that will be deleted
+      isDeleting.value = true
+      ElMessage.info('Scanning for files to delete...')
+
+      const previewResult = await DuplicateFinderService.batchDeleteByPath(
+        deepPathDelete.value,
+        true  // preview only
       )
 
+      if (!previewResult.matched_files || previewResult.matched_files === 0) {
+        ElMessage.warning(`No duplicate files found under path: ${deepPathDelete.value}`)
+        isDeleting.value = false
+        return
+      }
+
+      // Step 2: Show confirmation with preview
+      deepDeletePreview.value = {
+        deepPath: deepPathDelete.value,
+        matchedCount: previewResult.matched_files,
+        fileList: previewResult.file_list || []
+      }
+      showDeepDeleteDialog.value = true
+      isDeleting.value = false  // Reset loading state
+
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to preview deep path delete:', error)
+      ElMessage.error(error.message || 'Failed to preview files')
+      isDeleting.value = false
+    }
+  }
+
+  // Confirm and execute deep delete
+  async function confirmDeepDelete() {
+    try {
+      showDeepDeleteDialog.value = false
       isDeleting.value = true
 
-      // TODO: Implement deep path delete functionality
-      // This requires gathering all files under the specified path from duplicate groups
-      // and calling DuplicateFinderService.deleteFiles with deepPathDelete parameter
-      ElMessage.info('Deep path delete functionality will be implemented')
+      // Execute actual deletion
+      ElMessage.info(`Deleting ${deepDeletePreview.value.matchedCount} files...`)
 
-      // Example implementation:
-      // const filesToDelete = gatherFilesUnderPath(deepPathDelete.value)
-      // await DuplicateFinderService.deleteFiles(filesToDelete, deepPathDelete.value)
+      const deleteResult = await DuplicateFinderService.batchDeleteByPath(
+        deepDeletePreview.value.deepPath,
+        false  // actual deletion
+      )
 
-      // Refresh results after deletion
-      // await loadSettings()
-    } catch (error: any) {
-      if (error !== 'cancel') {
-        console.error('[Duplicate Finder] Failed to execute deep path delete:', error)
-        ElMessage.error(error.message || 'Failed to execute deep path delete')
+      if (deleteResult.deleted) {
+        ElMessage.success(
+          `Successfully deleted ${deleteResult.deleted} files` +
+          (deleteResult.failed ? ` (${deleteResult.failed} failed)` : '')
+        )
+
+        // Reload current page to refresh the view
+        if (currentPage.value > 0) {
+          await loadDuplicatesPage(currentPage.value)
+        } else {
+          await runPhase3()
+        }
+      } else {
+        ElMessage.error('No files were deleted')
       }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to execute deep path delete:', error)
+      ElMessage.error(error.message || 'Failed to execute deep path delete')
     } finally {
       isDeleting.value = false
     }
   }
+
+  // Cancel deep delete
+  function cancelDeepDelete() {
+    showDeepDeleteDialog.value = false
+    isDeleting.value = false
+  }
+
+  // Compute relative path for display in deep delete dialog
+  const deepDeleteFileListRelative = computed(() => {
+    const basePath = deepDeletePreview.value.deepPath
+    if (!basePath) return []
+
+    return deepDeletePreview.value.fileList.map((filePath: string) => {
+      // Remove base path prefix to get relative path
+      if (filePath.startsWith(basePath)) {
+        let relativePath = filePath.substring(basePath.length)
+        // Remove leading slash if present
+        if (relativePath.startsWith('/')) {
+          relativePath = relativePath.substring(1)
+        }
+        return relativePath || filePath
+      }
+      return filePath
+    })
+  })
 
   /**
    * Add group to whitelist
@@ -1427,6 +1581,9 @@ export function useDuplicateFinderView() {
     // Pagination
     currentPage,
     pageSize,
+    totalPages,
+    totalGroupsAll,
+    isLoadingPage,
     paginatedGroups,
     // 3-Phase workflow states
     isPhase1Running,
@@ -1435,6 +1592,10 @@ export function useDuplicateFinderView() {
     phaseProgress,
     phase1Summary,
     phase2Summary,
+    // Deep delete dialog
+    showDeepDeleteDialog,
+    deepDeletePreview,
+    deepDeleteFileListRelative,
     // Methods
     startScan,
     stopScan,
@@ -1456,6 +1617,7 @@ export function useDuplicateFinderView() {
     formatFileSize,
     getCpuMarks,
     getActualGroupIndex,
+    handlePageChange,
     handlePageSizeChange,
     saveFolderSettings,
     saveAdvancedSettings,
@@ -1465,6 +1627,8 @@ export function useDuplicateFinderView() {
     addExcludeFolderPath,
     removeExcludeFolderPath,
     executeDeepPathDelete,
+    confirmDeepDelete,
+    cancelDeepDelete,
     addGroupToWhitelist,
     loadWhitelist,
     removeFromWhitelist,

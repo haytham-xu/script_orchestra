@@ -595,18 +595,24 @@ class DeleteResource(Resource):
     def post(self):
         """
         Delete (move) files to the configured delete target path.
+        Files are moved preserving their relative path from the configured root_path.
 
         Request body:
         {
             "files": ["/path/to/file1.jpg", "/path/to/file2.jpg"],
-            "deep_path_delete": "/path/to/match"  // optional: preserve folder structure for files under this path
+            "deep_path_delete": "/path/to/match"  // optional: for backward compatibility (deprecated)
         }
 
-        Deep path delete behavior:
-        - Files under deep_path_delete: preserve relative folder structure
-          Example: /a/folder1/sub/file.jpg -> /to_del/sub/file.jpg
-        - Files NOT under deep_path_delete: flatten with path suffix (original behavior)
-          Example: /b/folder2/file.jpg -> /to_del/file_b_folder2.jpg
+        Deletion behavior:
+        - Find the root_path for the file from folder_root_paths configuration
+        - Calculate relative path from root_path
+        - Move to: delete_target_path + relative_path
+
+        Example:
+        - Original file: /Users/.../duplicate_finder/test_delete/B_dup1/b_049.jpg
+        - Root path: /Users/.../duplicate_finder/
+        - Delete target: /Users/.../test_delete/to_del
+        - Result: /Users/.../test_delete/to_del/test_delete/B_dup1/b_049.jpg
 
         Response:
         {
@@ -620,11 +626,13 @@ class DeleteResource(Resource):
             return {"error": "Missing 'files' in request"}, 400
 
         files = data['files']
-        deep_path_delete = data.get('deep_path_delete')
         delete_target = settings_manager.get_delete_target_path()
 
         if not delete_target:
             return {"error": "Delete target path not configured"}, 400
+
+        # Get folder_paths (scan folders) - use them directly as root
+        folder_paths = settings_manager.get_settings().get('folder_paths', [])
 
         # Create delete target directory if needed
         os.makedirs(delete_target, exist_ok=True)
@@ -632,13 +640,9 @@ class DeleteResource(Resource):
         success_count = 0
         failed_count = 0
         errors = []
-        deleted_folders = []
 
-        # Normalize deep_path_delete for comparison
-        deep_path_abs = None
-        if deep_path_delete:
-            deep_path_abs = os.path.abspath(deep_path_delete)
-            print(f"[Duplicate Finder] Deep path delete mode: {deep_path_abs}")
+        print(f"[Delete] Target directory: {delete_target}")
+        print(f"[Delete] Scan folders configured: {len(folder_paths)} folders")
 
         # Delete files
         for file_path in files:
@@ -650,57 +654,86 @@ class DeleteResource(Resource):
             try:
                 abs_file_path = os.path.abspath(file_path)
 
-                # Check if file is under deep_path_delete
-                if deep_path_abs and abs_file_path.startswith(deep_path_abs + os.sep):
-                    # Deep path mode: preserve folder structure
-                    # Calculate relative path from deep_path_delete
-                    relative_path = os.path.relpath(abs_file_path, deep_path_abs)
-                    dest_path = os.path.join(delete_target, relative_path)
+                # Find the scan folder that contains this file (use it as root)
+                scan_folder = None
+                for folder in folder_paths:
+                    folder_abs = os.path.abspath(folder)
+                    if abs_file_path.startswith(folder_abs + os.sep) or abs_file_path == folder_abs:
+                        scan_folder = folder_abs
+                        break
 
-                    # Create parent directories if needed
-                    dest_dir = os.path.dirname(dest_path)
-                    os.makedirs(dest_dir, exist_ok=True)
+                if not scan_folder:
+                    # Fallback: if no scan folder found, use the file's parent directory
+                    scan_folder = os.path.dirname(abs_file_path)
+                    print(f"[Delete] Warning: No scan folder found for {abs_file_path}, using parent directory")
 
-                    # Handle name collision
-                    if os.path.exists(dest_path):
-                        name_without_ext, ext = os.path.splitext(dest_path)
-                        counter = 1
-                        while os.path.exists(dest_path):
-                            dest_path = f"{name_without_ext}_{counter}{ext}"
-                            counter += 1
+                # Calculate relative path from scan folder
+                try:
+                    relative_path = os.path.relpath(abs_file_path, scan_folder)
+                except ValueError:
+                    # Different drives on Windows, fallback to filename only
+                    relative_path = os.path.basename(abs_file_path)
+                    print(f"[Delete] Warning: Cannot calculate relative path (different drives?), using filename only")
 
-                    # Move file
-                    shutil.move(abs_file_path, dest_path)
-                    success_count += 1
-                    print(f"[Duplicate Finder] Moved file (deep): {abs_file_path} -> {dest_path}")
+                # Construct destination path
+                dest_path = os.path.join(delete_target, relative_path)
 
-                else:
-                    # Normal mode: flatten to delete_target root with path suffix
-                    original_name = os.path.basename(file_path)
-                    name_without_ext, ext = os.path.splitext(original_name)
-                    dir_path = os.path.dirname(file_path)
+                # Create parent directories if needed
+                dest_dir = os.path.dirname(dest_path)
+                os.makedirs(dest_dir, exist_ok=True)
 
-                    # Convert path to safe filename suffix
-                    path_suffix = dir_path.replace('/', '_').replace('\\', '_')
-                    path_suffix = path_suffix.lstrip('_')
-
-                    new_filename = f"{name_without_ext}_{path_suffix}{ext}"
-                    dest_path = os.path.join(delete_target, new_filename)
-
-                    # Handle name collision
+                # Handle name collision
+                if os.path.exists(dest_path):
+                    name_without_ext, ext = os.path.splitext(dest_path)
                     counter = 1
                     while os.path.exists(dest_path):
-                        new_filename = f"{name_without_ext}_{path_suffix}_{counter}{ext}"
-                        dest_path = os.path.join(delete_target, new_filename)
+                        dest_path = f"{name_without_ext}_{counter}{ext}"
                         counter += 1
 
-                    # Move file
-                    shutil.move(file_path, dest_path)
-                    success_count += 1
+                # Move file
+                shutil.move(abs_file_path, dest_path)
+                success_count += 1
+                print(f"[Delete] ✓ Moved: {abs_file_path}")
+                print(f"[Delete]   Scan folder: {scan_folder}")
+                print(f"[Delete]   Relative: {relative_path}")
+                print(f"[Delete]   Destination: {dest_path}")
+
+                # Delete from database (image_hashes and phash_similarities)
+                try:
+                    workflow = get_workflow()
+                    conn = workflow._get_connection()
+                    cursor = conn.cursor()
+
+                    # Find the image ID
+                    cursor.execute('SELECT id FROM image_hashes WHERE file_path = ?', (abs_file_path,))
+                    row = cursor.fetchone()
+
+                    if row:
+                        image_id = row[0]
+                        # Delete from phash_similarities (where this image is involved)
+                        cursor.execute('DELETE FROM phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                                     (image_id, image_id))
+                        similarity_count = cursor.rowcount
+
+                        # Delete from image_hashes
+                        cursor.execute('DELETE FROM image_hashes WHERE id = ?', (image_id,))
+                        conn.commit()
+
+                        print(f"[Delete]   DB cleaned: removed image record (ID={image_id}) and {similarity_count} similarity records")
+                    else:
+                        print(f"[Delete]   DB: image not found in database (already cleaned or never scanned)")
+
+                except Exception as db_error:
+                    print(f"[Delete] Warning: Failed to clean database for {abs_file_path}: {db_error}")
+                    # Don't fail the whole operation if DB cleanup fails
 
             except Exception as e:
-                errors.append(f"Failed to move {file_path}: {str(e)}")
+                error_msg = f"Failed to move {file_path}: {str(e)}"
+                errors.append(error_msg)
                 failed_count += 1
+                print(f"[Delete] ✗ {error_msg}")
+
+        print(f"[Delete] Complete: {success_count} succeeded, {failed_count} failed")
 
         return {
             "success": success_count,
@@ -1227,27 +1260,45 @@ class Phase2StopResource(Resource):
 class Phase3GetDuplicatesResource(Resource):
     def post(self):
         """
-        Phase 3: Get duplicate groups
+        Phase 3: Get duplicate groups (with pagination support)
         - Query phash_similarities
         - Build connected components
         - Filter out whitelist
+        - Return paginated results
 
         Request body:
         {
-            "threshold_percent": 90  // optional, default 90
+            "threshold_percent": 90,  // optional, default 90
+            "page": 1,  // optional, page number (1-indexed, 0=all groups), default 1
+            "page_size": 20  // optional, groups per page, default 20
         }
 
         Response:
         {
             "groups": [[{file_path, phash, ...}, ...], ...],
-            "total_groups": 10,
-            "total_duplicates": 50,
-            "elapsed": 0.5
+            "total_groups": 150,  // total across all pages
+            "total_duplicates": 600,  // total across all pages
+            "current_page": 1,
+            "page_size": 20,
+            "total_pages": 8,
+            "elapsed": 0.5,
+            "scan_id": "phase3-abc123"
         }
         """
         try:
             data = request.json or {}
             threshold_percent = data.get('threshold_percent', 90)
+            page = data.get('page', 1)  # Default to page 1
+            page_size = data.get('page_size', 20)  # Default 20 groups per page
+
+            print(f"[Phase 3 API] 🔍 Request received:")
+            print(f"[Phase 3 API]   - Page: {page}")
+            print(f"[Phase 3 API]   - Page size: {page_size}")
+            print(f"[Phase 3 API]   - Threshold: {threshold_percent}%")
+
+            # Get folder_paths from settings for display_path calculation
+            folder_paths = settings_manager.get_settings().get('folder_paths', [])
+            print(f"[Phase 3 API] Using {len(folder_paths)} scan folders for display_path calculation")
 
             # Progress callback for WebSocket updates
             scan_id = f"phase3-{uuid.uuid4().hex[:8]}"
@@ -1255,8 +1306,20 @@ class Phase3GetDuplicatesResource(Resource):
             def progress_cb(current, total, message):
                 emit_progress(scan_id, current, total, message)
 
-            result = get_workflow().phase3_get_duplicates(threshold_percent, progress_callback=progress_cb)
+            result = get_workflow().phase3_get_duplicates(
+                threshold_percent,
+                progress_callback=progress_cb,
+                page=page,
+                page_size=page_size,
+                folder_paths=folder_paths
+            )
             result['scan_id'] = scan_id
+
+            print(f"[Phase 3 API] ✅ Response ready:")
+            print(f"[Phase 3 API]   - Groups returned: {len(result.get('groups', []))}")
+            print(f"[Phase 3 API]   - Total groups: {result.get('total_groups', 0)}")
+            print(f"[Phase 3 API]   - Current page: {result.get('current_page', 0)}")
+            print(f"[Phase 3 API]   - Total pages: {result.get('total_pages', 0)}")
 
             return result
 
@@ -1277,6 +1340,247 @@ class Phase3StopResource(Resource):
         workflow.set_stop()
         print("[Phase 3 API] Stop signal sent to workflow")
         return {"message": "Phase 3 stop signal sent"}
+
+
+@ns.route("/batch-delete-by-path")
+class BatchDeleteByPathResource(Resource):
+    def post(self):
+        """
+        Batch delete all duplicate files under a specific path across all groups
+
+        Request body:
+        {
+            "deep_path": "/path/to/folder",  // Required: the path to scan
+            "preview_only": true  // Optional: if true, only return matched files without deleting
+        }
+
+        Response (preview_only=true):
+        {
+            "matched_files": 100,
+            "file_list": ["/path/to/file1.jpg", "/path/to/file2.jpg", ...],
+            "preview": true
+        }
+
+        Response (preview_only=false):
+        {
+            "deleted": 100,
+            "failed": 0,
+            "preview": false
+        }
+        """
+        try:
+            data = request.json or {}
+            deep_path = data.get('deep_path')
+            preview_only = data.get('preview_only', True)
+
+            if not deep_path:
+                return {"error": "deep_path is required"}, 400
+
+            # Normalize path - support both absolute and relative paths
+            if os.path.isabs(deep_path):
+                # Absolute path - use directly
+                normalized_path = os.path.abspath(deep_path)
+                print(f"[Batch Delete] Using absolute path: {normalized_path}")
+            else:
+                # Relative path - try to match against folder_paths
+                print(f"[Batch Delete] Resolving relative path: {deep_path}")
+                folder_paths = settings_manager.get_settings().get('folder_paths', [])
+
+                matched_paths = []
+                for folder in folder_paths:
+                    folder_abs = os.path.abspath(folder)
+                    # Check if this folder path ends with the relative path
+                    if folder_abs.endswith(os.sep + deep_path) or folder_abs.endswith(deep_path):
+                        matched_paths.append(folder_abs)
+                        print(f"[Batch Delete] Found match: {folder_abs}")
+
+                if not matched_paths:
+                    # No match in folder_paths, try as relative to current working directory
+                    normalized_path = os.path.abspath(deep_path)
+                    print(f"[Batch Delete] No match in folder_paths, using cwd-relative: {normalized_path}")
+                elif len(matched_paths) == 1:
+                    # Exactly one match
+                    normalized_path = matched_paths[0]
+                    print(f"[Batch Delete] Resolved to: {normalized_path}")
+                else:
+                    # Multiple matches - return error
+                    return {
+                        "error": f"Ambiguous path '{deep_path}' matches multiple folders: {matched_paths}"
+                    }, 400
+
+            deep_path = normalized_path
+
+            print(f"[Batch Delete] Scanning for files under: {deep_path}")
+            print(f"[Batch Delete] Preview only: {preview_only}")
+
+            # Get workflow and database connection
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cursor = conn.cursor()
+
+            # Query all duplicate files under the specified path
+            # A file is a duplicate if it appears in the similarities table
+            cursor.execute('''
+                SELECT DISTINCT i.file_path
+                FROM image_hashes i
+                WHERE i.file_path LIKE ?
+                AND EXISTS (
+                    SELECT 1 FROM phash_similarities s
+                    WHERE s.image_id_a = i.id OR s.image_id_b = i.id
+                )
+            ''', (f"{deep_path}%",))
+
+            matched_files = [row[0] for row in cursor.fetchall()]
+
+            print(f"[Batch Delete] Found {len(matched_files)} files under {deep_path}")
+
+            if preview_only:
+                # Preview mode: just return the list
+                return {
+                    "matched_files": len(matched_files),
+                    "file_list": matched_files,
+                    "preview": True
+                }
+            else:
+                # Actual deletion mode
+                delete_target_path = settings_manager.get_delete_target_path()
+
+                if not delete_target_path:
+                    return {"error": "delete_target_path not configured"}, 400
+
+                # Get folder_paths (scan folders) - use them directly as root
+                folder_paths = settings_manager.get_settings().get('folder_paths', [])
+
+                deleted_count = 0
+                failed_count = 0
+
+                print(f"[Batch Delete] Delete target: {delete_target_path}")
+                print(f"[Batch Delete] Scan folders configured: {len(folder_paths)} folders")
+
+                for file_path in matched_files:
+                    try:
+                        if not os.path.exists(file_path):
+                            print(f"[Batch Delete] File not found, skipping: {file_path}")
+                            failed_count += 1
+                            continue
+
+                        abs_file_path = os.path.abspath(file_path)
+
+                        # Find the scan folder that contains this file (use it as root)
+                        scan_folder = None
+                        for folder in folder_paths:
+                            folder_abs = os.path.abspath(folder)
+                            if abs_file_path.startswith(folder_abs + os.sep) or abs_file_path == folder_abs:
+                                scan_folder = folder_abs
+                                break
+
+                        if not scan_folder:
+                            # Fallback: if no scan folder found, use the file's parent directory
+                            scan_folder = os.path.dirname(abs_file_path)
+                            print(f"[Batch Delete] Warning: No scan folder found for {abs_file_path}, using parent directory")
+
+                        # Calculate relative path from scan folder
+                        try:
+                            relative_path = os.path.relpath(abs_file_path, scan_folder)
+                        except ValueError:
+                            # Different drives on Windows, fallback to filename only
+                            relative_path = os.path.basename(abs_file_path)
+                            print(f"[Batch Delete] Warning: Cannot calculate relative path (different drives?), using filename only")
+
+                        # Construct target path
+                        target_file = os.path.join(delete_target_path, relative_path)
+                        target_dir = os.path.dirname(target_file)
+
+                        # Create target directory
+                        os.makedirs(target_dir, exist_ok=True)
+
+                        # Move file
+                        shutil.move(file_path, target_file)
+                        print(f"[Batch Delete] ✓ Moved: {file_path}")
+                        print(f"[Batch Delete]   Scan folder: {scan_folder}")
+                        print(f"[Batch Delete]   Relative: {relative_path}")
+                        print(f"[Batch Delete]   Destination: {target_file}")
+
+                        # Delete from database (image_hashes and phash_similarities)
+                        try:
+                            # Find the image ID
+                            cursor.execute('SELECT id FROM image_hashes WHERE file_path = ?', (abs_file_path,))
+                            row = cursor.fetchone()
+
+                            if row:
+                                image_id = row[0]
+                                # Delete from phash_similarities (where this image is involved)
+                                cursor.execute('DELETE FROM phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                                             (image_id, image_id))
+                                similarity_count = cursor.rowcount
+
+                                # Delete from image_hashes
+                                cursor.execute('DELETE FROM image_hashes WHERE id = ?', (image_id,))
+                                conn.commit()
+
+                                print(f"[Batch Delete]   DB cleaned: removed image record (ID={image_id}) and {similarity_count} similarity records")
+                            else:
+                                print(f"[Batch Delete]   DB: image not found in database")
+
+                        except Exception as db_error:
+                            print(f"[Batch Delete] Warning: Failed to clean database for {file_path}: {db_error}")
+                            # Don't fail the whole operation if DB cleanup fails
+
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"[Batch Delete] ✗ Failed to delete {file_path}: {e}")
+                        failed_count += 1
+
+                print(f"[Batch Delete] Complete: {deleted_count} deleted, {failed_count} failed")
+
+                # Clean up empty directories under deep_path
+                if deleted_count > 0:
+                    print(f"[Batch Delete] Cleaning up empty directories...")
+                    try:
+                        empty_dirs_removed = 0
+                        # Walk through the deep_path directory tree from bottom to top
+                        for root, dirs, files in os.walk(deep_path, topdown=False):
+                            # Check if directory is empty (no files and no subdirectories)
+                            try:
+                                if not os.listdir(root):
+                                    os.rmdir(root)
+                                    empty_dirs_removed += 1
+                                    print(f"[Batch Delete]   Removed empty directory: {root}")
+                            except OSError as e:
+                                # Directory might not be empty or no permission
+                                print(f"[Batch Delete]   Could not remove directory {root}: {e}")
+                                continue
+
+                        # Try to remove the deep_path itself if it's now empty
+                        try:
+                            if os.path.exists(deep_path) and not os.listdir(deep_path):
+                                os.rmdir(deep_path)
+                                empty_dirs_removed += 1
+                                print(f"[Batch Delete]   Removed empty root directory: {deep_path}")
+                        except OSError as e:
+                            print(f"[Batch Delete]   Could not remove root directory {deep_path}: {e}")
+
+                        if empty_dirs_removed > 0:
+                            print(f"[Batch Delete] Cleaned up {empty_dirs_removed} empty directories")
+                        else:
+                            print(f"[Batch Delete] No empty directories to clean up")
+
+                    except Exception as cleanup_error:
+                        print(f"[Batch Delete] Warning: Failed to clean up empty directories: {cleanup_error}")
+                        # Don't fail the operation if cleanup fails
+
+                return {
+                    "deleted": deleted_count,
+                    "failed": failed_count,
+                    "preview": False
+                }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Batch Delete] Error: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {"error": error_msg}, 500
 
 
 # ========== Cypress Test Support Endpoints ==========

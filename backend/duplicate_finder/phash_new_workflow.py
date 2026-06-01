@@ -744,23 +744,32 @@ class DuplicateFinderWorkflow:
     def phase3_get_duplicates(
         self,
         threshold_percent: int = 90,  # UI setting
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        page: int = 1,  # Pagination: page number (1-indexed, 0=all groups)
+        page_size: int = 20,  # Pagination: groups per page
+        folder_paths: Optional[List[str]] = None  # For display_path calculation
     ) -> Dict:
         """
-        Phase 3: Get duplicate groups
+        Phase 3: Get duplicate groups (with pagination support)
         - Query phash_similarities where distance matches threshold
         - Build connected components (groups)
         - Filter out whitelist images
+        - Return paginated results
 
         Args:
             threshold_percent: Similarity threshold (80, 85, 90, etc.)
             progress_callback: Optional callback(current, total, message)
+            page: Page number (1-indexed, 0=return all groups)
+            page_size: Number of groups per page
 
         Returns:
             {
-                'groups': List[List[Dict]],  # Each group contains image info
-                'total_groups': int,
-                'total_duplicates': int,
+                'groups': List[List[Dict]],  # Current page groups (or all if page=0)
+                'total_groups': int,  # Total number of groups (all pages)
+                'total_duplicates': int,  # Total duplicates in all groups
+                'current_page': int,
+                'page_size': int,
+                'total_pages': int,
                 'elapsed': float
             }
         """
@@ -830,6 +839,60 @@ class DuplicateFinderWorkflow:
 
             print(f"[Phase 3] Fetched {len(all_images_dict)} image details, now assembling groups...")
 
+            # Get folder_paths (scan folders) for display_path calculation - use them directly as root
+            try:
+                if not folder_paths:
+                    print(f"[Phase 3] Warning: No folder_paths provided, display_path will use absolute paths")
+                    folder_paths = []
+
+                print(f"[Phase 3] Adding display_path to {len(all_images_dict)} images...")
+                print(f"[Phase 3] Using {len(folder_paths)} scan folders as root: {folder_paths}")
+
+                # Add display_path to each image
+                for img_id, img in all_images_dict.items():
+                    file_path = img.get('file_path', '')
+                    if not file_path:
+                        img['display_path'] = '/'
+                        continue
+
+                    # Find the scan folder that contains this file (use it as root)
+                    scan_folder = None
+                    for folder in folder_paths:
+                        try:
+                            folder_abs = os.path.abspath(folder)
+                            file_path_abs = os.path.abspath(file_path)
+                            if file_path_abs.startswith(folder_abs + os.sep) or file_path_abs == folder_abs:
+                                scan_folder = folder_abs
+                                break
+                        except Exception as e:
+                            print(f"[Phase 3] Warning: Error checking path {file_path}: {e}")
+                            continue
+
+                    if scan_folder:
+                        # Calculate relative path from scan folder
+                        try:
+                            rel_path = os.path.relpath(file_path, scan_folder)
+                            # Remove filename, keep only directory path
+                            dir_path = os.path.dirname(rel_path)
+                            img['display_path'] = dir_path if dir_path and dir_path != '.' else '/'
+                        except (ValueError, Exception) as e:
+                            # Fallback
+                            print(f"[Phase 3] Warning: Cannot calculate relative path for {file_path}: {e}")
+                            img['display_path'] = os.path.dirname(file_path)
+                    else:
+                        # Fallback: use absolute directory path
+                        img['display_path'] = os.path.dirname(file_path)
+
+                print(f"[Phase 3] Display paths added successfully")
+
+            except Exception as e:
+                print(f"[Phase 3] Error adding display_path, using fallback: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback: add simple display_path to all images
+                for img in all_images_dict.values():
+                    img['display_path'] = os.path.dirname(img.get('file_path', ''))
+
             # Assemble groups from lookup dictionary (fast, in-memory operation)
             stop_requested = False
             for group_idx, group_ids in enumerate(groups):
@@ -852,25 +915,52 @@ class DuplicateFinderWorkflow:
 
         elapsed = time.time() - start_time
         total_duplicates = sum(len(g) for g in result_groups)
+        total_groups_all = len(result_groups)
+
+        # Apply pagination
+        if page > 0:  # page=0 means return all groups
+            import math
+            total_pages = math.ceil(total_groups_all / page_size) if page_size > 0 else 1
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+
+            paginated_groups = result_groups[start_idx:end_idx]
+
+            # Calculate how many files are being returned
+            paginated_file_count = sum(len(g) for g in paginated_groups)
+
+            print(f"[Phase 3] 📄 Pagination Applied:")
+            print(f"[Phase 3]   - Page: {page}/{total_pages}")
+            print(f"[Phase 3]   - Total groups in DB: {total_groups_all}")
+            print(f"[Phase 3]   - Groups returned: {len(paginated_groups)} (groups {start_idx+1}-{min(end_idx, total_groups_all)})")
+            print(f"[Phase 3]   - Files returned: {paginated_file_count} files (out of {total_duplicates} total)")
+        else:
+            # Return all groups
+            paginated_groups = result_groups
+            total_pages = 1
+            print(f"[Phase 3] 📄 Returning all {total_groups_all} groups (pagination disabled)")
 
         if stop_requested:
-            print(f"[Phase 3] ⏸️ Stopped by user in {elapsed:.1f}s: {len(result_groups)}/{total_groups} groups loaded, {total_duplicates} duplicates")
+            print(f"[Phase 3] ⏸️ Stopped by user in {elapsed:.1f}s: {total_groups_all} groups loaded, {total_duplicates} duplicates")
         else:
-            print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {len(result_groups)} groups, {total_duplicates} total duplicates")
+            print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {total_groups_all} groups, {total_duplicates} total duplicates")
 
         # Send final progress
         if progress_callback:
             if stop_requested:
-                progress_callback(len(result_groups), total_groups, f"Stopped: {len(result_groups)}/{total_groups} groups")
+                progress_callback(total_groups_all, total_groups, f"Stopped: {total_groups_all}/{total_groups} groups")
             elif total_groups > 0:
-                progress_callback(total_groups, total_groups, f"Complete: {len(result_groups)} groups, {total_duplicates} duplicates")
+                progress_callback(total_groups, total_groups, f"Complete: {total_groups_all} groups, {total_duplicates} duplicates")
 
         return {
-            'groups': result_groups,
-            'total_groups': len(result_groups),
+            'groups': paginated_groups,
+            'total_groups': total_groups_all,
             'total_duplicates': total_duplicates,
+            'current_page': page if page > 0 else 1,
+            'page_size': page_size,
+            'total_pages': total_pages if page > 0 else 1,
             'elapsed': elapsed,
-            'stopped': stop_requested  # 新增标志
+            'stopped': stop_requested
         }
 
     def _build_groups(self, edges: List[tuple]) -> List[List[int]]:

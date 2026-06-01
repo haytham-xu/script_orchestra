@@ -44,6 +44,14 @@ npm run test:unit
 npm run lint
 ```
 
+#### Cypress
+```sh
+
+npm run test:e2e:photo 2>&1 | tee ../log/cypress.log
+npm run test:e2e:duplicate 2>&1 | tee ../log/cypress.log
+
+
+```
 
 ## Frontend
 Vue3, TypeScript, Vue Router, Pinia, Vitest, ESLint, Prettier, element-plus
