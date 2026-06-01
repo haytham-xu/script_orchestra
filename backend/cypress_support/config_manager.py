@@ -27,6 +27,10 @@ class ConfigManager:
         'duplicate_finder': {
             'settings_path': 'duplicate_finder/settings.json',
             'snapshot_name': '.cypress_snapshot.json'
+        },
+        'pdf_converter': {
+            'settings_path': 'pdf_converter/settings.json',
+            'snapshot_name': '.cypress_snapshot.json'
         }
     }
 

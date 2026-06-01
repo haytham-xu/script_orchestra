@@ -13,9 +13,9 @@ from typing import List, Dict, Optional, Callable
 from multiprocessing import Pool, cpu_count, Manager
 
 try:
-    from .phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay
+    from .phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay, PHashCache
 except ImportError:
-    from phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay
+    from phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay, PHashCache
 
 # Global variables for performance settings (accessible by multiprocessing workers)
 _SCAN_DELAY = 0.0
@@ -227,6 +227,8 @@ class DuplicateFinderWorkflow:
     def _get_connection(self):
         if self._conn is None:
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            # Enable foreign key constraints (required for CASCADE DELETE)
+            self._conn.execute('PRAGMA foreign_keys = ON')
         return self._conn
 
     def close(self):
@@ -807,6 +809,20 @@ class DuplicateFinderWorkflow:
         # Build graph and find connected components
         groups = self._build_groups(filtered_edges)
 
+        # Filter out whitelisted groups
+        print(f"[Phase 3] Checking for whitelisted groups...")
+        cache = PHashCache(str(self.db_path))
+
+        filtered_groups = []
+        for group in groups:
+            if not cache.is_group_whitelisted(group):
+                filtered_groups.append(group)
+
+        whitelisted_count = len(groups) - len(filtered_groups)
+        if whitelisted_count > 0:
+            print(f"[Phase 3] Filtered out {whitelisted_count} whitelisted groups")
+        groups = filtered_groups
+
         # Get full image info for each group - OPTIMIZED: bulk query instead of N individual queries
         result_groups = []
         total_groups = len(groups)
@@ -920,6 +936,19 @@ class DuplicateFinderWorkflow:
         else:
             print(f"[Phase 3] No duplicate images to fetch")
             stop_requested = False
+
+        # Sort groups by directory path first, then by filename
+        if result_groups:
+            def get_sort_key(group):
+                if not group:
+                    return ('', '')
+                file_path = group[0].get('file_path', '')
+                filename = group[0].get('filename', '')
+                dir_path = os.path.dirname(file_path)
+                return (dir_path, filename)
+
+            result_groups.sort(key=get_sort_key)
+            print(f"[Phase 3] Groups sorted by path and filename")
 
         elapsed = time.time() - start_time
         total_duplicates = sum(len(g) for g in result_groups)

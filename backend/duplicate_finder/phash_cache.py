@@ -233,6 +233,8 @@ class PHashCache:
         """Get or create a persistent database connection"""
         if self._conn is None:
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            # Enable foreign key constraints (required for CASCADE DELETE)
+            self._conn.execute('PRAGMA foreign_keys = ON')
         return self._conn
 
     def close(self):
@@ -274,15 +276,36 @@ class PHashCache:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
 
-        # Create whitelist table
+        # Create whitelist table - stores image IDs to exclude from duplicate detection
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS whitelist (
                 image_id INTEGER PRIMARY KEY,
                 added_time REAL NOT NULL,
-                note TEXT,
                 FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
             )
         ''')
+
+        # Create whitelist_groups table - stores duplicate groups to exclude from detection
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS whitelist_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                added_time REAL NOT NULL
+            )
+        ''')
+
+        # Create whitelist_group_members table - stores members of each whitelist group
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS whitelist_group_members (
+                group_id INTEGER NOT NULL,
+                image_id INTEGER NOT NULL,
+                FOREIGN KEY (group_id) REFERENCES whitelist_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE,
+                PRIMARY KEY (group_id, image_id)
+            )
+        ''')
+
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_group_members_group ON whitelist_group_members(group_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_group_members_image ON whitelist_group_members(image_id)')
 
         # Create phash_similarities table
         cursor.execute('''
@@ -512,68 +535,209 @@ class PHashCache:
 
         return duplicate_groups
 
-    def add_to_whitelist(self, filename: str, filesize: int, note: str = None, preview_path: str = None):
+    def add_to_whitelist(self, image_id: int):
         """
-        Add a file (by filename + filesize) to whitelist
+        Add an image to whitelist by its image_id
         Args:
-            filename: File name
-            filesize: File size in bytes
-            note: Optional note about why this is whitelisted
-            preview_path: Optional path to a representative image for preview
+            image_id: The ID of the image in image_hashes table
         """
         import time
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT OR REPLACE INTO whitelist (filename, filesize, added_time, note, preview_path)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (filename, filesize, time.time(), note, preview_path))
+            INSERT OR REPLACE INTO whitelist (image_id, added_time)
+            VALUES (?, ?)
+        ''', (image_id, time.time()))
 
         conn.commit()
 
-    def remove_from_whitelist(self, filename: str, filesize: int):
-        """Remove a file from whitelist"""
+    def remove_from_whitelist(self, image_id: int):
+        """Remove an image from whitelist by its image_id"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
-            DELETE FROM whitelist WHERE filename = ? AND filesize = ?
-        ''', (filename, filesize))
+            DELETE FROM whitelist WHERE image_id = ?
+        ''', (image_id,))
 
         conn.commit()
 
-    def is_whitelisted(self, filename: str, filesize: int) -> bool:
-        """Check if a file is in whitelist"""
+    def is_whitelisted(self, image_id: int) -> bool:
+        """Check if an image is in whitelist"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute(
-            'SELECT 1 FROM whitelist WHERE filename = ? AND filesize = ?',
-            (filename, filesize)
+            'SELECT 1 FROM whitelist WHERE image_id = ?',
+            (image_id,)
         )
         result = cursor.fetchone()
 
         return result is not None
 
     def get_whitelist(self) -> List[Dict]:
-        """Get all whitelisted items"""
+        """
+        Get all whitelisted items with full image information
+        Returns list of dicts with image details joined from image_hashes table
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT filename, filesize, added_time, note, preview_path FROM whitelist')
+        cursor.execute('''
+            SELECT w.image_id, w.added_time, i.filename, i.filesize, i.file_path, i.phash, i.resolution
+            FROM whitelist w
+            JOIN image_hashes i ON w.image_id = i.id
+        ''')
         rows = cursor.fetchall()
 
         return [
             {
-                'filename': row[0],
-                'filesize': row[1],
-                'added_time': row[2],
-                'note': row[3],
-                'preview_path': row[4]
+                'image_id': row[0],
+                'added_time': row[1],
+                'filename': row[2],
+                'filesize': row[3],
+                'file_path': row[4],
+                'phash': row[5],
+                'resolution': row[6]
             }
             for row in rows
         ]
+
+    def add_group_to_whitelist(self, image_ids: List[int]):
+        """
+        Add a duplicate group to whitelist
+        Args:
+            image_ids: List of image IDs that form a duplicate group
+        """
+        if not image_ids or len(image_ids) < 2:
+            raise ValueError("Group must have at least 2 images")
+
+        import time
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Create new group
+        cursor.execute('INSERT INTO whitelist_groups (added_time) VALUES (?)', (time.time(),))
+        group_id = cursor.lastrowid
+
+        # Add members
+        for image_id in image_ids:
+            cursor.execute('''
+                INSERT INTO whitelist_group_members (group_id, image_id)
+                VALUES (?, ?)
+            ''', (group_id, image_id))
+
+        conn.commit()
+        print(f"[Whitelist] Added group {group_id} with {len(image_ids)} members")
+
+    def remove_whitelist_group(self, group_id: int):
+        """Delete a whitelist group (members will be CASCADE deleted)"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM whitelist_groups WHERE id = ?', (group_id,))
+        conn.commit()
+        print(f"[Whitelist] Removed group {group_id}")
+
+    def is_group_whitelisted(self, image_ids: List[int]) -> bool:
+        """
+        Check if a specific combination of image_ids is whitelisted
+        Returns True only if there's an exact match with a whitelist group
+        """
+        if not image_ids or len(image_ids) < 2:
+            return False
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        image_ids_set = set(image_ids)
+
+        # Get all whitelist groups with their members
+        cursor.execute('''
+            SELECT group_id, GROUP_CONCAT(image_id) as members
+            FROM whitelist_group_members
+            GROUP BY group_id
+        ''')
+
+        for row in cursor.fetchall():
+            whitelist_ids = set(map(int, row[1].split(',')))
+            if image_ids_set == whitelist_ids:
+                return True
+        return False
+
+    def get_whitelist_groups(self) -> List[Dict]:
+        """
+        Get all whitelist groups with their members' full information
+        Returns list of groups with member details
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Get all groups
+        cursor.execute('SELECT id, added_time FROM whitelist_groups ORDER BY added_time DESC')
+        groups = cursor.fetchall()
+
+        result = []
+        for group_id, added_time in groups:
+            # Get members for this group
+            cursor.execute('''
+                SELECT m.image_id, i.filename, i.filesize, i.file_path, i.phash, i.resolution
+                FROM whitelist_group_members m
+                JOIN image_hashes i ON m.image_id = i.id
+                WHERE m.group_id = ?
+            ''', (group_id,))
+
+            members = [
+                {
+                    'image_id': row[0],
+                    'filename': row[1],
+                    'filesize': row[2],
+                    'file_path': row[3],
+                    'phash': row[4],
+                    'resolution': row[5]
+                }
+                for row in cursor.fetchall()
+            ]
+
+            # Boundary handling: if group has < 2 members, delete it
+            if len(members) < 2:
+                cursor.execute('DELETE FROM whitelist_groups WHERE id = ?', (group_id,))
+                conn.commit()
+                print(f"[Whitelist] Auto-removed invalid group {group_id} (< 2 members)")
+                continue
+
+            result.append({
+                'group_id': group_id,
+                'added_time': added_time,
+                'members': members
+            })
+
+        return result
+
+    def cleanup_whitelist_groups(self) -> int:
+        """
+        Clean up invalid whitelist groups (with < 2 members)
+        Returns number of groups removed
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Find groups with < 2 members
+        cursor.execute('''
+            SELECT group_id, COUNT(*) as member_count
+            FROM whitelist_group_members
+            GROUP BY group_id
+            HAVING member_count < 2
+        ''')
+
+        invalid_groups = [row[0] for row in cursor.fetchall()]
+
+        if invalid_groups:
+            placeholders = ','.join('?' * len(invalid_groups))
+            cursor.execute(f'DELETE FROM whitelist_groups WHERE id IN ({placeholders})', invalid_groups)
+            conn.commit()
+            print(f"[Whitelist] Cleaned up {len(invalid_groups)} invalid groups")
+
+        return len(invalid_groups)
 
     def cleanup_missing_files(self, existing_files: set) -> Tuple[int, int]:
         """
@@ -584,6 +748,7 @@ class PHashCache:
 
         Returns:
             Tuple of (removed_hashes_count, removed_whitelist_count)
+            Note: whitelist_count will always be 0 since ON DELETE CASCADE handles it automatically
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -596,34 +761,16 @@ class PHashCache:
         missing_files = [f for f in db_files if f not in existing_files]
 
         # Remove missing files from image_hashes
+        # Whitelist records will be automatically removed by ON DELETE CASCADE
         removed_hashes = 0
         for file_path in missing_files:
             cursor.execute('DELETE FROM image_hashes WHERE file_path = ?', (file_path,))
             removed_hashes += cursor.rowcount
 
-        # Get all filename+filesize combinations from whitelist
-        cursor.execute('SELECT filename, filesize FROM whitelist')
-        whitelist_items = cursor.fetchall()
-
-        # Check if any files with these filename+filesize combinations still exist
-        removed_whitelist = 0
-        for filename, filesize in whitelist_items:
-            # Check if any existing file matches this filename+filesize
-            exists = any(
-                os.path.basename(f) == filename and os.path.getsize(f) == filesize
-                for f in existing_files
-                if os.path.exists(f)
-            )
-            if not exists:
-                cursor.execute(
-                    'DELETE FROM whitelist WHERE filename = ? AND filesize = ?',
-                    (filename, filesize)
-                )
-                removed_whitelist += cursor.rowcount
-
         conn.commit()
 
-        return removed_hashes, removed_whitelist
+        # Return 0 for whitelist since CASCADE handles it automatically
+        return (removed_hashes, 0)
 
     def verify_files_exist(self, file_paths: List[str]) -> Dict:
         """

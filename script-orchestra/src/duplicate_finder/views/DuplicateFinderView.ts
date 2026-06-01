@@ -73,9 +73,19 @@ export function useDuplicateFinderView() {
     }
   })
   const showWhitelistDrawer = ref(false)
-  const whitelist = ref<Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }>>([])
+  const whitelistGroups = ref<Array<{
+    group_id: number
+    added_time: number
+    members: Array<{
+      image_id: number
+      filename: string
+      filesize: number
+      file_path: string
+      phash: string
+      resolution: string
+    }>
+  }>>([])
   const isLoadingWhitelist = ref(false)
-  const isCleaning = ref(false)
 
   /**
    * Helper: Get filename from path (cross-platform)
@@ -894,6 +904,32 @@ export function useDuplicateFinderView() {
   }
 
   /**
+   * Check if all files in group are selected
+   */
+  function hasAllSelectedInGroup(group: ImageInfo[]): boolean {
+    return group.length > 0 && group.every(img => selectedForDelete.value.has(img.file_path))
+  }
+
+  /**
+   * Select all files in a group (or deselect if all are already selected)
+   */
+  function selectAllInGroup(group: ImageInfo[]) {
+    const allSelected = hasAllSelectedInGroup(group)
+
+    if (allSelected) {
+      // Deselect all
+      group.forEach(img => {
+        selectedForDelete.value.delete(img.file_path)
+      })
+    } else {
+      // Select all
+      group.forEach(img => {
+        selectedForDelete.value.add(img.file_path)
+      })
+    }
+  }
+
+  /**
    * Delete selected files in a specific group
    */
   async function deleteSelectedInGroup(group: ImageInfo[], groupIndex: number) {
@@ -1341,6 +1377,9 @@ export function useDuplicateFinderView() {
           (deleteResult.failed ? ` (${deleteResult.failed} failed)` : '')
         )
 
+        // Clear deep delete path after successful deletion
+        deepPathDelete.value = ''
+
         // Reload current page to refresh the view
         if (currentPage.value > 0) {
           await loadDuplicatesPage(currentPage.value)
@@ -1362,6 +1401,28 @@ export function useDuplicateFinderView() {
   function cancelDeepDelete() {
     showDeepDeleteDialog.value = false
     isDeleting.value = false
+  }
+
+  /**
+   * Set deep delete path from an image file path
+   * Extracts the directory path and sets it to deepPathDelete
+   * Always overwrites the existing value
+   */
+  function setDeepDeletePath(filePath: string) {
+    try {
+      // Extract directory path from file path
+      const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+      if (lastSlash >= 0) {
+        const dirPath = filePath.substring(0, lastSlash)
+        deepPathDelete.value = dirPath
+        ElMessage.success(`Deep delete path set to: ${dirPath}`)
+      } else {
+        ElMessage.warning('Could not extract directory path from file')
+      }
+    } catch (error: any) {
+      console.error('[Duplicate Finder] Failed to set deep delete path:', error)
+      ElMessage.error('Failed to set deep delete path')
+    }
   }
 
   // Compute relative path for display in deep delete dialog
@@ -1387,21 +1448,18 @@ export function useDuplicateFinderView() {
    * Add group to whitelist
    */
   async function addGroupToWhitelist(group: ImageInfo[], groupIndex: number) {
-    if (group.length === 0) return
+    if (group.length < 2) return
 
-    const firstImage = group[0]
-    // Handle both Unix (/) and Windows (\) path separators
-    let filename = firstImage.filename
-    if (!filename && firstImage.file_path) {
-      const lastSlash = Math.max(firstImage.file_path.lastIndexOf('/'), firstImage.file_path.lastIndexOf('\\'))
-      filename = lastSlash >= 0 ? firstImage.file_path.substring(lastSlash + 1) : firstImage.file_path
+    // Collect all image_ids from the group
+    const image_ids = group.map(img => img.id).filter(id => id) as number[]
+    if (image_ids.length < 2) {
+      ElMessage.error('Group must have at least 2 images with valid IDs')
+      return
     }
-    filename = filename || ''
-    const filesize = firstImage.filesize
 
     try {
       await ElMessageBox.confirm(
-        `Add "${filename}" (${formatFileSize(filesize)}) to whitelist? This group will not appear in future scans.`,
+        `Add this group (${image_ids.length} images) to whitelist? This group will not appear in future scans.`,
         'Add to Whitelist',
         {
           confirmButtonText: 'Add',
@@ -1410,11 +1468,11 @@ export function useDuplicateFinderView() {
         }
       )
 
-      await DuplicateFinderService.addToWhitelist(filename, filesize, `Group ${groupIndex + 1}`, firstImage.file_path)
-      ElMessage.success('Added to whitelist')
+      await DuplicateFinderService.addGroupToWhitelist(image_ids)
+      ElMessage.success('Added group to whitelist')
 
       // Auto-refresh whitelist
-      await loadWhitelist()
+      await loadWhitelistGroups()
 
       // Remove this group from results
       if (scanResult.value) {
@@ -1429,13 +1487,13 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Load whitelist
+   * Load whitelist groups
    */
-  async function loadWhitelist() {
+  async function loadWhitelistGroups() {
     isLoadingWhitelist.value = true
     try {
-      const result = await DuplicateFinderService.getWhitelist()
-      whitelist.value = result.whitelist
+      const result = await DuplicateFinderService.getWhitelistGroups()
+      whitelistGroups.value = result.whitelist_groups
     } catch (error: any) {
       console.error('[Duplicate Finder] Failed to load whitelist:', error)
       ElMessage.error(error.message || 'Failed to load whitelist')
@@ -1445,12 +1503,15 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Remove from whitelist
+   * Remove whitelist group
    */
-  async function removeFromWhitelist(filename: string, filesize: number, index: number) {
+  async function removeWhitelistGroup(group_id: number, index: number) {
     try {
+      const group = whitelistGroups.value[index]
+      const memberCount = group?.members?.length || 0
+
       await ElMessageBox.confirm(
-        `Remove "${filename}" from whitelist?`,
+        `Remove this whitelist group (${memberCount} images)?`,
         'Confirm Remove',
         {
           confirmButtonText: 'Remove',
@@ -1459,11 +1520,21 @@ export function useDuplicateFinderView() {
         }
       )
 
-      await DuplicateFinderService.removeFromWhitelist(filename, filesize)
+      await DuplicateFinderService.removeWhitelistGroup(group_id)
       ElMessage.success('Removed from whitelist')
 
       // Remove from local list
-      whitelist.value.splice(index, 1)
+      whitelistGroups.value.splice(index, 1)
+
+      // Auto-refresh Phase 3 results if they exist
+      if (scanResult.value && scanResult.value.duplicate_groups) {
+        ElMessage.info('Refreshing duplicate groups...')
+        if (currentPage.value > 0) {
+          await loadDuplicatesPage(currentPage.value)
+        } else {
+          await runPhase3()
+        }
+      }
     } catch (error: any) {
       if (error !== 'cancel') {
         console.error('[Duplicate Finder] Failed to remove from whitelist:', error)
@@ -1480,33 +1551,6 @@ export function useDuplicateFinderView() {
     return date.toLocaleString()
   }
 
-  /**
-   * Clean up database by removing entries for files that no longer exist
-   */
-  async function cleanupDatabase() {
-    try {
-      await ElMessageBox.confirm(
-        'This will scan your folder paths and remove database entries for files that no longer exist. Continue?',
-        'Confirm Cleanup',
-        {
-          confirmButtonText: 'Clean',
-          cancelButtonText: 'Cancel',
-          type: 'warning'
-        }
-      )
-
-      isCleaning.value = true
-      const result = await DuplicateFinderService.cleanupDatabase()
-      ElMessage.success(result.message || `Cleanup complete: removed ${result.removed_hashes} hash entries and ${result.removed_whitelist} whitelist entries`)
-    } catch (error: any) {
-      if (error !== 'cancel') {
-        console.error('[Duplicate Finder] Cleanup failed:', error)
-        ElMessage.error(error.message || 'Cleanup failed')
-      }
-    } finally {
-      isCleaning.value = false
-    }
-  }
 
   /**
    * Verify and cleanup current scan results by checking which files still exist
@@ -1604,7 +1648,6 @@ export function useDuplicateFinderView() {
     isScanning,
     isSaving,
     isDeleting,
-    isCleaning,
     isVerifying,
     scanProgress,
     scanResult,
@@ -1612,7 +1655,7 @@ export function useDuplicateFinderView() {
     hasResults,
     settings,
     showWhitelistDrawer,
-    whitelist,
+    whitelistGroups,
     isLoadingWhitelist,
     // Pagination
     currentPage,
@@ -1648,6 +1691,8 @@ export function useDuplicateFinderView() {
     stopPhase3,
     toggleFileSelection,
     hasSelectedInGroup,
+    hasAllSelectedInGroup,
+    selectAllInGroup,
     getSelectedCountInGroup,
     deleteSelectedInGroup,
     openFolder,
@@ -1668,12 +1713,11 @@ export function useDuplicateFinderView() {
     executeDeepPathDelete,
     confirmDeepDelete,
     cancelDeepDelete,
+    setDeepDeletePath,
     addGroupToWhitelist,
-    loadWhitelist,
-    removeFromWhitelist,
+    loadWhitelistGroups,
+    removeWhitelistGroup,
     formatTimestamp,
-    cleanupDatabase,
-    verifyAndCleanup,
     addPreferFolder,
     removePreferFolder
   }

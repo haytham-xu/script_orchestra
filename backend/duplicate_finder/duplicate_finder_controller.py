@@ -820,63 +820,85 @@ class OpenFolderResource(Resource):
 @ns.route("/whitelist")
 class WhitelistResource(Resource):
     def get(self):
-        """Get all whitelisted items"""
+        """Get all whitelisted groups"""
         try:
             cache = PHashCache()
+            groups = cache.get_whitelist_groups()
+            # Also get old-style individual whitelist for compatibility
             whitelist = cache.get_whitelist()
-            return {"whitelist": whitelist}
+            return {
+                "whitelist_groups": groups,
+                "whitelist": whitelist  # Keep for backward compatibility
+            }
         except Exception as e:
             return {"error": str(e)}, 500
 
     def post(self):
         """
-        Add files to whitelist by filename + filesize
+        Add a duplicate group to whitelist
 
         Request body:
         {
-            "filename": "IMG_001.jpg",
-            "filesize": 1234567,
-            "note": "Optional note",
-            "preview_path": "Optional path to preview image"
+            "image_ids": [123, 456, 789]
         }
         """
         data = request.json
-        if not data or 'filename' not in data or 'filesize' not in data:
-            return {"error": "Missing 'filename' or 'filesize'"}, 400
+        if not data or 'image_ids' not in data:
+            return {"error": "Missing 'image_ids'"}, 400
 
-        filename = data['filename']
-        filesize = data['filesize']
-        note = data.get('note')
-        preview_path = data.get('preview_path')
+        image_ids = data['image_ids']
+        if not isinstance(image_ids, list) or len(image_ids) < 2:
+            return {"error": "Group must have at least 2 images"}, 400
 
         try:
             cache = PHashCache()
-            cache.add_to_whitelist(filename, filesize, note, preview_path)
-            return {"message": "Added to whitelist successfully"}
+            cache.add_group_to_whitelist(image_ids)
+            return {"message": "Added group to whitelist successfully"}
         except Exception as e:
             return {"error": str(e)}, 500
 
     def delete(self):
         """
-        Remove from whitelist
+        Remove a whitelist group
 
         Query params:
-            filename: File name
-            filesize: File size in bytes
+            group_id: Whitelist group ID
         """
-        filename = request.args.get('filename')
-        filesize = request.args.get('filesize')
+        group_id = request.args.get('group_id')
 
-        if not filename or not filesize:
-            return {"error": "Missing 'filename' or 'filesize'"}, 400
+        if not group_id:
+            return {"error": "Missing 'group_id'"}, 400
 
         try:
-            filesize = int(filesize)
+            group_id = int(group_id)
             cache = PHashCache()
-            cache.remove_from_whitelist(filename, filesize)
+            cache.remove_whitelist_group(group_id)
             return {"message": "Removed from whitelist successfully"}
         except ValueError:
-            return {"error": "Invalid filesize value"}, 400
+            return {"error": "Invalid group_id value"}, 400
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+
+@ns.route("/whitelist/cleanup")
+class WhitelistCleanupResource(Resource):
+    def post(self):
+        """
+        Clean up invalid whitelist groups (with < 2 members)
+
+        Response:
+        {
+            "removed_count": 5,
+            "message": "Cleanup complete"
+        }
+        """
+        try:
+            cache = PHashCache()
+            removed = cache.cleanup_whitelist_groups()
+            return {
+                "removed_count": removed,
+                "message": f"Cleaned up {removed} invalid whitelist groups"
+            }
         except Exception as e:
             return {"error": str(e)}, 500
 
@@ -1420,15 +1442,17 @@ class BatchDeleteByPathResource(Resource):
 
             # Query all duplicate files under the specified path
             # A file is a duplicate if it appears in the similarities table
+            # IMPORTANT: Use exact path match to avoid matching similar paths
+            # e.g., /a/b/c should NOT match /a/b/c-1 or /a/b/c_backup
             cursor.execute('''
                 SELECT DISTINCT i.file_path
                 FROM image_hashes i
-                WHERE i.file_path LIKE ?
+                WHERE (i.file_path = ? OR i.file_path LIKE ?)
                 AND EXISTS (
                     SELECT 1 FROM phash_similarities s
                     WHERE s.image_id_a = i.id OR s.image_id_b = i.id
                 )
-            ''', (f"{deep_path}%",))
+            ''', (deep_path, f"{deep_path}{os.sep}%"))
 
             matched_files = [row[0] for row in cursor.fetchall()]
 

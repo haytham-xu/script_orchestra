@@ -225,6 +225,12 @@
                 <div class="group-actions">
                   <el-button
                     size="small"
+                    @click="selectAllInGroup(group)"
+                  >
+                    {{ hasAllSelectedInGroup(group) ? '❎ Deselect All' : '☑️ Select All' }}
+                  </el-button>
+                  <el-button
+                    size="small"
                     @click="addGroupToWhitelist(group, groupIndex)"
                   >
                     ✅ Add to Whitelist
@@ -272,13 +278,23 @@
                     <span>{{ image.resolution }}</span>
                     <span>{{ formatFileSize(image.filesize) }}</span>
                   </div>
-                  <el-button
-                    size="small"
-                    @click.stop="openFolder(image.file_path)"
-                    class="open-folder-button"
-                  >
-                    📁 Open Folder
-                  </el-button>
+                  <div class="image-actions">
+                    <el-button
+                      size="small"
+                      @click.stop="openFolder(image.file_path)"
+                      class="action-button"
+                    >
+                      📁 Open Folder
+                    </el-button>
+                    <el-button
+                      size="small"
+                      type="warning"
+                      @click.stop="setDeepDeletePath(image.file_path)"
+                      class="action-button"
+                    >
+                      🎯 Deep Delete Path
+                    </el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -654,70 +670,6 @@
           </div>
         </div>
 
-        <el-divider />
-
-        <!-- Whitelist Management -->
-        <div class="settings-section-drawer">
-          <h3>Whitelist Management</h3>
-          <p class="whitelist-hint">
-            Whitelisted items will be excluded from future duplicate scans.
-          </p>
-
-          <el-button
-            type="primary"
-            @click="loadWhitelist"
-            :loading="isLoadingWhitelist"
-            style="margin-bottom: 16px"
-          >
-            🔄 Refresh List
-          </el-button>
-
-          <div v-if="whitelist.length > 0" class="whitelist-list">
-            <div v-for="(item, index) in whitelist" :key="`${item.filename}-${item.filesize}`" class="whitelist-item">
-              <img v-if="item.preview_path" :src="getImageUrl(item.preview_path)" class="whitelist-thumbnail" :alt="item.filename" />
-              <div class="whitelist-info">
-                <p class="whitelist-filename">{{ item.filename }}</p>
-                <p class="whitelist-meta">
-                  <span>Size: {{ formatFileSize(item.filesize) }}</span>
-                  <span>Added: {{ formatTimestamp(item.added_time) }}</span>
-                </p>
-                <p v-if="item.note" class="whitelist-note">{{ item.note }}</p>
-              </div>
-              <el-button
-                type="danger"
-                size="small"
-                @click="removeFromWhitelist(item.filename, item.filesize, index)"
-              >
-                Remove
-              </el-button>
-            </div>
-          </div>
-          <el-empty v-else description="No whitelisted items" />
-        </div>
-
-        <el-divider />
-
-        <!-- Database Maintenance -->
-        <div class="settings-section-drawer">
-          <h3>Database Maintenance</h3>
-          <p class="settings-hint-text">
-            Clean up database by removing entries for files that no longer exist on disk.
-          </p>
-
-          <el-button
-            type="warning"
-            @click="cleanupDatabase"
-            :loading="isCleaning"
-            :disabled="!settings.folder_paths || settings.folder_paths.length === 0"
-          >
-            {{ isCleaning ? 'Cleaning...' : '🧹 Clean Database' }}
-          </el-button>
-
-          <p class="settings-hint" style="margin-top: 12px;">
-            This will scan all configured folder paths and remove stale database entries. Use this periodically to keep database healthy.
-          </p>
-        </div>
-
         <!-- Unified Save Button -->
         <div style="padding: 20px; border-top: 1px solid #dcdfe6; margin-top: 20px; background: #fafafa;">
           <el-button
@@ -729,7 +681,72 @@
           >
             💾 Save All Settings
           </el-button>
+          <p style="margin-top: 12px; font-size: 12px; color: #909399; text-align: center;">
+            ⬆️ Settings above require Save to apply
+          </p>
         </div>
+
+        <el-divider />
+
+        <!-- Whitelist Management -->
+        <div class="settings-section-drawer">
+          <h3>Whitelist Management</h3>
+          <p class="whitelist-hint">
+            Whitelisted groups will be excluded from future duplicate scans.
+            <br>
+            <strong>⚡ Changes take effect immediately (no Save needed)</strong>
+          </p>
+
+          <el-button
+            type="primary"
+            @click="loadWhitelistGroups"
+            :loading="isLoadingWhitelist"
+            style="margin-bottom: 16px"
+          >
+            🔄 Refresh List
+          </el-button>
+
+          <div v-if="whitelistGroups.length > 0" class="whitelist-groups-list">
+            <div
+              v-for="(group, index) in whitelistGroups"
+              :key="group.group_id"
+              class="whitelist-group-card"
+            >
+              <div class="whitelist-group-header">
+                <span class="whitelist-group-title">
+                  Group {{ group.group_id }} ({{ group.members.length }} images)
+                </span>
+                <span class="whitelist-group-time">
+                  {{ formatTimestamp(group.added_time) }}
+                </span>
+                <el-button
+                  type="danger"
+                  size="small"
+                  @click="removeWhitelistGroup(group.group_id, index)"
+                >
+                  Remove
+                </el-button>
+              </div>
+
+              <div class="whitelist-group-members">
+                <div
+                  v-for="member in group.members"
+                  :key="member.image_id"
+                  class="whitelist-member-thumbnail"
+                >
+                  <img
+                    :src="getImageUrl(member.file_path)"
+                    :alt="member.filename"
+                    class="whitelist-thumbnail-img"
+                  />
+                  <p class="whitelist-member-filename">{{ member.filename }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else description="No whitelisted groups" />
+        </div>
+
       </div>
     </el-drawer>
 
@@ -820,7 +837,7 @@ const {
   hasResults,
   settings,
   showWhitelistDrawer,
-  whitelist,
+  whitelistGroups,
   isLoadingWhitelist,
   // Pagination
   currentPage,
@@ -856,6 +873,8 @@ const {
   stopPhase3,
   toggleFileSelection,
   hasSelectedInGroup,
+  hasAllSelectedInGroup,
+  selectAllInGroup,
   getSelectedCountInGroup,
   deleteSelectedInGroup,
   openFolder,
@@ -876,9 +895,10 @@ const {
   executeDeepPathDelete,
   confirmDeepDelete,
   cancelDeepDelete,
+  setDeepDeletePath,
   addGroupToWhitelist,
-  loadWhitelist,
-  removeFromWhitelist,
+  loadWhitelistGroups,
+  removeWhitelistGroup,
   formatTimestamp,
   cleanupDatabase,
   verifyAndCleanup,
@@ -1474,6 +1494,18 @@ const {
   justify-content: space-between;
   font-size: 12px;
   color: #909399;
+  margin-bottom: 8px;
+}
+
+.image-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.image-actions .action-button {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Settings Drawer */
@@ -1614,56 +1646,69 @@ const {
   font-size: 14px;
 }
 
-.whitelist-list {
+.whitelist-groups-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
-.whitelist-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+.whitelist-group-card {
   padding: 16px;
   background: #f5f7fa;
   border-radius: 8px;
   border: 1px solid #dcdfe6;
 }
 
-.whitelist-thumbnail {
-  width: 80px;
-  height: 60px;
-  object-fit: cover;
-  border-radius: 4px;
-  flex-shrink: 0;
+.whitelist-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e4e7ed;
 }
 
-.whitelist-info {
-  flex: 1;
-  margin-right: 16px;
-}
-
-.whitelist-filename {
-  margin: 0 0 8px 0;
+.whitelist-group-title {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+  flex: 1;
 }
 
-.whitelist-meta {
-  margin: 0 0 4px 0;
+.whitelist-group-time {
   font-size: 12px;
   color: #909399;
-  display: flex;
-  gap: 16px;
 }
 
-.whitelist-note {
+.whitelist-group-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px;
+}
+
+.whitelist-member-thumbnail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.whitelist-thumbnail-img {
+  width: 100%;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  border: 1px solid #dcdfe6;
+}
+
+.whitelist-member-filename {
   margin: 0;
-  font-size: 13px;
+  font-size: 11px;
   color: #606266;
-  font-style: italic;
+  text-align: center;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 /* Action Buttons */

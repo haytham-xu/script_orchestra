@@ -118,26 +118,39 @@ export class DuplicateFinderService {
   }
 
   /**
-   * Add to whitelist
+   * Add duplicate group to whitelist
    */
-  static async addToWhitelist(filename: string, filesize: number, note?: string, preview_path?: string): Promise<{ message: string }> {
-    const response = await postRequest(`${this.BASE_URL}/whitelist`, {}, { filename, filesize, note, preview_path })
+  static async addGroupToWhitelist(image_ids: number[]): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/whitelist`, {}, { image_ids })
     return response
   }
 
   /**
-   * Get whitelist
+   * Get all whitelist groups
    */
-  static async getWhitelist(): Promise<{ whitelist: Array<{ filename: string; filesize: number; added_time: number; note: string; preview_path?: string }> }> {
+  static async getWhitelistGroups(): Promise<{
+    whitelist_groups: Array<{
+      group_id: number
+      added_time: number
+      members: Array<{
+        image_id: number
+        filename: string
+        filesize: number
+        file_path: string
+        phash: string
+        resolution: string
+      }>
+    }>
+  }> {
     const response = await getRequest(`${this.BASE_URL}/whitelist`)
     return response
   }
 
   /**
-   * Remove from whitelist
+   * Remove whitelist group
    */
-  static async removeFromWhitelist(filename: string, filesize: number): Promise<{ message: string }> {
-    const response = await fetch(`${BACKEND_BASE_URL}${this.BASE_URL}/whitelist?filename=${encodeURIComponent(filename)}&filesize=${filesize}`, {
+  static async removeWhitelistGroup(group_id: number): Promise<{ message: string }> {
+    const response = await fetch(`${BACKEND_BASE_URL}${this.BASE_URL}/whitelist?group_id=${group_id}`, {
       method: 'DELETE'
     })
     if (!response.ok) {
@@ -145,6 +158,14 @@ export class DuplicateFinderService {
       throw new Error(error.error || 'Failed to remove from whitelist')
     }
     return response.json()
+  }
+
+  /**
+   * Clean up invalid whitelist groups (with < 2 members)
+   */
+  static async cleanupWhitelistGroups(): Promise<{ removed_count: number; message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/whitelist/cleanup`, {}, {})
+    return response
   }
 
   /**
