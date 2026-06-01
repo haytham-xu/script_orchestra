@@ -817,25 +817,33 @@ class DuplicateFinderWorkflow:
         print(f"[Phase 3] Fetching details for {len(all_duplicate_ids)} unique duplicate images (from {total_groups} groups)...")
 
         if all_duplicate_ids:
-            # Bulk query: fetch all image details in ONE query
-            placeholders = ','.join('?' * len(all_duplicate_ids))
-            cursor.execute(f'''
-                SELECT id, filename, filesize, file_path, phash, resolution
-                FROM image_hashes
-                WHERE id IN ({placeholders})
-            ''', all_duplicate_ids)
-
-            # Build lookup dictionary
+            # Bulk query with batching to avoid SQLite's 999 variable limit
+            # SQLite has SQLITE_MAX_VARIABLE_NUMBER limit (default 999)
+            batch_size = 900  # Use 900 to be safe
             all_images_dict = {}
-            for row in cursor.fetchall():
-                all_images_dict[row[0]] = {
-                    'id': row[0],
-                    'filename': row[1],
-                    'filesize': row[2],
-                    'file_path': row[3],
-                    'phash': row[4],
-                    'resolution': row[5]
-                }
+
+            for i in range(0, len(all_duplicate_ids), batch_size):
+                batch = all_duplicate_ids[i:i + batch_size]
+                placeholders = ','.join('?' * len(batch))
+                cursor.execute(f'''
+                    SELECT id, filename, filesize, file_path, phash, resolution
+                    FROM image_hashes
+                    WHERE id IN ({placeholders})
+                ''', batch)
+
+                # Add to lookup dictionary
+                for row in cursor.fetchall():
+                    all_images_dict[row[0]] = {
+                        'id': row[0],
+                        'filename': row[1],
+                        'filesize': row[2],
+                        'file_path': row[3],
+                        'phash': row[4],
+                        'resolution': row[5]
+                    }
+
+                if len(all_duplicate_ids) > batch_size:
+                    print(f"[Phase 3] Fetched batch {i // batch_size + 1}/{(len(all_duplicate_ids) + batch_size - 1) // batch_size} ({len(batch)} images)")
 
             print(f"[Phase 3] Fetched {len(all_images_dict)} image details, now assembling groups...")
 
