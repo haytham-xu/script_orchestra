@@ -937,7 +937,16 @@ export function useDuplicateFinderView() {
    * Open folder containing the image
    */
   async function openFolder(filePath: string) {
-    const folderPath = filePath.substring(0, filePath.lastIndexOf('/'))
+    // Handle both Unix (/) and Windows (\) path separators
+    const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+
+    if (lastSlash === -1) {
+      ElMessage.error('Invalid file path')
+      return
+    }
+
+    const folderPath = filePath.substring(0, lastSlash)
+
     try {
       const result = await DuplicateFinderService.openFolder(folderPath)
       if (result.success) {
