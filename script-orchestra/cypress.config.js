@@ -1,6 +1,7 @@
 import { defineConfig } from 'cypress'
 import axios from 'axios'
 import fs from 'fs'
+import path from 'path'
 
 const BACKEND_URL = 'http://localhost:5001'
 
@@ -26,9 +27,9 @@ export default defineConfig({
     responseTimeout: 30000,
 
     // 截图和视频配置
-    video: true,  // 开启视频录制
+    video: false,  // 关闭视频录制
     videoCompression: 32,  // 视频压缩质量（0-51，数字越小质量越高，文件越大）
-    screenshotOnRunFailure: true,
+    screenshotOnRunFailure: false,  // 关闭失败截图
 
     // 其他配置
     chromeWebSecurity: false,
@@ -216,6 +217,117 @@ export default defineConfig({
             console.error(`❌ Error reading snapshot for ${tool}:`, error.message)
             throw error
           }
+        },
+
+        // File system helper tasks
+
+        // Create directory
+        createDirectory(dirPath) {
+          try {
+            if (!fs.existsSync(dirPath)) {
+              fs.mkdirSync(dirPath, { recursive: true })
+              console.log(`✅ Created directory: ${dirPath}`)
+            }
+            return null
+          } catch (error) {
+            console.error(`❌ Error creating directory ${dirPath}:`, error.message)
+            throw error
+          }
+        },
+
+        // Check if a file exists
+        fileExists(filePath) {
+          return fs.existsSync(filePath)
+        },
+
+        // Check if directory exists
+        directoryExists(dirPath) {
+          try {
+            return fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()
+          } catch (error) {
+            return false
+          }
+        },
+
+        // Count files in directory
+        countFilesInDirectory(dirPath) {
+          try {
+            if (!fs.existsSync(dirPath)) {
+              return 0
+            }
+            const files = fs.readdirSync(dirPath)
+            return files.filter(file => {
+              const fullPath = path.join(dirPath, file)
+              return fs.statSync(fullPath).isFile()
+            }).length
+          } catch (error) {
+            console.error(`❌ Error counting files in ${dirPath}:`, error.message)
+            return 0
+          }
+        },
+
+        // Check database using sqlite3 (for verification only)
+        async checkDatabase({ dbPath, checks }) {
+          // This task is kept for database verification in complex tests
+          // It queries the SQLite database directly to verify test results
+          const sqlite3 = await import('sqlite3').then(m => m.default)
+
+          return new Promise((resolve, reject) => {
+            const db = new sqlite3.Database(dbPath, (err) => {
+              if (err) {
+                reject(err)
+                return
+              }
+            })
+
+            const results = []
+            let pending = checks.length
+            let allPassed = true
+
+            checks.forEach((check) => {
+              const { table, condition = '1=1', expectedCount } = check
+              const query = `SELECT COUNT(*) as count FROM ${table} WHERE ${condition}`
+
+              db.get(query, [], (err, row) => {
+                if (err) {
+                  results.push({
+                    table,
+                    condition,
+                    expected: expectedCount,
+                    actual: null,
+                    passed: false,
+                    error: err.message
+                  })
+                  allPassed = false
+                } else {
+                  const actualCount = row.count
+                  const passed = expectedCount === undefined || actualCount === expectedCount
+                  allPassed = allPassed && passed
+
+                  results.push({
+                    table,
+                    condition,
+                    expected: expectedCount,
+                    actual: actualCount,
+                    passed
+                  })
+                }
+
+                pending--
+                if (pending === 0) {
+                  db.close()
+
+                  if (allPassed) {
+                    console.log(`✅ Database checks passed`)
+                  } else {
+                    console.error(`❌ Database checks failed:`, results)
+                  }
+
+                  resolve({ all_passed: allPassed, results })
+                }
+              })
+            })
+          })
         }
       })
 

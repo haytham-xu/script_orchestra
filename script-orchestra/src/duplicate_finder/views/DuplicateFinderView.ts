@@ -1404,18 +1404,19 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Set deep delete path from an image file path
-   * Extracts the directory path and sets it to deepPathDelete
+   * Set deep delete path from an image file path and trigger preview
+   * Extracts the directory path, sets it to deepPathDelete, and shows preview dialog
    * Always overwrites the existing value
    */
-  function setDeepDeletePath(filePath: string) {
+  async function setDeepDeletePath(filePath: string) {
     try {
       // Extract directory path from file path
       const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
       if (lastSlash >= 0) {
         const dirPath = filePath.substring(0, lastSlash)
         deepPathDelete.value = dirPath
-        ElMessage.success(`Deep delete path set to: ${dirPath}`)
+        // Auto-trigger deep delete preview
+        await executeDeepPathDelete()
       } else {
         ElMessage.warning('Could not extract directory path from file')
       }

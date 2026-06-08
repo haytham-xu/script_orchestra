@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from extensions import restx_api
+import time
 
 # Import photo_classifier as independent module (using Blueprint)
 from photo_classifier import blueprint as photo_classifier_blueprint
@@ -57,6 +58,14 @@ def create_app() -> Flask:
 
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
+
+    # Health check endpoint
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return {
+            'status': 'ok',
+            'timestamp': time.time()
+        }, 200
 
     # Initialize WebSocket using duplicate_finder's init (both are identical)
     # This creates a single shared socketio instance for all tools

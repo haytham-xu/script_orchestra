@@ -1609,6 +1609,163 @@ class BatchDeleteByPathResource(Resource):
 
 # ========== Cypress Test Support Endpoints ==========
 
+@ns.route("/cypress/test-data/duplicate-groups")
+class CypressGenerateDuplicateGroupsResource(Resource):
+    def post(self):
+        """
+        Generate duplicate groups for testing
+
+        Request body:
+        {
+            "base_path": "/path/to/test/dir",
+            "group_count": 10,
+            "files_per_group": 2
+        }
+        """
+        from .cypress_test_support import TestImageGenerator
+        import os
+
+        data = request.json
+        base_path = data.get('base_path')
+        group_count = data.get('group_count', 1)
+        files_per_group = data.get('files_per_group', 2)
+
+        if not base_path:
+            return {'error': 'base_path required'}, 400
+
+        try:
+            os.makedirs(base_path, exist_ok=True)
+            gen = TestImageGenerator()
+            total_created = 0
+
+            for i in range(1, group_count + 1):
+                # Create folders for each file in the group
+                folder_paths = []
+                for j in range(files_per_group):
+                    folder = f'{base_path}/group{i}_folder{j + 1}'
+                    os.makedirs(folder, exist_ok=True)
+                    folder_paths.append(f'{folder}/img{i}.png')
+
+                # Generate master image
+                master_file = folder_paths[0]
+                gen.generate_labeled_image(
+                    master_file,
+                    group_label=f'Group {i}',
+                    file_label=f'img{i}.png',
+                    width=300,
+                    height=200
+                )
+                total_created += 1
+
+                # Copy to other folders
+                for j in range(1, files_per_group):
+                    shutil.copy(master_file, folder_paths[j])
+                    total_created += 1
+
+            return {
+                'success': True,
+                'total_created': total_created,
+                'group_count': group_count,
+                'files_per_group': files_per_group
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Cypress] Error generating duplicate groups: {e}")
+            print(traceback.format_exc())
+            return {'error': str(e)}, 500
+
+
+@ns.route("/cypress/test-data/identical-images")
+class CypressGenerateIdenticalImagesResource(Resource):
+    def post(self):
+        """
+        Generate identical images at multiple paths
+
+        Request body:
+        {
+            "paths": ["/path/1.png", "/path/2.png"],
+            "label": "Test Group"
+        }
+        """
+        from .cypress_test_support import TestImageGenerator
+        import os
+
+        data = request.json
+        paths = data.get('paths', [])
+        label = data.get('label', 'Test')
+
+        if not paths or len(paths) < 2:
+            return {'error': 'At least 2 paths required'}, 400
+
+        try:
+            gen = TestImageGenerator()
+
+            # Generate master image
+            master_file = paths[0]
+            os.makedirs(os.path.dirname(master_file), exist_ok=True)
+            gen.generate_labeled_image(
+                master_file,
+                group_label=label,
+                file_label=os.path.basename(master_file),
+                width=300,
+                height=200
+            )
+
+            # Copy to other paths
+            for path in paths[1:]:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                shutil.copy(master_file, path)
+
+            return {
+                'success': True,
+                'created_count': len(paths),
+                'paths': paths
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Cypress] Error generating identical images: {e}")
+            print(traceback.format_exc())
+            return {'error': str(e)}, 500
+
+
+@ns.route("/cypress/test-data/unique-image")
+class CypressGenerateUniqueImageResource(Resource):
+    def post(self):
+        """
+        Generate a unique random image
+
+        Request body:
+        {
+            "file_path": "/path/to/image.png"
+        }
+        """
+        from .cypress_test_support import TestImageGenerator
+        import os
+        import random
+
+        data = request.json
+        file_path = data.get('file_path')
+
+        if not file_path:
+            return {'error': 'file_path required'}, 400
+
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            gen = TestImageGenerator()
+            seed = random.randint(1, 1000000)
+            gen.generate_random_image(file_path, width=300, height=200, seed=seed)
+
+            return {
+                'success': True,
+                'file_path': file_path
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Cypress] Error generating unique image: {e}")
+            print(traceback.format_exc())
+            return {'error': str(e)}, 500
+
+
 @ns.route("/cypress/duplicate-finder/setup")
 class CypressTestSetupResource(Resource):
     def post(self):

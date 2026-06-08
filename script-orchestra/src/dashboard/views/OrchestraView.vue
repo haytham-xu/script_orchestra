@@ -20,7 +20,7 @@
       <template #header>Unzip</template>
       <!-- <p>Here is content</p> -->
     </el-card>
-    <el-card @click="goTo('/duplicate-finder')">
+    <el-card @click="goTo('/duplicate-finder')" data-testid="duplicate-finder">
       <template #header>Duplicate Finder</template>
       <!-- <p>Here is content</p> -->
     </el-card>

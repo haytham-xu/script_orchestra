@@ -81,6 +81,7 @@
               placeholder="Deep Path Delete"
               style="width: 560px;"
               size="default"
+              data-testid="deep-delete-path-input"
             />
           </el-tooltip>
           <el-button
@@ -88,6 +89,7 @@
             @click="executeDeepPathDelete"
             :loading="isDeleting"
             size="default"
+            data-testid="deep-delete-btn"
           >
             🗑️ Delete
           </el-button>
@@ -95,7 +97,7 @@
       </div>
 
       <!-- Phase Progress Display -->
-      <div v-if="phaseProgress.phase > 0" class="phase-progress-display">
+      <div v-if="phaseProgress.phase > 0" class="phase-progress-display" data-testid="phase-progress">
         <p class="phase-message">{{ phaseProgress.message }}</p>
         <el-progress
           :percentage="phaseProgress.percentage"
@@ -105,7 +107,7 @@
       </div>
 
       <!-- Phase 1 Summary (when complete) -->
-      <el-card v-if="phase1Summary" class="summary-card" style="margin-top: 20px;">
+      <el-card v-if="phase1Summary" class="summary-card" style="margin-top: 20px;" data-testid="phase1-report">
         <template #header>
           <div style="display: flex; align-items: center; justify-content: space-between;">
             <span>📊 Phase 1 Summary</span>
@@ -139,7 +141,7 @@
       </el-card>
 
       <!-- Phase 2 Summary (when complete) -->
-      <el-card v-if="phase2Summary" class="summary-card" style="margin-top: 20px;">
+      <el-card v-if="phase2Summary" class="summary-card" style="margin-top: 20px;" data-testid="phase2-report">
         <template #header>
           <div style="display: flex; align-items: center; justify-content: space-between;">
             <span>📊 Phase 2 Summary</span>
@@ -194,7 +196,7 @@
           </div>
           <div class="summary-item">
             <span class="summary-label">Total Duplicates:</span>
-            <span class="summary-value highlight">{{ scanResult.duplicate_count }}</span>
+            <span class="summary-value highlight" data-testid="duplicate-count">{{ scanResult.duplicate_count }}</span>
           </div>
         </div>
       </el-card>
@@ -209,6 +211,7 @@
           :page-sizes="[10, 20, 50, 100]"
           @current-change="handlePageChange"
           @size-change="handlePageSizeChange"
+          data-testid="pagination"
         />
       </div>
 
@@ -226,12 +229,14 @@
                   <el-button
                     size="small"
                     @click="selectAllInGroup(group)"
+                    data-testid="select-all-checkbox"
                   >
                     {{ hasAllSelectedInGroup(group) ? '❎ Deselect All' : '☑️ Select All' }}
                   </el-button>
                   <el-button
                     size="small"
                     @click="addGroupToWhitelist(group, groupIndex)"
+                    data-testid="add-to-whitelist-btn"
                   >
                     ✅ Add to Whitelist
                   </el-button>
@@ -283,6 +288,7 @@
                       size="small"
                       @click.stop="openFolder(image.file_path)"
                       class="action-button"
+                      data-testid="open-folder-btn"
                     >
                       📁 Open Folder
                     </el-button>
@@ -291,6 +297,7 @@
                       type="warning"
                       @click.stop="setDeepDeletePath(image.file_path)"
                       class="action-button"
+                      data-testid="set-deep-delete-path-btn"
                     >
                       🎯 Deep Delete Path
                     </el-button>
@@ -702,6 +709,7 @@
             @click="loadWhitelistGroups"
             :loading="isLoadingWhitelist"
             style="margin-bottom: 16px"
+            data-testid="refresh-whitelist-btn"
           >
             🔄 Refresh List
           </el-button>
@@ -723,6 +731,7 @@
                   type="danger"
                   size="small"
                   @click="removeWhitelistGroup(group.group_id, index)"
+                  data-testid="remove-whitelist-btn"
                 >
                   Remove
                 </el-button>
@@ -780,7 +789,7 @@
 
         <div class="deep-delete-info">
           <div class="info-label">Under Path:</div>
-          <div class="info-value path-value">{{ deepDeletePreview.deepPath }}</div>
+          <div class="info-value path-value" data-testid="deep-delete-path-display">{{ deepDeletePreview.deepPath }}</div>
         </div>
 
         <div class="file-list-section">
