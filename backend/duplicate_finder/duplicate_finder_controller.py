@@ -1292,7 +1292,7 @@ class Phase3GetDuplicatesResource(Resource):
         {
             "threshold_percent": 90,  // optional, default 90
             "page": 1,  // optional, page number (1-indexed, 0=all groups), default 1
-            "page_size": 20  // optional, groups per page, default 20
+            "page_size": 100  // optional, groups per page, default 100
         }
 
         Response:
@@ -1311,7 +1311,7 @@ class Phase3GetDuplicatesResource(Resource):
             data = request.json or {}
             threshold_percent = data.get('threshold_percent', 90)
             page = data.get('page', 1)  # Default to page 1
-            page_size = data.get('page_size', 20)  # Default 20 groups per page
+            page_size = data.get('page_size', 100)  # Default 100 groups per page
 
             print(f"[Phase 3 API] 🔍 Request received:")
             print(f"[Phase 3 API]   - Page: {page}")

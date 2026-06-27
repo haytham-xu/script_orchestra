@@ -748,7 +748,7 @@ class DuplicateFinderWorkflow:
         threshold_percent: int = 90,  # UI setting
         progress_callback: Optional[Callable] = None,
         page: int = 1,  # Pagination: page number (1-indexed, 0=all groups)
-        page_size: int = 20,  # Pagination: groups per page
+        page_size: int = 100,  # Pagination: groups per page
         folder_paths: Optional[List[str]] = None  # For display_path calculation
     ) -> Dict:
         """

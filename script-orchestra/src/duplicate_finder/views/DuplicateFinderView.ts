@@ -43,6 +43,7 @@ export function useDuplicateFinderView() {
     similarity_threshold: 90,
     folder_paths: [],
     max_cpu_cores: 1,
+    page_size: 100,  // Default page size
     auto_selection_rules: {
       auto_mark_numbered_copies: true,
       auto_mark_copy_suffix: true,
@@ -105,7 +106,7 @@ export function useDuplicateFinderView() {
 
   // Pagination for duplicate groups
   const currentPage = ref(1)
-  const pageSize = ref(20)
+  const pageSize = ref(100)
   const totalPages = ref(1)
   const totalGroupsAll = ref(0)  // Total groups across all pages
   const isLoadingPage = ref(false)  // Loading indicator for page changes
@@ -1108,6 +1109,13 @@ export function useDuplicateFinderView() {
       settings.value = result
       threshold.value = result.similarity_threshold || 90
 
+      // Initialize page_size if not present (backward compatibility)
+      if (!settings.value.page_size) {
+        settings.value.page_size = 100
+      }
+      // Sync pageSize ref with settings
+      pageSize.value = settings.value.page_size
+
       // Initialize auto_selection_rules if not present (backward compatibility)
       if (!settings.value.auto_selection_rules) {
         settings.value.auto_selection_rules = {
@@ -1208,14 +1216,26 @@ export function useDuplicateFinderView() {
         }
       }
 
+      // Validate page_size
+      if (settings.value.page_size) {
+        if (settings.value.page_size < 20 || settings.value.page_size > 500) {
+          ElMessage.error('Page Size must be between 20 and 500')
+          isSaving.value = false
+          return
+        }
+      }
+
       // Save all settings including folders, advanced settings, and auto-selection rules
       await DuplicateFinderService.updateSettings({
         ...settings.value,
         similarity_threshold: threshold.value
       })
 
-      // Update local threshold
+      // Update local threshold and pageSize
       settings.value.similarity_threshold = threshold.value
+      if (settings.value.page_size) {
+        pageSize.value = settings.value.page_size
+      }
 
       ElMessage.success('All settings saved successfully')
 
@@ -1320,27 +1340,35 @@ export function useDuplicateFinderView() {
    * Execute deep path delete (全局批量删除指定路径下的所有duplicate文件)
    */
   async function executeDeepPathDelete() {
+    console.log('[DEBUG] executeDeepPathDelete called, deepPathDelete.value:', deepPathDelete.value)
+
     if (!deepPathDelete.value || deepPathDelete.value.trim() === '') {
+      console.warn('[DEBUG] deepPathDelete is empty, showing warning')
       ElMessage.warning('Please enter a deep path to delete')
       return
     }
 
     try {
+      console.log('[DEBUG] Starting preview request...')
       // Step 1: Preview - get list of files that will be deleted
       isDeleting.value = true
       ElMessage.info('Scanning for files to delete...')
 
+      console.log('[DEBUG] Calling DuplicateFinderService.batchDeleteByPath with:', deepPathDelete.value)
       const previewResult = await DuplicateFinderService.batchDeleteByPath(
         deepPathDelete.value,
         true  // preview only
       )
+      console.log('[DEBUG] Preview result:', previewResult)
 
       if (!previewResult.matched_files || previewResult.matched_files === 0) {
+        console.log('[DEBUG] No files matched, showing warning')
         ElMessage.warning(`No duplicate files found under path: ${deepPathDelete.value}`)
         isDeleting.value = false
         return
       }
 
+      console.log('[DEBUG] Found', previewResult.matched_files, 'files, showing dialog')
       // Step 2: Show confirmation with preview
       deepDeletePreview.value = {
         deepPath: deepPathDelete.value,
@@ -1348,9 +1376,16 @@ export function useDuplicateFinderView() {
         fileList: previewResult.file_list || []
       }
       showDeepDeleteDialog.value = true
+      console.log('[DEBUG] Dialog should be visible now, showDeepDeleteDialog.value:', showDeepDeleteDialog.value)
       isDeleting.value = false  // Reset loading state
 
     } catch (error: any) {
+      console.error('[DEBUG] executeDeepPathDelete error:', error)
+      console.error('[DEBUG] Error details:', {
+        message: error.message,
+        status: error.status,
+        response: error.response
+      })
       console.error('[Duplicate Finder] Failed to preview deep path delete:', error)
       ElMessage.error(error.message || 'Failed to preview files')
       isDeleting.value = false
@@ -1409,18 +1444,30 @@ export function useDuplicateFinderView() {
    * Always overwrites the existing value
    */
   async function setDeepDeletePath(filePath: string) {
+    console.log('[DEBUG] setDeepDeletePath called with:', filePath)
     try {
       // Extract directory path from file path
       const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+      console.log('[DEBUG] lastSlash index:', lastSlash)
+
       if (lastSlash >= 0) {
         const dirPath = filePath.substring(0, lastSlash)
+        console.log('[DEBUG] Extracted dirPath:', dirPath)
+
         deepPathDelete.value = dirPath
+        console.log('[DEBUG] Set deepPathDelete.value to:', deepPathDelete.value)
+
         // Auto-trigger deep delete preview
+        console.log('[DEBUG] Calling executeDeepPathDelete()...')
         await executeDeepPathDelete()
+        console.log('[DEBUG] executeDeepPathDelete() completed')
       } else {
+        console.warn('[DEBUG] Could not extract directory - no slash found')
         ElMessage.warning('Could not extract directory path from file')
       }
     } catch (error: any) {
+      console.error('[DEBUG] setDeepDeletePath error:', error)
+      console.error('[DEBUG] Error stack:', error.stack)
       console.error('[Duplicate Finder] Failed to set deep delete path:', error)
       ElMessage.error('Failed to set deep delete path')
     }

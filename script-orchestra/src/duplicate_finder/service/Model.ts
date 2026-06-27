@@ -46,6 +46,7 @@ export interface Settings {
   phase1?: Phase1Settings
   phase2?: Phase2Settings
   performance?: PerformanceSettings  // Keep for backward compatibility
+  page_size?: number  // Pagination: groups per page (20-500, default 100)
 }
 
 export interface Phase1Settings {

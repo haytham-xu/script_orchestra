@@ -260,7 +260,7 @@ export class DuplicateFinderService {
   static async phase3GetDuplicates(
     thresholdPercent: number = 90,
     page: number = 1,
-    pageSize: number = 20
+    pageSize: number = 100
   ): Promise<{
     groups: ImageInfo[][]
     total_groups: number

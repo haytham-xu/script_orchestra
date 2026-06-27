@@ -436,6 +436,21 @@
             </p>
           </div>
 
+          <div class="setting-item">
+            <label>Page Size: {{ settings.page_size || 100 }} groups/page</label>
+            <el-input-number
+              v-model="settings.page_size"
+              :min="20"
+              :max="500"
+              :step="10"
+              controls-position="right"
+              style="width: 100%"
+            />
+            <p class="settings-hint">
+              Number of duplicate groups to display per page. Range: 20-500, Default: 100
+            </p>
+          </div>
+
           <el-divider />
 
           <h4 style="margin: 16px 0 12px 0; font-size: 14px; color: #606266;">Performance Settings</h4>
