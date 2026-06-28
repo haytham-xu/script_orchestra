@@ -1525,8 +1525,15 @@ class CompareFoldersResource(Resource):
             # Phase 2 stores edges at the schema's broad threshold (distance ≤ 12).
             # The compare must use AT LEAST that breadth so Phase 2.5 can later
             # filter down to any UI threshold (80/90/95/100).
-            threshold_distance = int(64 * (100 - threshold_percent) / 100)
-            compare_distance = max(threshold_distance, 12)
+            # phash is 16×16 = 256 bits (see phash_cache.py: hash_size=16). The
+            # historical "64" denominator was wrong — it interpreted 80% as
+            # distance ≤ 12, which is actually ~95% strict on a 256-bit hash
+            # and silently dropped genuinely-similar pairs.
+            from .phash_new_workflow import PHASH_BITS
+            threshold_distance = int(PHASH_BITS * (100 - threshold_percent) / 100)
+            # Always cover at least an "80%" worth of edges so Phase 2.5 can
+            # later filter down to any UI threshold without re-comparing.
+            compare_distance = max(threshold_distance, int(PHASH_BITS * 0.20))
 
             print("=" * 80)
             print(f"[Compare Folders API] START scan_id={scan_id}")

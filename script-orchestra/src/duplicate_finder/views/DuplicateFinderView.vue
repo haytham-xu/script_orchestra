@@ -212,12 +212,12 @@
       <el-card class="summary-card">
         <div class="summary-content">
           <div class="summary-item">
-            <span class="summary-label">Total Files Scanned:</span>
-            <span class="summary-value">{{ scanResult.total_files }}</span>
+            <span class="summary-label">Total Files in DB:</span>
+            <span class="summary-value">{{ totalFilesInDb }}</span>
           </div>
           <div class="summary-item">
             <span class="summary-label">Duplicate Groups:</span>
-            <span class="summary-value highlight">{{ scanResult.duplicate_groups.length }}</span>
+            <span class="summary-value highlight">{{ totalGroupsAll }}</span>
           </div>
           <div class="summary-item">
             <span class="summary-label">Total Duplicates:</span>
@@ -1028,6 +1028,7 @@ const {
   pageSize,
   totalPages,
   totalGroupsAll,
+  totalFilesInDb,
   isLoadingPage,
   paginatedGroups,
   // 3-Phase workflow states

@@ -21,6 +21,12 @@ except ImportError:
 _SCAN_DELAY = 0.0
 _COMPARE_DELAY = 0.0
 
+# Phash bit width — must match phash_cache._compute_single_hash's hash_size.
+# The project uses imagehash.phash(img, hash_size=16) which produces a
+# 16×16 = 256-bit hash (string = 64 hex chars). All distance / threshold
+# math must scale by this; the historical 64-based formula was wrong.
+PHASH_BITS = 256
+
 
 def set_performance_delays(scan_delay: float = 0.0, compare_delay: float = 0.0):
     """Set global performance delays for multiprocessing workers"""
@@ -1107,7 +1113,7 @@ class DuplicateFinderWorkflow:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        max_distance = int(64 * (100 - threshold_percent) / 100)
+        max_distance = int(PHASH_BITS * (100 - threshold_percent) / 100)
 
         print("=" * 80)
         print(f"[Phase 2.5] START")
@@ -1762,10 +1768,18 @@ class DuplicateFinderWorkflow:
 
         # 1. Strict materialization check
         meta = self.get_materialization_meta()
+        # Pre-compute "total files in DB" so even the error/empty paths can
+        # carry it back to the UI (otherwise the summary panel shows 0 when
+        # materialization is missing or stale).
+        try:
+            _pre_total = int(cursor.execute("SELECT COUNT(*) FROM image_hashes").fetchone()[0])
+        except Exception:
+            _pre_total = 0
         empty_page = {
             'groups': [],
             'total_groups': 0,
             'total_duplicates': 0,
+            'total_files_in_db': _pre_total,
             'current_page': page if page > 0 else 1,
             'page_size': page_size,
             'total_pages': 0,
@@ -1832,6 +1846,11 @@ class DuplicateFinderWorkflow:
         cursor.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM group_stats")
         total_groups_all, total_duplicates = cursor.fetchone()
         total_duplicates = int(total_duplicates)
+        # All known image_hashes rows — this is "Total Files Scanned" semantic.
+        # Whitelisted images are still IN image_hashes (just not in
+        # duplicate_groups), so this count is whitelist-agnostic on purpose.
+        cursor.execute("SELECT COUNT(*) FROM image_hashes")
+        total_files_in_db = int(cursor.fetchone()[0])
 
         if total_groups_all == 0:
             return {
@@ -1866,6 +1885,7 @@ class DuplicateFinderWorkflow:
                 'groups': [],
                 'total_groups': total_groups_all,
                 'total_duplicates': total_duplicates,
+                'total_files_in_db': total_files_in_db,
                 'current_page': page if page > 0 else 1,
                 'page_size': page_size,
                 'total_pages': total_pages,
@@ -1976,6 +1996,7 @@ class DuplicateFinderWorkflow:
             'groups': result_groups,
             'total_groups': total_groups_all,
             'total_duplicates': total_duplicates,
+            'total_files_in_db': total_files_in_db,
             'current_page': page if page > 0 else 1,
             'page_size': page_size,
             'total_pages': total_pages if page > 0 else 1,

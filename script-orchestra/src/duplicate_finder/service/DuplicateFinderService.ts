@@ -356,6 +356,7 @@ export class DuplicateFinderService {
     groups: ImageInfo[][]
     total_groups: number
     total_duplicates: number
+    total_files_in_db?: number
     current_page: number
     page_size: number
     total_pages: number

@@ -109,6 +109,7 @@ export function useDuplicateFinderView() {
   const pageSize = ref(100)
   const totalPages = ref(1)
   const totalGroupsAll = ref(0)  // Total groups across all pages
+  const totalFilesInDb = ref(0)  // Total rows in image_hashes (all known files)
   const isLoadingPage = ref(false)  // Loading indicator for page changes
 
   // Phase 3 sort controls (UI-exposed; backend whitelist of columns enforced server-side)
@@ -1081,6 +1082,7 @@ export function useDuplicateFinderView() {
         currentPage.value = result.current_page
         totalPages.value = result.total_pages
         totalGroupsAll.value = result.total_groups
+        totalFilesInDb.value = result.total_files_in_db ?? 0
 
         console.log(`[Phase 3 Frontend] 🖼️  Images that will be loaded:`)
         result.groups.forEach((group, groupIdx) => {
@@ -2036,6 +2038,7 @@ export function useDuplicateFinderView() {
     pageSize,
     totalPages,
     totalGroupsAll,
+    totalFilesInDb,
     isLoadingPage,
     paginatedGroups,
     // 3-Phase workflow states
