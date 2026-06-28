@@ -112,16 +112,27 @@ export function useDuplicateFinderView() {
   const isLoadingPage = ref(false)  // Loading indicator for page changes
 
   // Phase 3 sort controls (UI-exposed; backend whitelist of columns enforced server-side)
-  type SortBy = 'folder_dup_count' | 'max_filesize' | 'min_filesize' | 'max_mtime' | 'min_mtime' | 'member_count'
+  type SortBy =
+    | 'folder_dup_count'
+    | 'representative_file_path'
+    | 'max_filesize'
+    | 'min_filesize'
+    | 'max_mtime'
+    | 'min_mtime'
+    | 'member_count'
   const sortBy = ref<SortBy>('folder_dup_count')
   const sortOrder = ref<'asc' | 'desc'>('desc')
+  // Tiebreakers (representative_file_path ASC, then group_id ASC) are applied
+  // server-side regardless of the user's primary sort, so within-tier groups
+  // always appear in folder + filename order.
   const SORT_OPTIONS: { value: SortBy; label: string }[] = [
-    { value: 'folder_dup_count', label: 'Folder duplicates (hot folder)' },
-    { value: 'member_count',     label: 'Group size (member count)' },
-    { value: 'max_filesize',     label: 'Max file size' },
-    { value: 'min_filesize',     label: 'Min file size' },
-    { value: 'max_mtime',        label: 'Newest modified' },
-    { value: 'min_mtime',        label: 'Oldest modified' },
+    { value: 'folder_dup_count',         label: 'Hot folder (most duplicates first)' },
+    { value: 'representative_file_path', label: 'Folder + filename' },
+    { value: 'member_count',             label: 'Group size (member count)' },
+    { value: 'max_filesize',             label: 'Max file size' },
+    { value: 'min_filesize',             label: 'Min file size' },
+    { value: 'max_mtime',                label: 'Newest modified' },
+    { value: 'min_mtime',                label: 'Oldest modified' },
   ]
 
   // 3-Phase workflow states
