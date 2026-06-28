@@ -637,6 +637,25 @@ class DeleteResource(Resource):
         # Create delete target directory if needed
         os.makedirs(delete_target, exist_ok=True)
 
+        # === Step 5: pre-capture state for incremental group_stats repair ===
+        workflow = get_workflow()
+        try:
+            abs_paths = [os.path.abspath(f) for f in files]
+            ids_to_delete: list = []
+            BATCH = 900
+            conn0 = workflow._get_connection()
+            cur0 = conn0.cursor()
+            for i in range(0, len(abs_paths), BATCH):
+                chunk = abs_paths[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur0.execute(f"SELECT id FROM image_hashes WHERE file_path IN ({ph})", chunk)
+                ids_to_delete.extend(r[0] for r in cur0.fetchall())
+            affected_capture = workflow.stats_collect_affected_before_mutation(ids_to_delete)
+            print(f"[Delete] Pre-captured stats repair state for {len(ids_to_delete)} image_ids")
+        except Exception as e:
+            print(f"[Delete] WARNING: stats pre-capture failed (continuing without incremental repair): {e}")
+            affected_capture = None
+
         success_count = 0
         failed_count = 0
         errors = []
@@ -735,10 +754,22 @@ class DeleteResource(Resource):
 
         print(f"[Delete] Complete: {success_count} succeeded, {failed_count} failed")
 
+        # === Step 5: repair group_stats now that image_hashes rows are gone ===
+        repair_summary = None
+        if affected_capture:
+            try:
+                repair_summary = workflow.stats_repair_after_mutation(affected_capture, remove_from_groups=False)
+                print(f"[Delete] Stats repair: {repair_summary}")
+            except Exception as e:
+                print(f"[Delete] WARNING: stats repair failed: {e}")
+                import traceback
+                traceback.print_exc()
+
         return {
             "success": success_count,
             "failed": failed_count,
-            "errors": errors
+            "errors": errors,
+            "stats_repair": repair_summary,
         }
 
 
@@ -851,10 +882,19 @@ class WhitelistResource(Resource):
             return {"error": "Group must have at least 2 images"}, 400
 
         try:
+            workflow = get_workflow()
+            affected = workflow.stats_collect_affected_before_mutation(image_ids)
+
             cache = PHashCache()
             cache.add_group_to_whitelist(image_ids)
-            return {"message": "Added group to whitelist successfully"}
+
+            repair = workflow.stats_repair_after_mutation(affected, remove_from_groups=True)
+            print(f"[Whitelist Add] image_ids={len(image_ids)}, repair={repair}")
+            return {"message": "Added group to whitelist successfully", "stats_repair": repair}
         except Exception as e:
+            print(f"[Whitelist Add] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}, 500
 
     def delete(self):
@@ -877,6 +917,73 @@ class WhitelistResource(Resource):
         except ValueError:
             return {"error": "Invalid group_id value"}, 400
         except Exception as e:
+            return {"error": str(e)}, 500
+
+
+@ns.route("/whitelist/bulk-add-groups")
+class WhitelistBulkAddGroupsResource(Resource):
+    def post(self):
+        """
+        Bulk-add multiple groups to whitelist in one shot (e.g. an entire
+        Phase 3 page). Performs ONE stats repair at the end so the operation
+        scales with the number of unique images, not the number of groups.
+
+        Request body:
+        {
+            "groups": [[1, 2, 3], [4, 5], [6, 7, 8, 9]]
+        }
+
+        Response:
+        {
+            "added_groups": 3,
+            "skipped_groups": 0,
+            "image_count": 9,
+            "stats_repair": {...}
+        }
+        """
+        data = request.json or {}
+        groups = data.get('groups')
+        if not isinstance(groups, list) or not groups:
+            return {"error": "Missing or invalid 'groups' (expected non-empty list)"}, 400
+
+        # Validate + collect unique image_ids
+        valid_groups = []
+        for g in groups:
+            if isinstance(g, list) and len(g) >= 2 and all(isinstance(x, int) for x in g):
+                valid_groups.append(g)
+        skipped = len(groups) - len(valid_groups)
+
+        if not valid_groups:
+            return {"error": "No valid groups (each group needs ≥ 2 integer image_ids)"}, 400
+
+        all_image_ids = list({iid for g in valid_groups for iid in g})
+
+        try:
+            workflow = get_workflow()
+            affected = workflow.stats_collect_affected_before_mutation(all_image_ids)
+
+            cache = PHashCache()
+            added = 0
+            for g in valid_groups:
+                try:
+                    cache.add_group_to_whitelist(g)
+                    added += 1
+                except Exception as e:
+                    print(f"[Whitelist Bulk] WARNING: failed to add group {g}: {e}")
+                    skipped += 1
+
+            repair = workflow.stats_repair_after_mutation(affected, remove_from_groups=True)
+            print(f"[Whitelist Bulk] added={added}, skipped={skipped}, unique_images={len(all_image_ids)}, repair={repair}")
+            return {
+                "added_groups": added,
+                "skipped_groups": skipped,
+                "image_count": len(all_image_ids),
+                "stats_repair": repair,
+            }
+        except Exception as e:
+            print(f"[Whitelist Bulk] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}, 500
 
 
@@ -1147,8 +1254,24 @@ class Phase1RefreshResource(Resource):
             print(f"[Phase 1 API] Received request to scan {len(paths)} paths: {paths[:3]}...")  # Show first 3
             print(f"[Phase 1 API] Using scan_id: {scan_id}")
 
+            # Read exclude folders from settings — same source as legacy /scan
+            exclude_paths = settings_manager.get_settings().get('exclude_folder_paths', []) or []
+            exclude_paths_abs = [os.path.abspath(p) for p in exclude_paths if p]
+            if exclude_paths_abs:
+                print(f"[Phase 1 API] Excluding paths: {exclude_paths_abs}")
+
+            def is_excluded(p: str) -> bool:
+                # True if `p` is exactly an exclude root or is contained inside one.
+                # Uses os.sep boundary so /foo doesn't accidentally exclude /foobar.
+                p_abs = os.path.abspath(p)
+                for ex in exclude_paths_abs:
+                    if p_abs == ex or p_abs.startswith(ex + os.sep):
+                        return True
+                return False
+
             # Collect all image files
             image_files = []
+            excluded_dirs_pruned = 0
             for root_path in paths:
                 if not os.path.exists(root_path):
                     print(f"[Phase 1 API] WARNING: Path does not exist: {root_path}")
@@ -1156,15 +1279,33 @@ class Phase1RefreshResource(Resource):
 
                 if os.path.isfile(root_path):
                     if root_path.lower().endswith(IMAGE_EXTS):
+                        if is_excluded(root_path):
+                            print(f"[Phase 1 API] Skipping excluded file: {root_path}")
+                            continue
                         image_files.append(root_path)
                 else:
                     print(f"[Phase 1 API] Scanning directory: {root_path}")
                     for root, dirs, files in os.walk(root_path):
+                        # If current dir is excluded, skip its files and prune descent
+                        if is_excluded(root):
+                            print(f"[Phase 1 API]   Excluding directory subtree: {root}")
+                            dirs[:] = []
+                            excluded_dirs_pruned += 1
+                            continue
+                        # Prune dirs that are exactly excluded roots (saves a recurse)
+                        pruned = [d for d in dirs if is_excluded(os.path.join(root, d))]
+                        if pruned:
+                            for d in pruned:
+                                print(f"[Phase 1 API]   Pruning excluded subdir: {os.path.join(root, d)}")
+                            excluded_dirs_pruned += len(pruned)
+                            dirs[:] = [d for d in dirs if d not in pruned]
+
                         for file in files:
                             if file.lower().endswith(IMAGE_EXTS):
                                 image_files.append(os.path.join(root, file))
 
-            print(f"[Phase 1 API] Found {len(image_files)} image files to process")
+            print(f"[Phase 1 API] Found {len(image_files)} image files to process "
+                  f"(excluded {excluded_dirs_pruned} dir subtree(s) via exclude_folder_paths)")
 
             # Progress callback for WebSocket updates
             print(f"[Phase 1 API] Starting phase 1 with scan_id: {scan_id}")
@@ -1278,71 +1419,143 @@ class Phase2StopResource(Resource):
         return {"message": "Phase 2 stop signal sent"}
 
 
-@ns.route("/phase3/get-duplicates")
-class Phase3GetDuplicatesResource(Resource):
+@ns.route("/phase2.5/materialize")
+class Phase25MaterializeResource(Resource):
     def post(self):
         """
-        Phase 3: Get duplicate groups (with pagination support)
-        - Query phash_similarities
-        - Build connected components
-        - Filter out whitelist
-        - Return paginated results
+        Phase 2.5: Materialize duplicate groups + per-group stats.
+
+        Manual trigger, runs between Phase 2 and Phase 3.
 
         Request body:
         {
-            "threshold_percent": 90,  // optional, default 90
-            "page": 1,  // optional, page number (1-indexed, 0=all groups), default 1
-            "page_size": 100  // optional, groups per page, default 100
+            "threshold_percent": 80,            // optional, default 80
+            "same_folder_filter": true          // optional, default true
         }
 
         Response:
         {
-            "groups": [[{file_path, phash, ...}, ...], ...],
-            "total_groups": 150,  // total across all pages
-            "total_duplicates": 600,  // total across all pages
-            "current_page": 1,
-            "page_size": 20,
-            "total_pages": 8,
-            "elapsed": 0.5,
-            "scan_id": "phase3-abc123"
+            "groups_count": int,
+            "members_count": int,
+            "whitelisted_dropped": int,
+            "threshold_percent": int,
+            "same_folder_filter": bool,
+            "elapsed": float,
+            "stopped": bool,
+            "scan_id": "phase25-abc123"
         }
         """
         try:
             data = request.json or {}
-            threshold_percent = data.get('threshold_percent', 90)
-            page = data.get('page', 1)  # Default to page 1
-            page_size = data.get('page_size', 100)  # Default 100 groups per page
+            threshold_percent = int(data.get('threshold_percent', 80))
+            same_folder_filter = bool(data.get('same_folder_filter', True))
 
-            print(f"[Phase 3 API] 🔍 Request received:")
-            print(f"[Phase 3 API]   - Page: {page}")
-            print(f"[Phase 3 API]   - Page size: {page_size}")
-            print(f"[Phase 3 API]   - Threshold: {threshold_percent}%")
+            scan_id = f"phase25-{uuid.uuid4().hex[:8]}"
 
-            # Get folder_paths from settings for display_path calculation
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            print(f"[Phase 2.5 API] START: threshold={threshold_percent}%, same_folder_filter={same_folder_filter}")
+            result = get_workflow().phase2_5_materialize_groups(
+                threshold_percent=threshold_percent,
+                same_folder_filter=same_folder_filter,
+                progress_callback=progress_cb,
+            )
+            result['scan_id'] = scan_id
+            print(f"[Phase 2.5 API] DONE: groups={result.get('groups_count', 0)}, elapsed={result.get('elapsed', 0):.1f}s, stopped={result.get('stopped', False)}")
+            return result
+
+        except InterruptedError as e:
+            return {"error": "stopped", "message": str(e)}, 499
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[Phase 2.5 API] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return {"error": error_msg}, 500
+
+
+@ns.route("/phase2.5/stop")
+class Phase25StopResource(Resource):
+    def post(self):
+        """Stop phase 2.5 (materialize groups)"""
+        print("[Phase 2.5 API] STOP request received")
+        workflow = get_workflow()
+        workflow.set_stop()
+        print("[Phase 2.5 API] Stop signal sent")
+        return {"message": "Phase 2.5 stop signal sent"}
+
+
+@ns.route("/phase2.5/meta")
+class Phase25MetaResource(Resource):
+    def get(self):
+        """Return current materialization metadata (which threshold, when, etc.)."""
+        try:
+            meta = get_workflow().get_materialization_meta()
+            return {"meta": meta}
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+
+@ns.route("/phase3/get-duplicates")
+class Phase3GetDuplicatesResource(Resource):
+    def post(self):
+        """
+        Phase 3: Read materialized duplicate groups (strict mode).
+
+        Requires Phase 2.5 to have run. If materialization is missing or its
+        threshold doesn't match the request, returns HTTP 409 with an `error`
+        marker so the frontend can prompt the user to (re-)run Phase 2.5.
+
+        Request body:
+        {
+            "threshold_percent": 80,            // optional, default 80
+            "page": 1,                          // 1-indexed, 0=all groups
+            "page_size": 100,
+            "sort_by": "folder_dup_count",      // optional; allowed: folder_dup_count,
+                                                //   max_filesize, min_filesize,
+                                                //   max_mtime, min_mtime, member_count
+            "sort_order": "desc"                // optional, "asc" or "desc"
+        }
+        """
+        try:
+            data = request.json or {}
+            threshold_percent = int(data.get('threshold_percent', 80))
+            page = int(data.get('page', 1))
+            page_size = int(data.get('page_size', 100))
+            sort_by = data.get('sort_by', 'folder_dup_count')
+            sort_order = data.get('sort_order', 'desc')
+
+            print(f"[Phase 3 API] 🔍 Request: threshold={threshold_percent}%, page={page}, "
+                  f"page_size={page_size}, sort_by={sort_by}, sort_order={sort_order}")
+
             folder_paths = settings_manager.get_settings().get('folder_paths', [])
-            print(f"[Phase 3 API] Using {len(folder_paths)} scan folders for display_path calculation")
-
-            # Progress callback for WebSocket updates
             scan_id = f"phase3-{uuid.uuid4().hex[:8]}"
 
             def progress_cb(current, total, message):
                 emit_progress(scan_id, current, total, message)
 
             result = get_workflow().phase3_get_duplicates(
-                threshold_percent,
+                threshold_percent=threshold_percent,
                 progress_callback=progress_cb,
                 page=page,
                 page_size=page_size,
-                folder_paths=folder_paths
+                sort_by=sort_by,
+                sort_order=sort_order,
+                folder_paths=folder_paths,
             )
             result['scan_id'] = scan_id
 
-            print(f"[Phase 3 API] ✅ Response ready:")
-            print(f"[Phase 3 API]   - Groups returned: {len(result.get('groups', []))}")
-            print(f"[Phase 3 API]   - Total groups: {result.get('total_groups', 0)}")
-            print(f"[Phase 3 API]   - Current page: {result.get('current_page', 0)}")
-            print(f"[Phase 3 API]   - Total pages: {result.get('total_pages', 0)}")
+            # Map materialization-related errors to HTTP 409 (Conflict)
+            err = result.get('error')
+            if err in ('no_materialization', 'threshold_mismatch'):
+                print(f"[Phase 3 API] ⚠️ {err}: {result.get('message')}")
+                return result, 409
 
+            print(f"[Phase 3 API] ✅ Response: groups={len(result.get('groups', []))}, "
+                  f"total_groups={result.get('total_groups', 0)}, "
+                  f"page={result.get('current_page', 0)}/{result.get('total_pages', 0)}, "
+                  f"elapsed={result.get('elapsed', 0) * 1000:.0f}ms")
             return result
 
         except InterruptedError as e:
@@ -1475,6 +1688,21 @@ class BatchDeleteByPathResource(Resource):
                 # Get folder_paths (scan folders) - use them directly as root
                 folder_paths = settings_manager.get_settings().get('folder_paths', [])
 
+                # === Step 5: pre-capture state for incremental group_stats repair ===
+                try:
+                    ids_to_delete: list = []
+                    BATCH = 900
+                    for i in range(0, len(matched_files), BATCH):
+                        chunk = [os.path.abspath(f) for f in matched_files[i:i + BATCH]]
+                        ph = ','.join('?' * len(chunk))
+                        cursor.execute(f"SELECT id FROM image_hashes WHERE file_path IN ({ph})", chunk)
+                        ids_to_delete.extend(r[0] for r in cursor.fetchall())
+                    affected_capture = workflow.stats_collect_affected_before_mutation(ids_to_delete)
+                    print(f"[Batch Delete] Pre-captured stats repair state for {len(ids_to_delete)} image_ids")
+                except Exception as e:
+                    print(f"[Batch Delete] WARNING: stats pre-capture failed: {e}")
+                    affected_capture = None
+
                 deleted_count = 0
                 failed_count = 0
 
@@ -1596,7 +1824,11 @@ class BatchDeleteByPathResource(Resource):
                 return {
                     "deleted": deleted_count,
                     "failed": failed_count,
-                    "preview": False
+                    "preview": False,
+                    "stats_repair": (
+                        workflow.stats_repair_after_mutation(affected_capture, remove_from_groups=False)
+                        if affected_capture else None
+                    ),
                 }
 
         except Exception as e:

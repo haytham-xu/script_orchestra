@@ -179,6 +179,8 @@ class DuplicateFinderWorkflow:
                 phash TEXT NOT NULL,
                 resolution TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                dir_path TEXT,
+                mtime REAL,
                 UNIQUE (filename, filesize, file_path)
             )
         ''')
@@ -186,6 +188,8 @@ class DuplicateFinderWorkflow:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dir_path ON image_hashes(dir_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mtime ON image_hashes(mtime)')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS whitelist (
@@ -212,6 +216,42 @@ class DuplicateFinderWorkflow:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_a_threshold ON phash_similarities(image_id_a, threshold)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_b_threshold ON phash_similarities(image_id_b, threshold)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_threshold ON phash_similarities(threshold)')
+
+        # Materialized groups (Phase 2.5 output)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS duplicate_groups (
+                group_id INTEGER NOT NULL,
+                image_id INTEGER NOT NULL,
+                PRIMARY KEY (group_id, image_id),
+                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dg_image_id ON duplicate_groups(image_id)')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS group_stats (
+                group_id INTEGER PRIMARY KEY,
+                member_count INTEGER NOT NULL,
+                max_filesize INTEGER,
+                min_filesize INTEGER,
+                max_mtime REAL,
+                min_mtime REAL,
+                primary_folder TEXT,
+                folder_dup_count INTEGER NOT NULL DEFAULT 0
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_folder_dup_count ON group_stats(folder_dup_count)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_filesize ON group_stats(max_filesize)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_mtime ON group_stats(max_mtime)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_member_count ON group_stats(member_count)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_primary_folder ON group_stats(primary_folder)')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS duplicate_finder_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
 
         cursor.execute('''
             CREATE VIEW IF NOT EXISTS phash_similarities_view AS
@@ -528,14 +568,24 @@ class DuplicateFinderWorkflow:
         # Prepare data for executemany
         batch_data = []
         for item in batch:
-            filename = Path(item['file_path']).name
-            batch_data.append((filename, item['filesize'], item['file_path'], item['phash'], item['resolution']))
+            file_path = item['file_path']
+            filename = Path(file_path).name
+            dir_path = os.path.dirname(file_path)
+            batch_data.append((
+                filename,
+                item['filesize'],
+                file_path,
+                item['phash'],
+                item['resolution'],
+                dir_path,
+                item.get('mtime'),
+            ))
 
         # Use executemany for better performance
         cursor.executemany('''
             INSERT OR IGNORE INTO image_hashes
-            (filename, filesize, file_path, phash, resolution, status)
-            VALUES (?, ?, ?, ?, ?, 'pending')
+            (filename, filesize, file_path, phash, resolution, dir_path, mtime, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
         ''', batch_data)
 
         conn.commit()
@@ -741,263 +791,747 @@ class DuplicateFinderWorkflow:
         """Compute hamming distance between two phash strings"""
         return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
 
-    # ========== Phase 3: Get Duplicates ==========
+    # ========== Phase 2.5: Materialize Groups ==========
 
-    def phase3_get_duplicates(
+    def phase2_5_materialize_groups(
         self,
-        threshold_percent: int = 90,  # UI setting
+        threshold_percent: int = 80,
+        same_folder_filter: bool = True,
         progress_callback: Optional[Callable] = None,
-        page: int = 1,  # Pagination: page number (1-indexed, 0=all groups)
-        page_size: int = 100,  # Pagination: groups per page
-        folder_paths: Optional[List[str]] = None  # For display_path calculation
     ) -> Dict:
         """
-        Phase 3: Get duplicate groups (with pagination support)
-        - Query phash_similarities where distance matches threshold
-        - Build connected components (groups)
-        - Filter out whitelist images
-        - Return paginated results
+        Phase 2.5: Materialize duplicate groups + per-group stats into DB tables.
+
+        Reads phash_similarities, filters (threshold + per-image whitelist + optional
+        same-folder), builds connected components, drops fully-whitelisted groups,
+        then writes everything into duplicate_groups + group_stats.
+
+        Records the threshold used into duplicate_finder_meta so Phase 3 can detect
+        staleness.
 
         Args:
-            threshold_percent: Similarity threshold (80, 85, 90, etc.)
-            progress_callback: Optional callback(current, total, message)
-            page: Page number (1-indexed, 0=return all groups)
-            page_size: Number of groups per page
-
-        Returns:
-            {
-                'groups': List[List[Dict]],  # Current page groups (or all if page=0)
-                'total_groups': int,  # Total number of groups (all pages)
-                'total_duplicates': int,  # Total duplicates in all groups
-                'current_page': int,
-                'page_size': int,
-                'total_pages': int,
-                'elapsed': float
-            }
+            threshold_percent: UI similarity threshold (80, 90, 95, 100)
+            same_folder_filter: whether to skip same-folder pairs
+            progress_callback: optional callback(current, total, message)
         """
         self.clear_stop()
         start_time = time.time()
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Convert threshold % to distance
         max_distance = int(64 * (100 - threshold_percent) / 100)
-        print(f"[Phase 3] Getting duplicates (threshold {threshold_percent}% = distance ≤ {max_distance})...")
 
-        # Get similarities
-        cursor.execute('''
-            SELECT image_id_a, image_id_b, distance
-            FROM phash_similarities
-            WHERE threshold = 80 AND distance <= ?
-        ''', (max_distance,))
-        edges = cursor.fetchall()
+        print("=" * 80)
+        print(f"[Phase 2.5] START")
+        print(f"[Phase 2.5]   DB path             : {self.db_path}")
+        print(f"[Phase 2.5]   threshold_percent   : {threshold_percent}% (max_distance ≤ {max_distance})")
+        print(f"[Phase 2.5]   same_folder_filter  : {same_folder_filter}")
+        print(f"[Phase 2.5]   stop_event.is_set() : {self._stop_event.is_set()}")
+        print("=" * 80)
 
-        print(f"[Phase 3] Found {len(edges)} similar pairs")
+        # Pre-flight: log relevant DB stats
+        try:
+            n_images = cursor.execute("SELECT COUNT(*) FROM image_hashes").fetchone()[0]
+            n_pending = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE status='pending'").fetchone()[0]
+            n_computed = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE status='computed'").fetchone()[0]
+            n_dir_null = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE dir_path IS NULL").fetchone()[0]
+            n_sim = cursor.execute("SELECT COUNT(*) FROM phash_similarities WHERE threshold=80").fetchone()[0]
+            n_wl_img = cursor.execute("SELECT COUNT(*) FROM whitelist").fetchone()[0]
+            n_wl_grp = cursor.execute("SELECT COUNT(*) FROM whitelist_groups").fetchone()[0]
+            n_old_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
+            n_old_gs = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
+            print(f"[Phase 2.5] Pre-flight DB stats:")
+            print(f"[Phase 2.5]   image_hashes total   : {n_images} (pending={n_pending}, computed={n_computed}, dir_path NULL={n_dir_null})")
+            print(f"[Phase 2.5]   phash_similarities   : {n_sim} (threshold=80)")
+            print(f"[Phase 2.5]   whitelist (per-image): {n_wl_img}")
+            print(f"[Phase 2.5]   whitelist_groups     : {n_wl_grp}")
+            print(f"[Phase 2.5]   duplicate_groups OLD : {n_old_dg} (will be replaced)")
+            print(f"[Phase 2.5]   group_stats OLD      : {n_old_gs} (will be replaced)")
+        except Exception as e:
+            print(f"[Phase 2.5] WARNING: pre-flight stats query failed: {e}")
 
-        # Get whitelist
-        cursor.execute("SELECT image_id FROM whitelist")
-        whitelist_ids = {row[0] for row in cursor.fetchall()}
+        if n_pending > 0:
+            print(f"[Phase 2.5] ⚠️ WARNING: {n_pending} images still have status='pending'. "
+                  f"Phase 2 may not have finished — similarities for these images are missing.")
 
-        # Filter out whitelist
-        filtered_edges = [
-            (a, b, d) for a, b, d in edges
-            if a not in whitelist_ids and b not in whitelist_ids
-        ]
+        def cb(pct: int, msg: str):
+            if progress_callback:
+                progress_callback(pct, 100, msg)
 
-        print(f"[Phase 3] After whitelist filter: {len(filtered_edges)} pairs")
+        def stopped() -> bool:
+            if self._stop_event.is_set():
+                print(f"[Phase 2.5] ⏸️ Stop event detected; aborting")
+                return True
+            return False
 
-        # Build graph and find connected components
-        groups = self._build_groups(filtered_edges)
+        step_start = time.time()
 
-        # Filter out whitelisted groups
-        print(f"[Phase 3] Checking for whitelisted groups...")
-        cache = PHashCache(str(self.db_path))
+        try:
+            # Step 1: filter edges in SQL
+            cb(0, "Step 1/5: Filtering edges (SQL)")
+            print(f"[Phase 2.5] Step 1/5: SQL filter (threshold + whitelist + same_folder={same_folder_filter})")
+            same_folder_sql = "AND a.dir_path <> b.dir_path" if same_folder_filter else ""
+            sql = f'''
+                SELECT s.image_id_a, s.image_id_b, s.distance
+                FROM phash_similarities s
+                JOIN image_hashes a ON s.image_id_a = a.id
+                JOIN image_hashes b ON s.image_id_b = b.id
+                LEFT JOIN whitelist wa ON wa.image_id = s.image_id_a
+                LEFT JOIN whitelist wb ON wb.image_id = s.image_id_b
+                WHERE s.threshold = 80
+                  AND s.distance <= ?
+                  AND wa.image_id IS NULL
+                  AND wb.image_id IS NULL
+                  {same_folder_sql}
+            '''
+            cursor.execute(sql, (max_distance,))
+            edges = cursor.fetchall()
+            elapsed_step = time.time() - step_start
+            print(f"[Phase 2.5] Step 1/5 DONE: {len(edges)} edges after SQL filter (took {elapsed_step:.2f}s)")
+            if edges:
+                # Sample a few edges for sanity check
+                sample = edges[:3]
+                print(f"[Phase 2.5]   Sample edges: {sample}")
+            if stopped():
+                return {'stopped': True, 'elapsed': time.time() - start_time}
 
-        filtered_groups = []
-        for group in groups:
-            if not cache.is_group_whitelisted(group):
-                filtered_groups.append(group)
+            # Step 2: BFS connected components
+            step_start = time.time()
+            cb(20, "Step 2/5: Building connected components")
+            print(f"[Phase 2.5] Step 2/5: BFS connected components from {len(edges)} edges")
+            groups = self._build_groups(edges)
+            elapsed_step = time.time() - step_start
+            if groups:
+                sizes = [len(g) for g in groups]
+                print(f"[Phase 2.5] Step 2/5 DONE: {len(groups)} groups (took {elapsed_step:.2f}s)")
+                print(f"[Phase 2.5]   group size: min={min(sizes)}, max={max(sizes)}, mean={sum(sizes)/len(sizes):.1f}, total_members={sum(sizes)}")
+            else:
+                print(f"[Phase 2.5] Step 2/5 DONE: 0 groups (took {elapsed_step:.2f}s) — no duplicates found at this threshold")
+            if stopped():
+                return {'stopped': True, 'elapsed': time.time() - start_time}
 
-        whitelisted_count = len(groups) - len(filtered_groups)
-        if whitelisted_count > 0:
-            print(f"[Phase 3] Filtered out {whitelisted_count} whitelisted groups")
-        groups = filtered_groups
+            # Step 3: filter fully-whitelisted groups
+            step_start = time.time()
+            cb(40, "Step 3/5: Filtering whitelisted groups")
+            print(f"[Phase 2.5] Step 3/5: filtering whitelisted groups (n_whitelist_groups={n_wl_grp})")
+            if n_wl_grp == 0:
+                # Optimization: nothing to check; skip the per-group lookup loop
+                filtered_groups = groups
+                whitelisted_dropped = 0
+                print(f"[Phase 2.5]   Skipping per-group whitelist check (no whitelist_groups rows)")
+            else:
+                cache = PHashCache(str(self.db_path))
+                filtered_groups = [g for g in groups if not cache.is_group_whitelisted(g)]
+                whitelisted_dropped = len(groups) - len(filtered_groups)
+            elapsed_step = time.time() - step_start
+            print(f"[Phase 2.5] Step 3/5 DONE: {len(filtered_groups)} groups remain, dropped {whitelisted_dropped} whitelisted (took {elapsed_step:.2f}s)")
+            if stopped():
+                return {'stopped': True, 'elapsed': time.time() - start_time}
 
-        # Get full image info for each group - OPTIMIZED: bulk query instead of N individual queries
-        result_groups = []
-        total_groups = len(groups)
+            # Step 4: rewrite duplicate_groups
+            step_start = time.time()
+            cb(60, "Step 4/5: Writing duplicate_groups")
+            print(f"[Phase 2.5] Step 4/5: clearing OLD tables + inserting new membership rows")
+            cursor.execute("DELETE FROM group_stats")
+            n_after_del_gs = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
+            cursor.execute("DELETE FROM duplicate_groups")
+            n_after_del_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
+            print(f"[Phase 2.5]   After DELETE: group_stats={n_after_del_gs}, duplicate_groups={n_after_del_dg}")
 
-        # Collect all unique image IDs from all groups
-        all_duplicate_ids = list(set(img_id for group in groups for img_id in group))
+            dg_rows = []
+            for group_id, member_ids in enumerate(filtered_groups, start=1):
+                for image_id in member_ids:
+                    dg_rows.append((group_id, image_id))
+            if dg_rows:
+                cursor.executemany(
+                    "INSERT INTO duplicate_groups (group_id, image_id) VALUES (?, ?)",
+                    dg_rows,
+                )
+            n_after_ins_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
+            elapsed_step = time.time() - step_start
+            print(f"[Phase 2.5] Step 4/5 DONE: wrote {len(dg_rows)} rows (verified count={n_after_ins_dg}), took {elapsed_step:.2f}s")
+            if stopped():
+                conn.rollback()
+                print(f"[Phase 2.5]   Stop detected after Step 4; rolled back")
+                return {'stopped': True, 'elapsed': time.time() - start_time}
 
-        print(f"[Phase 3] Fetching details for {len(all_duplicate_ids)} unique duplicate images (from {total_groups} groups)...")
+            # Step 5: per-group aggregates via SQL (no Python iteration over members)
+            step_start = time.time()
+            cb(80, "Step 5/5: Computing group_stats")
+            print(f"[Phase 2.5] Step 5/5: computing group_stats via SQL aggregates")
 
-        if all_duplicate_ids:
-            # Bulk query with batching to avoid SQLite's 999 variable limit
-            # SQLite has SQLITE_MAX_VARIABLE_NUMBER limit (default 999)
-            batch_size = 900  # Use 900 to be safe
-            all_images_dict = {}
+            print(f"[Phase 2.5]   Step 5a: INSERT base aggregates (count, max/min filesize, max/min mtime)")
+            cursor.execute('''
+                INSERT INTO group_stats (
+                    group_id, member_count,
+                    max_filesize, min_filesize,
+                    max_mtime, min_mtime
+                )
+                SELECT
+                    dg.group_id,
+                    COUNT(*),
+                    MAX(i.filesize), MIN(i.filesize),
+                    MAX(i.mtime), MIN(i.mtime)
+                FROM duplicate_groups dg
+                JOIN image_hashes i ON dg.image_id = i.id
+                GROUP BY dg.group_id
+            ''')
+            n_gs_after_5a = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
+            print(f"[Phase 2.5]   Step 5a DONE: {n_gs_after_5a} group_stats rows inserted")
 
-            for i in range(0, len(all_duplicate_ids), batch_size):
-                batch = all_duplicate_ids[i:i + batch_size]
-                placeholders = ','.join('?' * len(batch))
-                cursor.execute(f'''
-                    SELECT id, filename, filesize, file_path, phash, resolution
-                    FROM image_hashes
-                    WHERE id IN ({placeholders})
-                ''', batch)
+            # primary_folder: the dir_path with most members in each group (ties broken by path)
+            print(f"[Phase 2.5]   Step 5b: UPDATE primary_folder (per-group most-populous dir_path)")
+            cursor.execute('''
+                UPDATE group_stats
+                SET primary_folder = (
+                    SELECT i.dir_path
+                    FROM duplicate_groups dg
+                    JOIN image_hashes i ON dg.image_id = i.id
+                    WHERE dg.group_id = group_stats.group_id
+                    GROUP BY i.dir_path
+                    ORDER BY COUNT(*) DESC, i.dir_path ASC
+                    LIMIT 1
+                )
+            ''')
+            n_pf_null = cursor.execute("SELECT COUNT(*) FROM group_stats WHERE primary_folder IS NULL").fetchone()[0]
+            print(f"[Phase 2.5]   Step 5b DONE: primary_folder NULL count = {n_pf_null}")
 
-                # Add to lookup dictionary
-                for row in cursor.fetchall():
-                    all_images_dict[row[0]] = {
-                        'id': row[0],
-                        'filename': row[1],
-                        'filesize': row[2],
-                        'file_path': row[3],
-                        'phash': row[4],
-                        'resolution': row[5]
-                    }
-
-                if len(all_duplicate_ids) > batch_size:
-                    print(f"[Phase 3] Fetched batch {i // batch_size + 1}/{(len(all_duplicate_ids) + batch_size - 1) // batch_size} ({len(batch)} images)")
-
-            print(f"[Phase 3] Fetched {len(all_images_dict)} image details, now assembling groups...")
-
-            # Get folder_paths (scan folders) for display_path calculation - use them directly as root
+            # folder_dup_count: total duplicate files (across ALL groups) sharing this group's primary_folder
+            # Sort key for "folder with most duplicates first"
+            print(f"[Phase 2.5]   Step 5c: UPDATE folder_dup_count (cross-group aggregate)")
+            cursor.execute('''
+                UPDATE group_stats
+                SET folder_dup_count = (
+                    SELECT COUNT(*)
+                    FROM duplicate_groups dg2
+                    JOIN image_hashes i2 ON dg2.image_id = i2.id
+                    WHERE i2.dir_path = group_stats.primary_folder
+                )
+            ''')
             try:
-                if not folder_paths:
-                    print(f"[Phase 3] Warning: No folder_paths provided, display_path will use absolute paths")
-                    folder_paths = []
-
-                print(f"[Phase 3] Adding display_path to {len(all_images_dict)} images...")
-                print(f"[Phase 3] Using {len(folder_paths)} scan folders as root: {folder_paths}")
-
-                # Add display_path to each image
-                for img_id, img in all_images_dict.items():
-                    file_path = img.get('file_path', '')
-                    if not file_path:
-                        img['display_path'] = '/'
-                        continue
-
-                    # Find the scan folder that contains this file (use it as root)
-                    scan_folder = None
-                    for folder in folder_paths:
-                        try:
-                            folder_abs = os.path.abspath(folder)
-                            file_path_abs = os.path.abspath(file_path)
-                            if file_path_abs.startswith(folder_abs + os.sep) or file_path_abs == folder_abs:
-                                scan_folder = folder_abs
-                                break
-                        except Exception as e:
-                            print(f"[Phase 3] Warning: Error checking path {file_path}: {e}")
-                            continue
-
-                    if scan_folder:
-                        # Calculate relative path from scan folder
-                        try:
-                            rel_path = os.path.relpath(file_path, scan_folder)
-                            # Remove filename, keep only directory path
-                            dir_path = os.path.dirname(rel_path)
-                            img['display_path'] = dir_path if dir_path and dir_path != '.' else '/'
-                        except (ValueError, Exception) as e:
-                            # Fallback
-                            print(f"[Phase 3] Warning: Cannot calculate relative path for {file_path}: {e}")
-                            img['display_path'] = os.path.dirname(file_path)
-                    else:
-                        # Fallback: use absolute directory path
-                        img['display_path'] = os.path.dirname(file_path)
-
-                print(f"[Phase 3] Display paths added successfully")
-
+                top = cursor.execute(
+                    "SELECT primary_folder, folder_dup_count FROM group_stats "
+                    "ORDER BY folder_dup_count DESC LIMIT 5"
+                ).fetchall()
+                print(f"[Phase 2.5]   Step 5c DONE. Top-5 folder_dup_count:")
+                for pf, cnt in top:
+                    print(f"[Phase 2.5]     {cnt:6d}  {pf}")
             except Exception as e:
-                print(f"[Phase 3] Error adding display_path, using fallback: {e}")
-                import traceback
-                traceback.print_exc()
-                # Fallback: add simple display_path to all images
-                for img in all_images_dict.values():
-                    img['display_path'] = os.path.dirname(img.get('file_path', ''))
+                print(f"[Phase 2.5]   Step 5c stats query failed (non-fatal): {e}")
 
-            # Assemble groups from lookup dictionary (fast, in-memory operation)
-            stop_requested = False
-            for group_idx, group_ids in enumerate(groups):
-                if self._stop_event.is_set():
-                    print(f"[Phase 3] ⏸️ Stop requested, returning partial results...")
-                    stop_requested = True
-                    break  # Exit early, return partial results
+            elapsed_step = time.time() - step_start
+            print(f"[Phase 2.5] Step 5/5 DONE in {elapsed_step:.2f}s")
 
-                group_images = [all_images_dict[img_id] for img_id in group_ids if img_id in all_images_dict]
+            # Update meta
+            now = time.time()
+            print(f"[Phase 2.5] Writing duplicate_finder_meta: threshold={threshold_percent}, "
+                  f"same_folder_filter={same_folder_filter}, group_count={len(filtered_groups)}, at={now}")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO duplicate_finder_meta (key, value) VALUES (?, ?)",
+                [
+                    ("materialized_threshold", str(threshold_percent)),
+                    ("materialized_at", str(now)),
+                    ("materialized_same_folder_filter", "1" if same_folder_filter else "0"),
+                    ("materialized_group_count", str(len(filtered_groups))),
+                ],
+            )
+            conn.commit()
+            print(f"[Phase 2.5] COMMIT done")
 
-                if len(group_images) >= 2:
-                    result_groups.append(group_images)
+            elapsed = time.time() - start_time
+            print("=" * 80)
+            print(f"[Phase 2.5] ✅ COMPLETE in {elapsed:.2f}s")
+            print(f"[Phase 2.5]   groups               : {len(filtered_groups)}")
+            print(f"[Phase 2.5]   members              : {len(dg_rows)}")
+            print(f"[Phase 2.5]   whitelisted_dropped  : {whitelisted_dropped}")
+            print(f"[Phase 2.5]   threshold_percent    : {threshold_percent}%")
+            print(f"[Phase 2.5]   same_folder_filter   : {same_folder_filter}")
+            print("=" * 80)
+            cb(100, f"Complete: {len(filtered_groups)} groups")
 
-                    # Progress update every 10 groups
-                if progress_callback and (group_idx + 1) % 10 == 0:
-                    progress_callback(group_idx + 1, total_groups, f"Loading groups... ({group_idx + 1}/{total_groups})")
-        else:
-            print(f"[Phase 3] No duplicate images to fetch")
-            stop_requested = False
+            return {
+                'groups_count': len(filtered_groups),
+                'members_count': len(dg_rows),
+                'whitelisted_dropped': whitelisted_dropped,
+                'threshold_percent': threshold_percent,
+                'same_folder_filter': same_folder_filter,
+                'elapsed': elapsed,
+                'stopped': False,
+            }
 
-        # Sort groups by directory path first, then by filename
-        if result_groups:
-            def get_sort_key(group):
-                if not group:
-                    return ('', '')
-                file_path = group[0].get('file_path', '')
-                filename = group[0].get('filename', '')
-                dir_path = os.path.dirname(file_path)
-                return (dir_path, filename)
+        except Exception as e:
+            conn.rollback()
+            elapsed = time.time() - start_time
+            print("=" * 80)
+            print(f"[Phase 2.5] ❌ EXCEPTION after {elapsed:.2f}s: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            print("=" * 80)
+            raise
 
-            result_groups.sort(key=get_sort_key)
-            print(f"[Phase 3] Groups sorted by path and filename")
+    def get_materialization_meta(self) -> Dict:
+        """Read current Phase 2.5 materialization state from duplicate_finder_meta."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT key, value FROM duplicate_finder_meta")
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {k: v for k, v in rows}
 
-        elapsed = time.time() - start_time
-        total_duplicates = sum(len(g) for g in result_groups)
-        total_groups_all = len(result_groups)
+    # ========== Incremental stats repair (Step 5) ==========
 
-        # Apply pagination
-        if page > 0:  # page=0 means return all groups
-            import math
-            total_pages = math.ceil(total_groups_all / page_size) if page_size > 0 else 1
-            start_idx = (page - 1) * page_size
-            end_idx = start_idx + page_size
+    def stats_collect_affected_before_mutation(self, image_ids: List[int]) -> Dict:
+        """
+        Capture data needed to repair group_stats after a set of image_ids gets
+        removed from the materialized view (either via image_hashes delete, or
+        via whitelist add). Call BEFORE any DB mutation.
 
-            paginated_groups = result_groups[start_idx:end_idx]
+        Returns:
+            {
+                'image_ids': [...],
+                'affected_groups': [...],         # group_ids that contained these images
+                'old_primary_folders': [...],     # primary_folder values BEFORE mutation
+                'affected_folders': [...],        # dir_path of the images being removed
+            }
+        """
+        if not image_ids:
+            return {
+                'image_ids': [],
+                'affected_groups': [],
+                'old_primary_folders': [],
+                'affected_folders': [],
+            }
 
-            # Calculate how many files are being returned
-            paginated_file_count = sum(len(g) for g in paginated_groups)
+        cur = self._get_connection().cursor()
+        affected_groups: set = set()
+        affected_folders: set = set()
 
-            print(f"[Phase 3] 📄 Pagination Applied:")
-            print(f"[Phase 3]   - Page: {page}/{total_pages}")
-            print(f"[Phase 3]   - Total groups in DB: {total_groups_all}")
-            print(f"[Phase 3]   - Groups returned: {len(paginated_groups)} (groups {start_idx+1}-{min(end_idx, total_groups_all)})")
-            print(f"[Phase 3]   - Files returned: {paginated_file_count} files (out of {total_duplicates} total)")
-        else:
-            # Return all groups
-            paginated_groups = result_groups
-            total_pages = 1
-            print(f"[Phase 3] 📄 Returning all {total_groups_all} groups (pagination disabled)")
+        BATCH = 900
+        for i in range(0, len(image_ids), BATCH):
+            chunk = list(image_ids)[i:i + BATCH]
+            ph = ','.join('?' * len(chunk))
+            cur.execute(
+                f"SELECT DISTINCT group_id FROM duplicate_groups WHERE image_id IN ({ph})",
+                chunk,
+            )
+            affected_groups.update(r[0] for r in cur.fetchall())
 
-        if stop_requested:
-            print(f"[Phase 3] ⏸️ Stopped by user in {elapsed:.1f}s: {total_groups_all} groups loaded, {total_duplicates} duplicates")
-        else:
-            print(f"[Phase 3] ✅ Completed in {elapsed:.1f}s: {total_groups_all} groups, {total_duplicates} total duplicates")
+            cur.execute(
+                f"SELECT DISTINCT dir_path FROM image_hashes "
+                f"WHERE id IN ({ph}) AND dir_path IS NOT NULL",
+                chunk,
+            )
+            affected_folders.update(r[0] for r in cur.fetchall())
 
-        # Send final progress
-        if progress_callback:
-            if stop_requested:
-                progress_callback(total_groups_all, total_groups, f"Stopped: {total_groups_all}/{total_groups} groups")
-            elif total_groups > 0:
-                progress_callback(total_groups, total_groups, f"Complete: {total_groups_all} groups, {total_duplicates} duplicates")
+        old_primary_folders: set = set()
+        ag_list = list(affected_groups)
+        for i in range(0, len(ag_list), BATCH):
+            chunk = ag_list[i:i + BATCH]
+            ph = ','.join('?' * len(chunk))
+            cur.execute(
+                f"SELECT DISTINCT primary_folder FROM group_stats "
+                f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
+                chunk,
+            )
+            old_primary_folders.update(r[0] for r in cur.fetchall())
+
+        print(f"[Stats Repair] CAPTURE: image_ids={len(image_ids)}, "
+              f"affected_groups={len(affected_groups)}, "
+              f"affected_folders={len(affected_folders)}, "
+              f"old_primary_folders={len(old_primary_folders)}")
 
         return {
-            'groups': paginated_groups,
+            'image_ids': list(image_ids),
+            'affected_groups': list(affected_groups),
+            'old_primary_folders': list(old_primary_folders),
+            'affected_folders': list(affected_folders),
+        }
+
+    def stats_repair_after_mutation(
+        self,
+        affected: Dict,
+        remove_from_groups: bool = False,
+    ) -> Dict:
+        """
+        Repair group_stats + duplicate_groups for the affected groups.
+
+        Args:
+            affected: result of stats_collect_affected_before_mutation()
+            remove_from_groups: if True, manually DELETE the image_ids from
+                duplicate_groups. Use for whitelist case where image_hashes
+                row stays put. For deletion case CASCADE has already done it.
+        """
+        start = time.time()
+        cur = self._get_connection().cursor()
+
+        image_ids = affected.get('image_ids', [])
+        affected_groups = affected.get('affected_groups', [])
+        old_primary_folders = affected.get('old_primary_folders', [])
+        affected_folders = affected.get('affected_folders', [])
+
+        if not affected_groups:
+            elapsed = time.time() - start
+            print(f"[Stats Repair] No affected groups; nothing to do ({elapsed:.3f}s)")
+            return {
+                'image_ids_processed': len(image_ids),
+                'affected_groups': 0,
+                'orphan_groups_deleted': 0,
+                'survivor_groups_updated': 0,
+                'folders_refreshed': 0,
+                'elapsed': elapsed,
+            }
+
+        BATCH = 900
+
+        # Step A: whitelist case — manually remove image_ids from duplicate_groups
+        if remove_from_groups and image_ids:
+            removed_dg_rows = 0
+            for i in range(0, len(image_ids), BATCH):
+                chunk = image_ids[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"DELETE FROM duplicate_groups WHERE image_id IN ({ph})",
+                    chunk,
+                )
+                removed_dg_rows += cur.rowcount
+            print(f"[Stats Repair] (whitelist mode) removed {removed_dg_rows} rows from duplicate_groups")
+
+        # Step B: classify affected groups into orphan (< 2 members) vs survivor
+        orphan_groups: set = set()
+        survivor_groups: set = set()
+
+        for i in range(0, len(affected_groups), BATCH):
+            chunk = affected_groups[i:i + BATCH]
+            ph = ','.join('?' * len(chunk))
+            cur.execute(
+                f"SELECT gs.group_id, COALESCE(dg.cnt, 0) "
+                f"FROM group_stats gs "
+                f"LEFT JOIN ("
+                f"  SELECT group_id, COUNT(*) AS cnt FROM duplicate_groups "
+                f"  WHERE group_id IN ({ph}) GROUP BY group_id"
+                f") dg ON gs.group_id = dg.group_id "
+                f"WHERE gs.group_id IN ({ph})",
+                chunk + chunk,
+            )
+            for gid, cnt in cur.fetchall():
+                if cnt < 2:
+                    orphan_groups.add(gid)
+                else:
+                    survivor_groups.add(gid)
+
+        # Step C: delete orphan groups from both tables
+        if orphan_groups:
+            for i in range(0, len(orphan_groups), BATCH):
+                chunk = list(orphan_groups)[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(f"DELETE FROM duplicate_groups WHERE group_id IN ({ph})", chunk)
+                cur.execute(f"DELETE FROM group_stats WHERE group_id IN ({ph})", chunk)
+            print(f"[Stats Repair] dropped {len(orphan_groups)} orphan groups (< 2 members)")
+
+        # Step D: recompute stats for survivors
+        if survivor_groups:
+            for i in range(0, len(survivor_groups), BATCH):
+                chunk = list(survivor_groups)[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(f'''
+                    UPDATE group_stats
+                    SET member_count = (
+                            SELECT COUNT(*) FROM duplicate_groups dg
+                            WHERE dg.group_id = group_stats.group_id
+                        ),
+                        max_filesize = (
+                            SELECT MAX(i.filesize) FROM duplicate_groups dg
+                            JOIN image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = group_stats.group_id
+                        ),
+                        min_filesize = (
+                            SELECT MIN(i.filesize) FROM duplicate_groups dg
+                            JOIN image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = group_stats.group_id
+                        ),
+                        max_mtime = (
+                            SELECT MAX(i.mtime) FROM duplicate_groups dg
+                            JOIN image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = group_stats.group_id
+                        ),
+                        min_mtime = (
+                            SELECT MIN(i.mtime) FROM duplicate_groups dg
+                            JOIN image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = group_stats.group_id
+                        ),
+                        primary_folder = (
+                            SELECT i.dir_path FROM duplicate_groups dg
+                            JOIN image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = group_stats.group_id
+                            GROUP BY i.dir_path
+                            ORDER BY COUNT(*) DESC, i.dir_path ASC
+                            LIMIT 1
+                        )
+                    WHERE group_id IN ({ph})
+                ''', chunk)
+            print(f"[Stats Repair] re-aggregated {len(survivor_groups)} survivor groups")
+
+        # Step E: refresh folder_dup_count for affected folders + old/new primary_folders
+        new_primary_folders: set = set()
+        if survivor_groups:
+            for i in range(0, len(survivor_groups), BATCH):
+                chunk = list(survivor_groups)[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT DISTINCT primary_folder FROM group_stats "
+                    f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
+                    chunk,
+                )
+                new_primary_folders.update(r[0] for r in cur.fetchall())
+
+        folders_to_refresh = set(affected_folders) | set(old_primary_folders) | new_primary_folders
+        if folders_to_refresh:
+            folders_list = list(folders_to_refresh)
+            for i in range(0, len(folders_list), BATCH):
+                chunk = folders_list[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(f'''
+                    UPDATE group_stats
+                    SET folder_dup_count = (
+                        SELECT COUNT(*)
+                        FROM duplicate_groups dg2
+                        JOIN image_hashes i2 ON dg2.image_id = i2.id
+                        WHERE i2.dir_path = group_stats.primary_folder
+                    )
+                    WHERE primary_folder IN ({ph})
+                ''', chunk)
+            print(f"[Stats Repair] refreshed folder_dup_count for {len(folders_to_refresh)} folders")
+
+        # Update meta timestamp
+        cur.execute(
+            "INSERT OR REPLACE INTO duplicate_finder_meta (key, value) VALUES (?, ?)",
+            ("last_incremental_update", str(time.time())),
+        )
+        self._get_connection().commit()
+
+        elapsed = time.time() - start
+        result = {
+            'image_ids_processed': len(image_ids),
+            'affected_groups': len(affected_groups),
+            'orphan_groups_deleted': len(orphan_groups),
+            'survivor_groups_updated': len(survivor_groups),
+            'folders_refreshed': len(folders_to_refresh),
+            'elapsed': elapsed,
+        }
+        print(f"[Stats Repair] DONE in {elapsed:.3f}s: {result}")
+        return result
+
+    # ========== Phase 3: Get Duplicates ==========
+
+    # SQL injection guard: only these columns may be plugged into ORDER BY
+    PHASE3_ALLOWED_SORTS = {
+        'folder_dup_count',
+        'max_filesize',
+        'min_filesize',
+        'max_mtime',
+        'min_mtime',
+        'member_count',
+    }
+
+    def phase3_get_duplicates(
+        self,
+        threshold_percent: int = 80,
+        progress_callback: Optional[Callable] = None,
+        page: int = 1,
+        page_size: int = 100,
+        sort_by: str = 'folder_dup_count',
+        sort_order: str = 'desc',
+        folder_paths: Optional[List[str]] = None,
+    ) -> Dict:
+        """
+        Phase 3: Read materialized duplicate groups (strict mode).
+
+        Requires phase2_5_materialize_groups() to have run first. Returns a
+        structured error marker (error='no_materialization' or
+        error='threshold_mismatch') if state is missing or stale — the caller
+        maps these to HTTP 409.
+
+        Args:
+            threshold_percent:  UI similarity threshold (must match materialized)
+            page:               1-indexed page number (0 = return all)
+            page_size:          groups per page
+            sort_by:            column from PHASE3_ALLOWED_SORTS
+            sort_order:         'asc' or 'desc'
+            folder_paths:       scan roots, used for display_path computation
+        """
+        start_time = time.time()
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 1. Strict materialization check
+        meta = self.get_materialization_meta()
+        empty_page = {
+            'groups': [],
+            'total_groups': 0,
+            'total_duplicates': 0,
+            'current_page': page if page > 0 else 1,
+            'page_size': page_size,
+            'total_pages': 0,
+            'stopped': False,
+            'materialization_meta': meta,
+        }
+
+        if not meta or 'materialized_threshold' not in meta:
+            print(f"[Phase 3] no materialization meta; returning error marker")
+            return {
+                **empty_page,
+                'error': 'no_materialization',
+                'message': 'No materialized groups. Please run Phase 2.5 first.',
+                'elapsed': time.time() - start_time,
+            }
+
+        try:
+            materialized_threshold = int(meta['materialized_threshold'])
+        except (TypeError, ValueError):
+            materialized_threshold = -1
+
+        if materialized_threshold != threshold_percent:
+            print(f"[Phase 3] threshold mismatch: materialized={materialized_threshold}, requested={threshold_percent}")
+            return {
+                **empty_page,
+                'error': 'threshold_mismatch',
+                'message': (
+                    f'Groups materialized at {materialized_threshold}%, but UI requests '
+                    f'{threshold_percent}%. Re-run Phase 2.5 to refresh.'
+                ),
+                'materialized_threshold': materialized_threshold,
+                'current_threshold': threshold_percent,
+                'elapsed': time.time() - start_time,
+            }
+
+        # 2. Validate sort column (whitelist; SQL injection guard)
+        if sort_by not in self.PHASE3_ALLOWED_SORTS:
+            sort_by = 'folder_dup_count'
+        sort_order_sql = 'DESC' if str(sort_order).lower() == 'desc' else 'ASC'
+
+        # 3. Totals (single fast aggregate, both indexes already in place)
+        cursor.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM group_stats")
+        total_groups_all, total_duplicates = cursor.fetchone()
+        total_duplicates = int(total_duplicates)
+
+        if total_groups_all == 0:
+            return {
+                **empty_page,
+                'total_pages': 0,
+                'elapsed': time.time() - start_time,
+                'sort_by': sort_by,
+                'sort_order': sort_order_sql.lower(),
+            }
+
+        # 4. Page the group_ids — pagination happens entirely in SQL
+        if page > 0:
+            import math
+            total_pages = max(1, math.ceil(total_groups_all / page_size)) if page_size > 0 else 1
+            offset = max(0, (page - 1) * page_size)
+            cursor.execute(
+                f"SELECT group_id FROM group_stats "
+                f"ORDER BY {sort_by} {sort_order_sql}, group_id ASC "
+                f"LIMIT ? OFFSET ?",
+                (page_size, offset),
+            )
+        else:
+            total_pages = 1
+            cursor.execute(
+                f"SELECT group_id FROM group_stats "
+                f"ORDER BY {sort_by} {sort_order_sql}, group_id ASC"
+            )
+
+        page_group_ids = [r[0] for r in cursor.fetchall()]
+        if not page_group_ids:
+            return {
+                'groups': [],
+                'total_groups': total_groups_all,
+                'total_duplicates': total_duplicates,
+                'current_page': page if page > 0 else 1,
+                'page_size': page_size,
+                'total_pages': total_pages,
+                'elapsed': time.time() - start_time,
+                'stopped': False,
+                'materialization_meta': meta,
+                'sort_by': sort_by,
+                'sort_order': sort_order_sql.lower(),
+            }
+
+        # 5. Bulk-fetch members + image details for THIS page only (one JOIN, batched
+        #    to stay under SQLite's 999 variable limit)
+        images_by_group: Dict[int, List[Dict]] = {gid: [] for gid in page_group_ids}
+        batch_size = 900
+        for i in range(0, len(page_group_ids), batch_size):
+            chunk = page_group_ids[i:i + batch_size]
+            placeholders = ','.join('?' * len(chunk))
+            cursor.execute(
+                f"SELECT dg.group_id, i.id, i.filename, i.filesize, i.file_path, "
+                f"       i.phash, i.resolution "
+                f"FROM duplicate_groups dg "
+                f"JOIN image_hashes i ON dg.image_id = i.id "
+                f"WHERE dg.group_id IN ({placeholders})",
+                chunk,
+            )
+            for gid, img_id, filename, filesize, file_path, phash, resolution in cursor.fetchall():
+                images_by_group[gid].append({
+                    'id': img_id,
+                    'filename': filename,
+                    'filesize': filesize,
+                    'file_path': file_path,
+                    'phash': phash,
+                    'resolution': resolution,
+                })
+
+        # 6. Compute display_path for THIS page only (current page ≈ a few hundred images;
+        #    folder_paths is fresh from settings each request — no staleness)
+        if folder_paths is None:
+            folder_paths = []
+        folder_abs_list = []
+        for folder in folder_paths:
+            try:
+                folder_abs_list.append(os.path.abspath(folder))
+            except Exception:
+                continue
+
+        def compute_display_path(file_path: str) -> str:
+            if not file_path:
+                return '/'
+            try:
+                file_path_abs = os.path.abspath(file_path)
+                for folder_abs in folder_abs_list:
+                    if file_path_abs == folder_abs or file_path_abs.startswith(folder_abs + os.sep):
+                        rel = os.path.relpath(file_path, folder_abs)
+                        d = os.path.dirname(rel)
+                        return d if d and d != '.' else '/'
+            except Exception:
+                pass
+            return os.path.dirname(file_path)
+
+        for imgs in images_by_group.values():
+            for img in imgs:
+                img['display_path'] = compute_display_path(img['file_path'])
+
+        # 7. Assemble result preserving the SQL-ordered group_id sequence
+        result_groups = [images_by_group[gid] for gid in page_group_ids if images_by_group[gid]]
+
+        elapsed = time.time() - start_time
+        print(f"[Phase 3] ✅ Page {page}/{total_pages}: {len(result_groups)} groups in {elapsed * 1000:.0f}ms "
+              f"(sort_by={sort_by} {sort_order_sql})")
+
+        return {
+            'groups': result_groups,
             'total_groups': total_groups_all,
             'total_duplicates': total_duplicates,
             'current_page': page if page > 0 else 1,
             'page_size': page_size,
             'total_pages': total_pages if page > 0 else 1,
             'elapsed': elapsed,
-            'stopped': stop_requested
+            'stopped': False,
+            'materialization_meta': meta,
+            'sort_by': sort_by,
+            'sort_order': sort_order_sql.lower(),
         }
 
     def _build_groups(self, edges: List[tuple]) -> List[List[int]]:

@@ -126,6 +126,20 @@ export class DuplicateFinderService {
   }
 
   /**
+   * Bulk-add multiple groups to whitelist (e.g. entire Phase 3 page).
+   * One stats repair at the end — scales with unique images, not group count.
+   */
+  static async bulkAddGroupsToWhitelist(groups: number[][]): Promise<{
+    added_groups: number
+    skipped_groups: number
+    image_count: number
+    stats_repair?: any
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/whitelist/bulk-add-groups`, {}, { groups })
+    return response
+  }
+
+  /**
    * Get all whitelist groups
    */
   static async getWhitelistGroups(): Promise<{
@@ -255,12 +269,57 @@ export class DuplicateFinderService {
   }
 
   /**
-   * Phase 3: Get duplicates from similarities
+   * Phase 2.5: Materialize duplicate groups + per-group stats.
+   * Manual trigger between Phase 2 and Phase 3.
+   */
+  static async phase25Materialize(
+    thresholdPercent: number = 80,
+    sameFolderFilter: boolean = true
+  ): Promise<{
+    groups_count: number
+    members_count: number
+    whitelisted_dropped: number
+    threshold_percent: number
+    same_folder_filter: boolean
+    elapsed: number
+    stopped: boolean
+    scan_id?: string
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2.5/materialize`, {}, {
+      threshold_percent: thresholdPercent,
+      same_folder_filter: sameFolderFilter
+    })
+    return response
+  }
+
+  /**
+   * Phase 2.5: Stop
+   */
+  static async phase25Stop(): Promise<{ message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2.5/stop`, {}, {})
+    return response
+  }
+
+  /**
+   * Phase 2.5: Read materialization metadata (which threshold, when, etc.)
+   */
+  static async phase25Meta(): Promise<{ meta: Record<string, string> }> {
+    const response = await getRequest<{ meta: Record<string, string> }>(`${this.BASE_URL}/phase2.5/meta`)
+    return response
+  }
+
+  /**
+   * Phase 3: Get duplicates from materialized tables.
+   *
+   * Returns 409 with `error: 'no_materialization' | 'threshold_mismatch'` if
+   * Phase 2.5 hasn't been run (or was run at a different threshold).
    */
   static async phase3GetDuplicates(
-    thresholdPercent: number = 90,
+    thresholdPercent: number = 80,
     page: number = 1,
-    pageSize: number = 100
+    pageSize: number = 100,
+    sortBy: string = 'folder_dup_count',
+    sortOrder: 'asc' | 'desc' = 'desc'
   ): Promise<{
     groups: ImageInfo[][]
     total_groups: number
@@ -270,13 +329,33 @@ export class DuplicateFinderService {
     total_pages: number
     elapsed: number
     scan_id?: string
+    materialization_meta?: Record<string, string>
+    sort_by?: string
+    sort_order?: string
+    error?: 'no_materialization' | 'threshold_mismatch' | string
+    message?: string
+    materialized_threshold?: number
+    current_threshold?: number
   }> {
-    const response = await postRequest(`${this.BASE_URL}/phase3/get-duplicates`, {}, {
-      threshold_percent: thresholdPercent,
-      page: page,
-      page_size: pageSize
-    })
-    return response
+    try {
+      const response = await postRequest(`${this.BASE_URL}/phase3/get-duplicates`, {}, {
+        threshold_percent: thresholdPercent,
+        page: page,
+        page_size: pageSize,
+        sort_by: sortBy,
+        sort_order: sortOrder
+      })
+      return response
+    } catch (err: any) {
+      // Backend returns 409 with structured `error` field when materialization
+      // is missing or its threshold is stale. Unwrap so callers see a normal
+      // response and can branch on `result.error`.
+      const data = err?.response?.data
+      if (err?.response?.status === 409 && data?.error) {
+        return data
+      }
+      throw err
+    }
   }
 
   /**

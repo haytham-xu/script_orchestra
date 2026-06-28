@@ -53,6 +53,31 @@
             ⏹️ Stop
           </el-button>
 
+          <!-- Phase 2.5: Materialize Groups (manual trigger between Phase 2 and Phase 3) -->
+          <el-tooltip
+            :content="phase25TooltipContent"
+            placement="top"
+          >
+            <el-button
+              :type="phase25NeedsAttention ? 'warning' : 'primary'"
+              size="large"
+              :disabled="isPhase25Running"
+              :loading="isPhase25Running"
+              @click="runPhase25"
+              data-testid="phase25-materialize-btn"
+            >
+              {{ isPhase25Running ? 'Phase 2.5 Running...' : '🧮 Materialize Groups' }}
+            </el-button>
+          </el-tooltip>
+          <el-button
+            v-if="isPhase25Running"
+            type="warning"
+            size="large"
+            @click="stopPhase25"
+          >
+            ⏹️ Stop
+          </el-button>
+
           <!-- Phase 3 -->
           <el-button
             type="info"
@@ -213,6 +238,46 @@
           @size-change="handlePageSizeChange"
           data-testid="pagination"
         />
+
+        <div class="sort-controls" style="display: inline-flex; align-items: center; gap: 8px; margin-left: 16px;">
+          <span style="font-size: 13px; color: #606266;">Sort by:</span>
+          <el-select
+            v-model="sortBy"
+            size="small"
+            style="width: 220px;"
+            @change="handleSortChange"
+            data-testid="phase3-sort-by"
+          >
+            <el-option
+              v-for="opt in SORT_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+          <el-button
+            size="small"
+            :type="sortOrder === 'desc' ? 'primary' : 'default'"
+            @click="toggleSortOrder"
+            data-testid="phase3-sort-order"
+            :title="sortOrder === 'desc' ? 'Descending (click to switch to ascending)' : 'Ascending (click to switch to descending)'"
+          >
+            {{ sortOrder === 'desc' ? '↓ Desc' : '↑ Asc' }}
+          </el-button>
+        </div>
+
+        <el-button
+          v-if="scanResult && scanResult.duplicate_groups && scanResult.duplicate_groups.length > 0"
+          type="warning"
+          plain
+          size="small"
+          :loading="isBulkWhitelisting"
+          @click="whitelistCurrentPage"
+          data-testid="whitelist-current-page-btn"
+          style="margin-left: 12px;"
+        >
+          ⚪ Whitelist all on this page ({{ scanResult.duplicate_groups.length }} groups)
+        </el-button>
       </div>
 
       <div class="duplicate-groups-container">
@@ -838,6 +903,90 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- Bulk Whitelist Confirmation Dialog -->
+    <el-dialog
+      v-model="showBulkWhitelistDialog"
+      title="Confirm Bulk Whitelist"
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <div class="bulk-whitelist-dialog">
+        <el-alert
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 16px;"
+        >
+          <template #title>
+            <div style="font-size: 14px; font-weight: 600;">
+              ⚠️ These groups will be marked as "OK" and stop appearing as duplicates
+            </div>
+          </template>
+          <div style="font-size: 13px; margin-top: 8px;">
+            Files stay on disk. To undo, remove the group(s) from the Whitelist drawer.
+          </div>
+        </el-alert>
+
+        <div class="deep-delete-info">
+          <div class="info-label">Groups:</div>
+          <div class="info-value">{{ bulkWhitelistPreview.groupCount }}</div>
+        </div>
+        <div class="deep-delete-info">
+          <div class="info-label">Total images:</div>
+          <div class="info-value">{{ bulkWhitelistPreview.imageCount }}</div>
+        </div>
+
+        <div class="file-list-section">
+          <div class="file-list-header">
+            <span>Preview:</span>
+            <span class="file-count">({{ bulkWhitelistPreview.groups.length }} groups)</span>
+          </div>
+          <div class="bulk-whitelist-preview-list">
+            <div
+              v-for="(group, gIdx) in bulkWhitelistPreview.groups"
+              :key="gIdx"
+              class="bulk-whitelist-group"
+            >
+              <div class="bulk-whitelist-group-header">
+                Group {{ gIdx + 1 }}
+                <span class="file-count">({{ group.length }} images)</span>
+              </div>
+              <div class="bulk-whitelist-thumbs">
+                <div
+                  v-for="(img, iIdx) in group"
+                  :key="iIdx"
+                  class="bulk-whitelist-thumb"
+                  :title="img.file_path"
+                >
+                  <img
+                    :src="getImageUrl(img.file_path)"
+                    :alt="img.filename || ''"
+                    loading="lazy"
+                  />
+                  <div class="bulk-whitelist-thumb-label">
+                    {{ img.filename || getFilenameFromPath(img.file_path) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="cancelBulkWhitelist">Cancel</el-button>
+          <el-button
+            type="warning"
+            @click="confirmBulkWhitelist"
+            :loading="isBulkWhitelisting"
+            data-testid="bulk-whitelist-confirm-btn"
+          >
+            Whitelist {{ bulkWhitelistPreview.groupCount }} Groups
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -873,7 +1022,11 @@ const {
   // 3-Phase workflow states
   isPhase1Running,
   isPhase2Running,
+  isPhase25Running,
   isPhase3Running,
+  isBulkWhitelisting,
+  phase25NeedsAttention,
+  phase25TooltipContent,
   phaseProgress,
   phase1Summary,
   phase2Summary,
@@ -893,6 +1046,13 @@ const {
   stopPhase1,
   runPhase2,
   stopPhase2,
+  runPhase25,
+  stopPhase25,
+  whitelistCurrentPage,
+  cancelBulkWhitelist,
+  confirmBulkWhitelist,
+  showBulkWhitelistDialog,
+  bulkWhitelistPreview,
   runPhase3,
   stopPhase3,
   toggleFileSelection,
@@ -909,6 +1069,11 @@ const {
   getActualGroupIndex,
   handlePageChange,
   handlePageSizeChange,
+  sortBy,
+  sortOrder,
+  SORT_OPTIONS,
+  handleSortChange,
+  toggleSortOrder,
   saveFolderSettings,
   saveAdvancedSettings,
   saveAllSettings,
@@ -1799,6 +1964,67 @@ const {
 
 .file-list-section {
   margin-top: 20px;
+}
+
+.bulk-whitelist-dialog .deep-delete-info {
+  margin-bottom: 8px;
+}
+
+.bulk-whitelist-preview-list {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 8px;
+  background: #fafafa;
+}
+
+.bulk-whitelist-group {
+  border-bottom: 1px dashed #dcdfe6;
+  padding: 8px 0;
+}
+.bulk-whitelist-group:last-child {
+  border-bottom: none;
+}
+
+.bulk-whitelist-group-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+}
+
+.bulk-whitelist-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bulk-whitelist-thumb {
+  width: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  color: #606266;
+}
+
+.bulk-whitelist-thumb img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+}
+
+.bulk-whitelist-thumb-label {
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
 }
 
 .file-list-header {

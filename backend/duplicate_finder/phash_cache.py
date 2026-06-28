@@ -90,7 +90,9 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
         img = Image.open(file_path)
         phash = str(imagehash.phash(img, hash_size=16))
         resolution = f"{img.width}x{img.height}"
-        filesize = os.path.getsize(file_path)
+        stat = os.stat(file_path)
+        filesize = stat.st_size
+        mtime = stat.st_mtime
 
         print(f"[Worker {worker_name} PID={pid}] SUCCESS: {filename} - phash={phash[:8]}..., res={resolution}, size={filesize}")
 
@@ -99,6 +101,7 @@ def _compute_single_hash(file_path: str) -> Optional[Dict]:
             'phash': phash,
             'resolution': resolution,
             'filesize': filesize,
+            'mtime': mtime,
             'error': False
         }
     except OSError as e:
@@ -268,6 +271,8 @@ class PHashCache:
                 phash TEXT NOT NULL,
                 resolution TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                dir_path TEXT,
+                mtime REAL,
                 UNIQUE (filename, filesize, file_path)
             )
         ''')
@@ -275,6 +280,8 @@ class PHashCache:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dir_path ON image_hashes(dir_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mtime ON image_hashes(mtime)')
 
         # Create whitelist table - stores image IDs to exclude from duplicate detection
         cursor.execute('''

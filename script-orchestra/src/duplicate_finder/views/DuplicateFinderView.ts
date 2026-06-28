@@ -11,7 +11,7 @@ import { RecycleScroller } from 'vue-virtual-scroller'
 
 export function useDuplicateFinderView() {
   const selectedFolders = ref<string[]>([])
-  const threshold = ref(90)
+  const threshold = ref(80)
   const isScanning = ref(false)
   const isSaving = ref(false)
   const isDeleting = ref(false)
@@ -40,7 +40,7 @@ export function useDuplicateFinderView() {
 
   const settings = ref<Settings>({
     delete_target_path: '',
-    similarity_threshold: 90,
+    similarity_threshold: 80,
     folder_paths: [],
     max_cpu_cores: 1,
     page_size: 100,  // Default page size
@@ -111,10 +111,27 @@ export function useDuplicateFinderView() {
   const totalGroupsAll = ref(0)  // Total groups across all pages
   const isLoadingPage = ref(false)  // Loading indicator for page changes
 
+  // Phase 3 sort controls (UI-exposed; backend whitelist of columns enforced server-side)
+  type SortBy = 'folder_dup_count' | 'max_filesize' | 'min_filesize' | 'max_mtime' | 'min_mtime' | 'member_count'
+  const sortBy = ref<SortBy>('folder_dup_count')
+  const sortOrder = ref<'asc' | 'desc'>('desc')
+  const SORT_OPTIONS: { value: SortBy; label: string }[] = [
+    { value: 'folder_dup_count', label: 'Folder duplicates (hot folder)' },
+    { value: 'member_count',     label: 'Group size (member count)' },
+    { value: 'max_filesize',     label: 'Max file size' },
+    { value: 'min_filesize',     label: 'Min file size' },
+    { value: 'max_mtime',        label: 'Newest modified' },
+    { value: 'min_mtime',        label: 'Oldest modified' },
+  ]
+
   // 3-Phase workflow states
   const isPhase1Running = ref(false)
   const isPhase2Running = ref(false)
+  const isPhase25Running = ref(false)
   const isPhase3Running = ref(false)
+  const isBulkWhitelisting = ref(false)
+  // Latest Phase 2.5 materialization metadata (loaded on mount + after each run)
+  const phase25Meta = ref<Record<string, string>>({})
   const phaseProgress = ref({
     phase: 0,
     message: '',
@@ -681,6 +698,177 @@ export function useDuplicateFinderView() {
     }
   }
 
+  // ========== Phase 2.5: Materialize Groups ==========
+
+  /**
+   * True if Phase 2.5 needs (re-)running: never materialized, or threshold
+   * doesn't match the current UI threshold.
+   */
+  const phase25NeedsAttention = computed(() => {
+    const m = phase25Meta.value
+    if (!m || !m.materialized_threshold) return true
+    return parseInt(m.materialized_threshold, 10) !== threshold.value
+  })
+
+  const phase25TooltipContent = computed(() => {
+    const m = phase25Meta.value
+    if (!m || !m.materialized_threshold) {
+      return 'No materialization yet. Click to materialize duplicate groups for Phase 3.'
+    }
+    const matT = parseInt(m.materialized_threshold, 10)
+    if (matT !== threshold.value) {
+      return `Materialized at ${matT}%, current UI threshold is ${threshold.value}%. Click to re-materialize.`
+    }
+    const groupCount = m.materialized_group_count || '?'
+    const ts = m.materialized_at ? new Date(parseFloat(m.materialized_at) * 1000).toLocaleString() : '?'
+    return `Materialized at ${matT}% with ${groupCount} groups (${ts}).`
+  })
+
+  async function loadPhase25Meta() {
+    try {
+      const { meta } = await DuplicateFinderService.phase25Meta()
+      phase25Meta.value = meta || {}
+    } catch (error: any) {
+      console.warn('[Frontend] Failed to load Phase 2.5 meta:', error)
+      phase25Meta.value = {}
+    }
+  }
+
+  async function runPhase25() {
+    try {
+      isPhase25Running.value = true
+      phaseProgress.value = {
+        phase: 25,
+        message: 'Phase 2.5: Materializing groups...',
+        details: 'Starting...',
+        current: 0,
+        total: 100,
+        percentage: 0,
+      }
+
+      if (!socket || !socket.connected) {
+        connectWebSocket()
+      }
+
+      // Pre-subscribe is not possible (we get scan_id only after the call returns)
+      // Use a temporary listener pattern after the call kicks off — but the call
+      // is synchronous from the FE perspective. Instead, just rely on initial /
+      // final progress: WebSocket events fire during the call.
+      // Workaround: bind listener to a generic channel pattern after we know scan_id.
+
+      const result = await DuplicateFinderService.phase25Materialize(threshold.value, true)
+
+      // Late-bind WS listener won't catch much (call already finished), so
+      // synthesize final progress here.
+      phaseProgress.value = {
+        phase: 25,
+        message: 'Phase 2.5: Complete',
+        details: `Groups: ${result.groups_count}, Members: ${result.members_count}, Time: ${result.elapsed.toFixed(2)}s`,
+        current: 100,
+        total: 100,
+        percentage: 100,
+      }
+
+      ElMessage.success(
+        `Phase 2.5 complete: ${result.groups_count} groups materialized at ${result.threshold_percent}% (${result.elapsed.toFixed(2)}s)`
+      )
+
+      await loadPhase25Meta()
+
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 25) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
+    } catch (error: any) {
+      console.error('[Frontend] Phase 2.5 failed:', error)
+      ElMessage.error(error.message || 'Phase 2.5 failed')
+    } finally {
+      isPhase25Running.value = false
+    }
+  }
+
+  async function stopPhase25() {
+    try {
+      await DuplicateFinderService.phase25Stop()
+      ElMessage.info('Phase 2.5 stop signal sent')
+    } catch (error: any) {
+      console.error('[Frontend] Stop Phase 2.5 failed:', error)
+      ElMessage.error(error.message || 'Failed to stop Phase 2.5')
+    }
+  }
+
+  /**
+   * Bulk-whitelist all groups on the current Phase 3 page. After confirmation,
+   * sends one batch request to the backend; group_stats repair runs once on
+   * the unique image set, then the current page is reloaded.
+   */
+  // Dialog state for bulk-whitelist preview (shown before sending the request)
+  const showBulkWhitelistDialog = ref(false)
+  const bulkWhitelistPreview = ref<{
+    groups: any[][]              // raw groups (each group is an array of image objects)
+    payload: number[][]          // sanitized image_ids per group
+    groupCount: number
+    imageCount: number
+  }>({ groups: [], payload: [], groupCount: 0, imageCount: 0 })
+
+  function whitelistCurrentPage() {
+    const groups = (scanResult.value?.duplicate_groups || []) as any[][]
+    if (groups.length === 0) {
+      ElMessage.info('No groups to whitelist')
+      return
+    }
+
+    const payload = groups
+      .map((g) => Array.isArray(g) ? g.map((img: any) => img.id).filter((x: any) => typeof x === 'number') : [])
+      .filter((ids: number[]) => ids.length >= 2)
+
+    if (payload.length === 0) {
+      ElMessage.warning('No valid groups (need ≥ 2 images with ids)')
+      return
+    }
+
+    const imageCount = payload.reduce((s, ids) => s + ids.length, 0)
+    bulkWhitelistPreview.value = {
+      groups,
+      payload,
+      groupCount: payload.length,
+      imageCount,
+    }
+    showBulkWhitelistDialog.value = true
+  }
+
+  function cancelBulkWhitelist() {
+    showBulkWhitelistDialog.value = false
+  }
+
+  async function confirmBulkWhitelist() {
+    const { payload, groupCount, imageCount } = bulkWhitelistPreview.value
+    if (!payload.length) {
+      showBulkWhitelistDialog.value = false
+      return
+    }
+    try {
+      isBulkWhitelisting.value = true
+      const result = await DuplicateFinderService.bulkAddGroupsToWhitelist(payload)
+      ElMessage.success(
+        `Whitelisted ${result.added_groups} groups (${result.image_count} images)` +
+        (result.skipped_groups ? `, skipped ${result.skipped_groups}` : '')
+      )
+      showBulkWhitelistDialog.value = false
+      // Reload current page so the whitelisted groups disappear
+      await loadDuplicatesPage(currentPage.value)
+    } catch (error: any) {
+      console.error('[Frontend] Bulk whitelist failed:', error)
+      ElMessage.error(error.message || 'Bulk whitelist failed')
+    } finally {
+      isBulkWhitelisting.value = false
+      // (Keep the preview values intact in case user wants to inspect afterward)
+      void groupCount
+      void imageCount
+    }
+  }
+
   /**
    * Phase 3: Get duplicates from similarities
    */
@@ -717,8 +905,34 @@ export function useDuplicateFinderView() {
       const result = await DuplicateFinderService.phase3GetDuplicates(
         threshold.value,
         page,
-        pageSize.value
+        pageSize.value,
+        sortBy.value,
+        sortOrder.value
       )
+
+      // Handle 409-style materialization errors (unwrapped by service layer)
+      if (result.error === 'no_materialization') {
+        ElMessage.warning('No materialized groups. Please run Phase 2.5 first.')
+        scanResult.value = null
+        currentPage.value = 1
+        totalPages.value = 0
+        totalGroupsAll.value = 0
+        await loadPhase25Meta()
+        phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        return
+      }
+      if (result.error === 'threshold_mismatch') {
+        ElMessage.warning(
+          result.message || `Materialized at ${result.materialized_threshold}%, but UI requests ${result.current_threshold}%. Please re-run Phase 2.5.`
+        )
+        scanResult.value = null
+        currentPage.value = 1
+        totalPages.value = 0
+        totalGroupsAll.value = 0
+        await loadPhase25Meta()
+        phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        return
+      }
 
       console.log(`[Phase 3 Frontend] ✅ Response received:`)
       console.log(`[Phase 3 Frontend]   - Groups received: ${result.groups?.length || 0}`)
@@ -877,6 +1091,20 @@ export function useDuplicateFinderView() {
     pageSize.value = newSize
     currentPage.value = 1  // Reset to first page
     await loadDuplicatesPage(1)
+  }
+
+  /**
+   * Handle sort change — reset to page 1 and reload.
+   */
+  async function handleSortChange() {
+    console.log(`[Sort] 🔀 sort changed to ${sortBy.value} ${sortOrder.value}; reloading page 1`)
+    currentPage.value = 1
+    await loadDuplicatesPage(1)
+  }
+
+  function toggleSortOrder() {
+    sortOrder.value = sortOrder.value === 'desc' ? 'asc' : 'desc'
+    handleSortChange()
   }
 
   /**
@@ -1107,7 +1335,7 @@ export function useDuplicateFinderView() {
     try {
       const result = await DuplicateFinderService.getSettings()
       settings.value = result
-      threshold.value = result.similarity_threshold || 90
+      threshold.value = result.similarity_threshold || 80
 
       // Initialize page_size if not present (backward compatibility)
       if (!settings.value.page_size) {
@@ -1681,6 +1909,7 @@ export function useDuplicateFinderView() {
   onMounted(() => {
     connectWebSocket()
     loadSettings()
+    loadPhase25Meta()
   })
 
   onBeforeUnmount(() => {
@@ -1715,7 +1944,12 @@ export function useDuplicateFinderView() {
     // 3-Phase workflow states
     isPhase1Running,
     isPhase2Running,
+    isPhase25Running,
     isPhase3Running,
+    isBulkWhitelisting,
+    phase25Meta,
+    phase25NeedsAttention,
+    phase25TooltipContent,
     phaseProgress,
     phase1Summary,
     phase2Summary,
@@ -1735,6 +1969,13 @@ export function useDuplicateFinderView() {
     stopPhase1,
     runPhase2,
     stopPhase2,
+    runPhase25,
+    stopPhase25,
+    whitelistCurrentPage,
+    cancelBulkWhitelist,
+    confirmBulkWhitelist,
+    showBulkWhitelistDialog,
+    bulkWhitelistPreview,
     runPhase3,
     stopPhase3,
     toggleFileSelection,
@@ -1751,6 +1992,11 @@ export function useDuplicateFinderView() {
     getActualGroupIndex,
     handlePageChange,
     handlePageSizeChange,
+    sortBy,
+    sortOrder,
+    SORT_OPTIONS,
+    handleSortChange,
+    toggleSortOrder,
     saveFolderSettings,
     saveAdvancedSettings,
     saveAllSettings,

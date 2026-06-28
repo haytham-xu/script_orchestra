@@ -13,7 +13,7 @@ SETTINGS_FILE = Path(__file__).parent / 'settings.json'
 
 DEFAULT_SETTINGS = {
     'delete_target_path': '',
-    'similarity_threshold': 90,
+    'similarity_threshold': 80,
     'max_cpu_cores': 1,  # Default to 1 CPU core for precise control
     'phase1': {
         'worker_handler_size': 1,           # Worker processes files one at a time
@@ -74,7 +74,7 @@ class SettingsManager:
 
     def get_similarity_threshold(self) -> int:
         """Get configured similarity threshold (0-100)"""
-        threshold = self.get_settings().get('similarity_threshold', 90)
+        threshold = self.get_settings().get('similarity_threshold', 80)
         # Convert percentage to hamming distance (0-64 for 16x16 hash)
         # 100% = 0 distance, 0% = 64 distance
         max_distance = 64
