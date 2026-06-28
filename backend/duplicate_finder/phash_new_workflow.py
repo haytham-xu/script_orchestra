@@ -9,7 +9,7 @@ import sqlite3
 import os
 import time
 from pathlib import Path
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional, Callable, Tuple
 from multiprocessing import Pool, cpu_count, Manager
 
 try:
@@ -292,7 +292,8 @@ class DuplicateFinderWorkflow:
     def phase1_refresh_images(
         self,
         file_paths: List[str],
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        scope_dir_paths: Optional[List[str]] = None,
     ) -> Dict:
         """
         Phase 1: Refresh image table
@@ -304,6 +305,10 @@ class DuplicateFinderWorkflow:
         Args:
             file_paths: List of image paths to scan
             progress_callback: Optional callback(current, total, message)
+            scope_dir_paths: if set, the "missing files" deletion is RESTRICTED
+                to DB rows whose dir_path is within this scope (exact match OR
+                a subdirectory). Used by /compare-folders so a partial Phase 1
+                doesn't nuke rows outside the targeted folders.
 
         Returns:
             {
@@ -348,13 +353,29 @@ class DuplicateFinderWorkflow:
             db_commit_batch_size = 100
 
         # Step 1: Remove missing files from DB
+        # If scope_dir_paths is provided, the candidate set is RESTRICTED to DB
+        # rows whose dir_path matches that scope (exact or subdir). Critical for
+        # /compare-folders partial runs — otherwise rows outside scope get
+        # treated as "missing" and deleted.
         print(f"[Phase 1] Step 1: Checking for missing files in DB...")
         if progress_callback:
             progress_callback(0, len(file_paths), "Checking missing files...")
 
-        cursor.execute("SELECT id, file_path FROM image_hashes")
+        if scope_dir_paths:
+            clauses = []
+            params: list = []
+            for f in scope_dir_paths:
+                fa = os.path.abspath(f)
+                clauses.append("(dir_path = ? OR dir_path LIKE ?)")
+                params.append(fa)
+                params.append(fa.rstrip(os.sep) + os.sep + '%')
+            where = ' OR '.join(clauses)
+            cursor.execute(f"SELECT id, file_path FROM image_hashes WHERE {where}", params)
+            print(f"[Phase 1] Step 1 SCOPED: limiting to {len(scope_dir_paths)} dir_path roots")
+        else:
+            cursor.execute("SELECT id, file_path FROM image_hashes")
         db_files = cursor.fetchall()
-        print(f"[Phase 1] Found {len(db_files)} files in DB")
+        print(f"[Phase 1] Found {len(db_files)} files in DB (scope={'limited' if scope_dir_paths else 'global'})")
 
         db_file_set = {file_path for _, file_path in db_files}
         fs_file_set = set(file_paths)
@@ -790,6 +811,271 @@ class DuplicateFinderWorkflow:
     def _hamming_distance(self, hash1: str, hash2: str) -> int:
         """Compute hamming distance between two phash strings"""
         return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
+
+    # ========== Compare Folders (focused / scoped) ==========
+
+    def compare_folders_focused(
+        self,
+        folders: List[str],
+        threshold_distance: int = 12,
+        progress_callback: Optional[Callable] = None,
+    ) -> Dict:
+        """
+        Focused pairwise comparison limited to the given folders.
+
+        Contract (no global side-effects):
+          - reads `image_hashes` rows whose `dir_path` is inside the scope
+            (exact match OR any subdirectory)
+          - walks the filesystem under each scope folder, respecting
+            `exclude_folder_paths`
+          - for files on disk that aren't yet in the DB: compute phash and
+            INSERT a new row (status='computed')
+          - for files in DB whose phash column happens to be NULL/empty:
+            also compute and UPDATE (defensive)
+          - pairwise compares EVERY image in scope (old + newly-inserted)
+            and INSERT OR IGNORE the matching pairs into `phash_similarities`
+          - never deletes any image_hashes row (use global Phase 1 for that)
+          - never touches scope-outside rows or scope-outside similarities
+
+        Caller is expected to run `phase2_5_materialize_groups` afterwards
+        to surface the new edges in Phase 3.
+        """
+        from .phash_cache import _compute_single_hash
+
+        self.clear_stop()
+        start = time.time()
+        conn = self._get_connection()
+        cur = conn.cursor()
+
+        def cb(pct: int, msg: str):
+            if progress_callback:
+                progress_callback(pct, 100, msg)
+
+        folders_abs = [os.path.abspath(f) for f in folders if f]
+        if not folders_abs:
+            print("[Compare Focused] No folders given")
+            return {
+                'folders': [],
+                'fs_files': 0,
+                'scope_total': 0,
+                'new_phashes_computed': 0,
+                'errors': 0,
+                'pairs_found': 0,
+                'new_similarities_inserted': 0,
+                'elapsed': 0.0,
+            }
+
+        print("=" * 80)
+        print(f"[Compare Focused] START — {len(folders_abs)} folder(s), distance ≤ {threshold_distance}")
+        for f in folders_abs:
+            print(f"   {f}")
+        print("=" * 80)
+
+        # ---- Step 1: read scoped DB rows (recursive — same folder OR subdir) ----
+        cb(5, "Step 1/4: Reading scoped DB rows")
+        clauses, params = [], []
+        for f in folders_abs:
+            clauses.append("(dir_path = ? OR dir_path LIKE ?)")
+            params.append(f)
+            params.append(f.rstrip(os.sep) + os.sep + '%')
+        where_clause = ' OR '.join(clauses)
+        cur.execute(
+            f"SELECT id, file_path, phash FROM image_hashes WHERE {where_clause}",
+            params,
+        )
+        db_by_path: Dict[str, Tuple[int, Optional[str]]] = {
+            row[1]: (row[0], row[2]) for row in cur.fetchall()
+        }
+        print(f"[Compare Focused] Step 1: {len(db_by_path)} existing DB rows in scope")
+
+        # ---- Step 2: walk the filesystem under each scope folder ----
+        cb(10, "Step 2/4: Walking filesystem")
+        try:
+            from .settings_manager import settings_manager
+            exclude_paths = settings_manager.get_settings().get('exclude_folder_paths', []) or []
+        except Exception:
+            exclude_paths = []
+        exclude_abs = [os.path.abspath(p) for p in exclude_paths if p]
+
+        def is_excluded(p: str) -> bool:
+            p_abs = os.path.abspath(p)
+            for ex in exclude_abs:
+                if p_abs == ex or p_abs.startswith(ex + os.sep):
+                    return True
+            return False
+
+        # Project-wide image extensions — match the rest of the codebase
+        IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif')
+        fs_files: List[str] = []
+        for folder in folders_abs:
+            if not os.path.isdir(folder):
+                print(f"[Compare Focused] WARNING: not a directory: {folder}")
+                continue
+            for root, dirs, files in os.walk(folder):
+                if is_excluded(root):
+                    dirs[:] = []
+                    continue
+                dirs[:] = [d for d in dirs if not is_excluded(os.path.join(root, d))]
+                for fname in files:
+                    if fname.lower().endswith(IMAGE_EXTS):
+                        fs_files.append(os.path.join(root, fname))
+        print(f"[Compare Focused] Step 2: {len(fs_files)} files on disk in scope")
+
+        # ---- Step 3: build scope_images = (id, phash, file_path) for every FS file ----
+        cb(20, "Step 3/4: Resolving phash for in-scope files")
+        scope_images: List[Tuple[int, str, str]] = []
+        new_computed = 0
+        errors = 0
+        need_compute: List[str] = []          # files not in DB at all
+        need_phash_update: List[Tuple[int, str]] = []  # in DB but phash NULL/empty
+
+        for fs_file in fs_files:
+            existing = db_by_path.get(fs_file)
+            if existing is not None:
+                row_id, row_phash = existing
+                if row_phash:
+                    scope_images.append((row_id, row_phash, fs_file))
+                else:
+                    # Edge case: row exists but phash is missing — recompute
+                    need_phash_update.append((row_id, fs_file))
+            else:
+                need_compute.append(fs_file)
+
+        print(f"[Compare Focused] Step 3: {len(scope_images)} reused from DB, "
+              f"{len(need_compute)} need compute (not in DB), "
+              f"{len(need_phash_update)} need compute (DB phash missing)")
+
+        # 3a: compute + INSERT for files not in DB
+        for i, fs_file in enumerate(need_compute):
+            result = _compute_single_hash(fs_file)
+            if result.get('error'):
+                errors += 1
+                print(f"[Compare Focused] phash error: {fs_file}: {result.get('error_msg')}")
+                continue
+            filename = os.path.basename(fs_file)
+            dir_path = os.path.dirname(fs_file)
+            cur.execute('''
+                INSERT OR IGNORE INTO image_hashes
+                (filename, filesize, file_path, phash, resolution, status, dir_path, mtime)
+                VALUES (?, ?, ?, ?, ?, 'computed', ?, ?)
+            ''', (filename, result['filesize'], fs_file, result['phash'],
+                  result['resolution'], dir_path, result.get('mtime')))
+            cur.execute("SELECT id FROM image_hashes WHERE file_path = ?", (fs_file,))
+            row = cur.fetchone()
+            if row:
+                scope_images.append((row[0], result['phash'], fs_file))
+                new_computed += 1
+            if (i + 1) % 50 == 0:
+                cb(20 + int(30 * (i + 1) / max(1, len(need_compute))),
+                   f"Step 3a: computing phash {i + 1}/{len(need_compute)}")
+
+        # 3b: compute + UPDATE for in-DB rows with missing phash
+        for i, (row_id, fs_file) in enumerate(need_phash_update):
+            result = _compute_single_hash(fs_file)
+            if result.get('error'):
+                errors += 1
+                continue
+            cur.execute('''
+                UPDATE image_hashes
+                SET phash = ?, resolution = ?, filesize = ?, mtime = ?,
+                    status = 'computed'
+                WHERE id = ?
+            ''', (result['phash'], result['resolution'], result['filesize'],
+                  result.get('mtime'), row_id))
+            scope_images.append((row_id, result['phash'], fs_file))
+            new_computed += 1
+            if (i + 1) % 50 == 0:
+                cb(50 + int(10 * (i + 1) / max(1, len(need_phash_update))),
+                   f"Step 3b: updating phash {i + 1}/{len(need_phash_update)}")
+
+        if new_computed or errors:
+            conn.commit()
+
+        n = len(scope_images)
+        print(f"[Compare Focused] Step 3 DONE: scope = {n} images ({new_computed} freshly computed, {errors} errors)")
+
+        if n < 2:
+            print("[Compare Focused] Less than 2 images in scope — nothing to compare")
+            elapsed = time.time() - start
+            return {
+                'folders': folders_abs,
+                'fs_files': len(fs_files),
+                'scope_total': n,
+                'new_phashes_computed': new_computed,
+                'errors': errors,
+                'pairs_found': 0,
+                'new_similarities_inserted': 0,
+                'elapsed': elapsed,
+            }
+
+        # ---- Step 4: pairwise compare WITHIN scope, INSERT OR IGNORE ----
+        total_comparisons = n * (n - 1) // 2
+        cb(60, f"Step 4/4: Pairwise compare ({total_comparisons} pairs)")
+        print(f"[Compare Focused] Step 4: pairwise compare among {n} images "
+              f"({total_comparisons} hamming-distance computations)")
+
+        pairs: List[Tuple[int, int, int, int]] = []
+        # ⚠️ Stable threshold key for the row — must match what the rest of the
+        # pipeline writes (Phase 2 stores `threshold=80`). Phase 2.5 filters by
+        # distance, so this column is the "schema threshold", NOT the UI %.
+        SCHEMA_THRESHOLD = 80
+
+        for i in range(n):
+            id_a, phash_a, _ = scope_images[i]
+            try:
+                int_a = int(phash_a, 16)
+            except (ValueError, TypeError):
+                continue
+            for j in range(i + 1, n):
+                id_b, phash_b, _ = scope_images[j]
+                try:
+                    int_b = int(phash_b, 16)
+                except (ValueError, TypeError):
+                    continue
+                if id_a == id_b:
+                    continue
+                dist = bin(int_a ^ int_b).count('1')
+                if dist <= threshold_distance:
+                    if id_a < id_b:
+                        pairs.append((id_a, id_b, SCHEMA_THRESHOLD, dist))
+                    else:
+                        pairs.append((id_b, id_a, SCHEMA_THRESHOLD, dist))
+
+        print(f"[Compare Focused] Step 4: {len(pairs)} similar pair(s) within scope (distance ≤ {threshold_distance})")
+
+        # ---- Step 5: bulk INSERT OR IGNORE ----
+        cb(90, "Inserting similarity edges")
+        new_inserted = 0
+        if pairs:
+            BATCH = 5000
+            for i in range(0, len(pairs), BATCH):
+                chunk = pairs[i:i + BATCH]
+                cur.executemany('''
+                    INSERT OR IGNORE INTO phash_similarities
+                    (image_id_a, image_id_b, threshold, distance)
+                    VALUES (?, ?, ?, ?)
+                ''', chunk)
+                new_inserted += cur.rowcount
+            conn.commit()
+        print(f"[Compare Focused] Step 5: {new_inserted} new edges inserted "
+              f"({len(pairs) - new_inserted} were already present)")
+
+        elapsed = time.time() - start
+        cb(100, f"Compare done — {new_inserted} new edges")
+        print("=" * 80)
+        print(f"[Compare Focused] ✅ COMPLETE in {elapsed:.2f}s")
+        print("=" * 80)
+
+        return {
+            'folders': folders_abs,
+            'fs_files': len(fs_files),
+            'scope_total': n,
+            'new_phashes_computed': new_computed,
+            'errors': errors,
+            'pairs_found': len(pairs),
+            'new_similarities_inserted': new_inserted,
+            'elapsed': elapsed,
+        }
 
     # ========== Phase 2.5: Materialize Groups ==========
 

@@ -1486,6 +1486,87 @@ class Phase25StopResource(Resource):
         return {"message": "Phase 2.5 stop signal sent"}
 
 
+@ns.route("/compare-folders")
+class CompareFoldersResource(Resource):
+    def post(self):
+        """
+        FOCUSED scoped comparison of just the given folders.
+
+        - Reuses existing phash from the DB (only computes phash for files
+          on disk that aren't yet in the DB, or whose DB row is missing
+          a phash value).
+        - Pairwise compares EVERY image within the scope (recursive over
+          subdirectories), regardless of new/old.
+        - INSERT OR IGNORE the matching pairs into phash_similarities. No
+          rows in image_hashes are ever deleted by this endpoint; data
+          outside the scope is never touched.
+        - Then triggers Phase 2.5 to rematerialize groups for the configured
+          threshold so Phase 3 immediately reflects the new edges.
+
+        Request body:
+        {
+            "folders": ["E:\\path\\1", "E:\\path\\2"],
+            "threshold_percent": 80          // optional, default 80
+        }
+        """
+        try:
+            data = request.json or {}
+            folders = data.get('folders') or []
+            threshold_percent = int(data.get('threshold_percent', 80))
+
+            if not isinstance(folders, list) or not folders:
+                return {"error": "Missing or invalid 'folders' (non-empty list required)"}, 400
+
+            scan_id = f"compare-{uuid.uuid4().hex[:8]}"
+
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            # Phase 2 stores edges at the schema's broad threshold (distance ≤ 12).
+            # The compare must use AT LEAST that breadth so Phase 2.5 can later
+            # filter down to any UI threshold (80/90/95/100).
+            threshold_distance = int(64 * (100 - threshold_percent) / 100)
+            compare_distance = max(threshold_distance, 12)
+
+            print("=" * 80)
+            print(f"[Compare Folders API] START scan_id={scan_id}")
+            print(f"[Compare Folders API]   folders             : {folders}")
+            print(f"[Compare Folders API]   threshold_percent   : {threshold_percent}%")
+            print(f"[Compare Folders API]   compare distance    : ≤ {compare_distance}")
+            print("=" * 80)
+
+            workflow = get_workflow()
+
+            compare_result = workflow.compare_folders_focused(
+                folders=folders,
+                threshold_distance=compare_distance,
+                progress_callback=progress_cb,
+            )
+
+            print(f"[Compare Folders API] Triggering Phase 2.5 to rematerialize at {threshold_percent}%")
+            phase25_result = workflow.phase2_5_materialize_groups(
+                threshold_percent=threshold_percent,
+                same_folder_filter=True,
+                progress_callback=progress_cb,
+            )
+
+            print("=" * 80)
+            print(f"[Compare Folders API] ✅ DONE scan_id={scan_id}")
+            print("=" * 80)
+
+            return {
+                "scan_id": scan_id,
+                "compare": compare_result,
+                "phase25": phase25_result,
+            }
+
+        except Exception as e:
+            print(f"[Compare Folders API] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+
 @ns.route("/phase2.5/meta")
 class Phase25MetaResource(Resource):
     def get(self):

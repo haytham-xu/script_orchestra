@@ -307,6 +307,17 @@
                   </el-button>
                   <el-button
                     size="small"
+                    type="primary"
+                    plain
+                    :loading="isComparingFolder"
+                    @click="compareFolderForGroup(group)"
+                    data-testid="compare-folder-btn"
+                    title="Reset and re-run Phase 1 → 2 → 2.5 for the folders containing this group's files"
+                  >
+                    🔍 Compare Folder
+                  </el-button>
+                  <el-button
+                    size="small"
                     type="danger"
                     :disabled="!hasSelectedInGroup(group)"
                     @click="deleteSelectedInGroup(group, groupIndex)"
@@ -1025,6 +1036,7 @@ const {
   isPhase25Running,
   isPhase3Running,
   isBulkWhitelisting,
+  isComparingFolder,
   phase25NeedsAttention,
   phase25TooltipContent,
   phaseProgress,
@@ -1053,6 +1065,7 @@ const {
   confirmBulkWhitelist,
   showBulkWhitelistDialog,
   bulkWhitelistPreview,
+  compareFolderForGroup,
   runPhase3,
   stopPhase3,
   toggleFileSelection,

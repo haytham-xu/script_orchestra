@@ -140,6 +140,38 @@ export class DuplicateFinderService {
   }
 
   /**
+   * Compare Folder — focused pairwise comparison within the given folders.
+   * Reuses existing phash from the DB; only computes phash for files not yet
+   * in the DB. Compares ALL images in scope (recursive over subdirs) and
+   * INSERT OR IGNORE matching pairs into phash_similarities. Never deletes
+   * anything; never touches data outside the scope. Triggers Phase 2.5 at
+   * the end so Phase 3 immediately reflects new edges.
+   */
+  static async compareFolders(
+    folders: string[],
+    thresholdPercent: number = 80
+  ): Promise<{
+    scan_id: string
+    compare: {
+      folders: string[]
+      fs_files: number
+      scope_total: number
+      new_phashes_computed: number
+      errors: number
+      pairs_found: number
+      new_similarities_inserted: number
+      elapsed: number
+    }
+    phase25: any
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/compare-folders`, {}, {
+      folders,
+      threshold_percent: thresholdPercent
+    })
+    return response
+  }
+
+  /**
    * Get all whitelist groups
    */
   static async getWhitelistGroups(): Promise<{

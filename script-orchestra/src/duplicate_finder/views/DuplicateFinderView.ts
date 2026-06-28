@@ -130,6 +130,7 @@ export function useDuplicateFinderView() {
   const isPhase25Running = ref(false)
   const isPhase3Running = ref(false)
   const isBulkWhitelisting = ref(false)
+  const isComparingFolder = ref(false)
   // Latest Phase 2.5 materialization metadata (loaded on mount + after each run)
   const phase25Meta = ref<Record<string, string>>({})
   const phaseProgress = ref({
@@ -866,6 +867,91 @@ export function useDuplicateFinderView() {
       // (Keep the preview values intact in case user wants to inspect afterward)
       void groupCount
       void imageCount
+    }
+  }
+
+  /**
+   * Re-run Phase 1 + 2 + 2.5 against the folders containing a specific group's
+   * members. Use case: a group looks like it's missing duplicate partners that
+   * the user can see on disk — force a focused re-comparison.
+   */
+  async function compareFolderForGroup(group: any[]) {
+    if (!Array.isArray(group) || group.length === 0) {
+      ElMessage.info('Empty group')
+      return
+    }
+    // Collect unique dir_paths (parent folders of every member)
+    const folderSet = new Set<string>()
+    for (const img of group) {
+      const fp = img?.file_path
+      if (typeof fp === 'string' && fp) {
+        const sep = fp.includes('\\') ? '\\' : '/'
+        const lastSep = fp.lastIndexOf(sep)
+        const dir = lastSep > 0 ? fp.substring(0, lastSep) : fp
+        folderSet.add(dir)
+      }
+    }
+    const folders = Array.from(folderSet)
+    if (folders.length === 0) {
+      ElMessage.warning('No folders extracted from this group')
+      return
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        `This will pairwise-compare ALL images under ${folders.length} folder(s) (recursive):\n\n` +
+        folders.slice(0, 5).join('\n') +
+        (folders.length > 5 ? `\n… and ${folders.length - 5} more` : '') +
+        '\n\nIt only inserts new similarity edges within this scope — nothing is deleted, ' +
+        'nothing outside these folders is touched. Then Phase 2.5 rematerializes. Continue?',
+        'Compare Folder',
+        { type: 'warning', confirmButtonText: 'Run', cancelButtonText: 'Cancel' }
+      )
+    } catch {
+      return
+    }
+
+    try {
+      isComparingFolder.value = true
+      phaseProgress.value = {
+        phase: 1,
+        message: 'Compare Folder: starting…',
+        details: `${folders.length} folder(s)`,
+        current: 0,
+        total: 100,
+        percentage: 0,
+      }
+      const result = await DuplicateFinderService.compareFolders(folders, threshold.value)
+      const cmp = result?.compare || {}
+      const groups25 = result?.phase25?.groups_count ?? '?'
+      ElMessage.success(
+        `Compare folder complete: scope=${cmp.scope_total ?? '?'}, ` +
+        `new phashes=${cmp.new_phashes_computed ?? 0}, ` +
+        `pairs found=${cmp.pairs_found ?? 0}, ` +
+        `new edges=${cmp.new_similarities_inserted ?? 0}, ` +
+        `phase2.5 groups=${groups25}`
+      )
+      phaseProgress.value = {
+        phase: 25,
+        message: 'Compare Folder: complete',
+        details: `Materialized ${groups25} groups`,
+        current: 100,
+        total: 100,
+        percentage: 100,
+      }
+      // Refresh meta and reload current Phase 3 page (groups may have shifted)
+      await loadPhase25Meta()
+      await loadDuplicatesPage(1)
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 25) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
+    } catch (error: any) {
+      console.error('[Frontend] Compare folder failed:', error)
+      ElMessage.error(error.message || 'Compare folder failed')
+    } finally {
+      isComparingFolder.value = false
     }
   }
 
@@ -1947,6 +2033,7 @@ export function useDuplicateFinderView() {
     isPhase25Running,
     isPhase3Running,
     isBulkWhitelisting,
+    isComparingFolder,
     phase25Meta,
     phase25NeedsAttention,
     phase25TooltipContent,
@@ -1976,6 +2063,7 @@ export function useDuplicateFinderView() {
     confirmBulkWhitelist,
     showBulkWhitelistDialog,
     bulkWhitelistPreview,
+    compareFolderForGroup,
     runPhase3,
     stopPhase3,
     toggleFileSelection,
