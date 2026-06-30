@@ -1273,60 +1273,50 @@ class DuplicateFinderWorkflow:
             n_gs_after_5a = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
             print(f"[Phase 2.5]   Step 5a DONE: {n_gs_after_5a} group_stats rows inserted")
 
-            # primary_folder: the dir_path with most members in each group (ties broken by path)
-            print(f"[Phase 2.5]   Step 5b: UPDATE primary_folder (per-group most-populous dir_path)")
-            cursor.execute('''
-                UPDATE group_stats
-                SET primary_folder = (
-                    SELECT i.dir_path
-                    FROM duplicate_groups dg
-                    JOIN image_hashes i ON dg.image_id = i.id
-                    WHERE dg.group_id = group_stats.group_id
-                    GROUP BY i.dir_path
-                    ORDER BY COUNT(*) DESC, i.dir_path ASC
-                    LIMIT 1
-                )
-            ''')
-            n_pf_null = cursor.execute("SELECT COUNT(*) FROM group_stats WHERE primary_folder IS NULL").fetchone()[0]
-            print(f"[Phase 2.5]   Step 5b DONE: primary_folder NULL count = {n_pf_null}")
+            # Step 5b: pick TWO different anchors per group, write three columns
+            # at once. The two anchors decouple "intra-group display order" from
+            # "inter-group hot-folder ranking":
+            #
+            #   display_anchor   = member with the FEWEST total files in its
+            #                      folder (tie-break filename ASC).
+            #                      Sets `representative_file_path` (the path
+            #                      shown first in the group's image grid).
+            #
+            #   sort_anchor      = member whose folder has the MOST duplicate
+            #                      files in DB (tie-break: smaller folder
+            #                      first, then alphabetic).
+            #                      Sets `primary_folder` + `folder_dup_count`
+            #                      (the key that "hot folder" sort uses).
+            #
+            # Why two anchors? They serve different intents. The display anchor
+            # surfaces the user-curated (small) folder's image first inside a
+            # group. The sort anchor groups everything touching a hot folder
+            # together, so a 58-duplicate hot folder's 58 groups cluster at
+            # the top of page 1 instead of being scattered.
+            print(f"[Phase 2.5]   Step 5b: dual-anchor pass → "
+                  f"representative_file_path + primary_folder + folder_dup_count")
 
-            # folder_dup_count: total duplicate files (across ALL groups) sharing this group's primary_folder
-            # Sort key for "folder with most duplicates first"
-            print(f"[Phase 2.5]   Step 5c: UPDATE folder_dup_count (cross-group aggregate)")
-            cursor.execute('''
-                UPDATE group_stats
-                SET folder_dup_count = (
-                    SELECT COUNT(*)
-                    FROM duplicate_groups dg2
-                    JOIN image_hashes i2 ON dg2.image_id = i2.id
-                    WHERE i2.dir_path = group_stats.primary_folder
-                )
-            ''')
-            try:
-                top = cursor.execute(
-                    "SELECT primary_folder, folder_dup_count FROM group_stats "
-                    "ORDER BY folder_dup_count DESC LIMIT 5"
-                ).fetchall()
-                print(f"[Phase 2.5]   Step 5c DONE. Top-5 folder_dup_count:")
-                for pf, cnt in top:
-                    print(f"[Phase 2.5]     {cnt:6d}  {pf}")
-            except Exception as e:
-                print(f"[Phase 2.5]   Step 5c stats query failed (non-fatal): {e}")
-
-            # Step 5d: representative_file_path — the anchor member of each group.
-            # Sorts members by (folder_file_count ASC, filename ASC); the
-            # first member's file_path becomes the group's anchor. Phase 3
-            # then orders groups by anchor.file_path ASC, giving the
-            # "files in small/curated folders first, then by filename" layout.
-            print(f"[Phase 2.5]   Step 5d: UPDATE representative_file_path (anchor per group)")
-
-            # 5d-i: build dir_path -> file_count map (one SQL pass)
+            # 5b-i: total-file count per dir_path (used for display_anchor)
             cursor.execute("SELECT dir_path, COUNT(*) FROM image_hashes GROUP BY dir_path")
-            folder_counts: Dict[str, int] = {dp: cnt for dp, cnt in cursor.fetchall() if dp is not None}
-            print(f"[Phase 2.5]     {len(folder_counts)} distinct dir_paths counted")
+            folder_total: Dict[str, int] = {
+                dp: cnt for dp, cnt in cursor.fetchall() if dp is not None
+            }
+            print(f"[Phase 2.5]     folder_total: {len(folder_total)} distinct dir_paths")
 
-            # 5d-ii: stream all (group_id, file_path, dir_path, filename) — TWO cursors
-            #        so the streaming SELECT isn't invalidated by writes.
+            # 5b-ii: duplicate-file count per dir_path (used for sort_anchor /
+            # folder_dup_count). Only rows that are actually in duplicate_groups
+            # count — this is the same number Deep Delete and Deep Whitelist see.
+            cursor.execute(
+                "SELECT i.dir_path, COUNT(*) "
+                "FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                "GROUP BY i.dir_path"
+            )
+            folder_dup: Dict[str, int] = {
+                dp: cnt for dp, cnt in cursor.fetchall() if dp is not None
+            }
+            print(f"[Phase 2.5]     folder_dup  : {len(folder_dup)} dir_paths with ≥1 dup file")
+
+            # 5b-iii: stream all members on TWO cursors (read while we write).
             read_cur = self._get_connection().cursor()
             write_cur = self._get_connection().cursor()
             read_cur.execute('''
@@ -1334,29 +1324,57 @@ class DuplicateFinderWorkflow:
                 FROM duplicate_groups dg
                 JOIN image_hashes i ON dg.image_id = i.id
             ''')
+            # tuples per member: (folder_total, folder_dup, filename, file_path, dir_path)
             members_by_group: Dict[int, list] = {}
             for gid, fp, dp, fn in read_cur:
-                cnt = folder_counts.get(dp, 0)
-                members_by_group.setdefault(gid, []).append((cnt, fn or '', fp))
+                members_by_group.setdefault(gid, []).append((
+                    folder_total.get(dp, 0),
+                    folder_dup.get(dp, 0),
+                    fn or '',
+                    fp,
+                    dp,
+                ))
 
-            # 5d-iii: pick anchor per group + batch UPDATE
+            # 5b-iv: per group, pick ONE anchor — the member whose folder has
+            # the MOST dup files. That single anchor drives both:
+            #   - group ownership / hot-folder bucket (priority B)
+            #   - img1 displayed first inside the group (visual consistency)
+            # Tie-break: smaller folder, then dir_path ASC.
             updates = []
             for gid, members in members_by_group.items():
-                members.sort(key=lambda x: (x[0], x[1]))
-                anchor_fp = members[0][2]
-                updates.append((anchor_fp, gid))
+                anchor = min(members, key=lambda x: (-x[1], x[0], x[4]))
+                fdc = folder_dup.get(anchor[4], 0)
+                updates.append((anchor[3], anchor[4], fdc, gid))
 
             BATCH = 5000
             for i in range(0, len(updates), BATCH):
                 chunk = updates[i:i + BATCH]
                 write_cur.executemany(
-                    "UPDATE group_stats SET representative_file_path = ? WHERE group_id = ?",
+                    "UPDATE group_stats "
+                    "SET representative_file_path = ?, primary_folder = ?, folder_dup_count = ? "
+                    "WHERE group_id = ?",
                     chunk,
                 )
             n_rep_null = write_cur.execute(
                 "SELECT COUNT(*) FROM group_stats WHERE representative_file_path IS NULL"
             ).fetchone()[0]
-            print(f"[Phase 2.5]   Step 5d DONE: anchors set for {len(updates)} groups (NULL remaining = {n_rep_null})")
+            n_pf_null = write_cur.execute(
+                "SELECT COUNT(*) FROM group_stats WHERE primary_folder IS NULL"
+            ).fetchone()[0]
+            print(f"[Phase 2.5]   Step 5b DONE: dual-anchored {len(updates)} groups "
+                  f"(rep_NULL={n_rep_null}, primary_NULL={n_pf_null})")
+
+            # Sanity: top folder_dup_count tiers
+            try:
+                top = write_cur.execute(
+                    "SELECT folder_dup_count, COUNT(*) FROM group_stats "
+                    "GROUP BY folder_dup_count ORDER BY folder_dup_count DESC LIMIT 5"
+                ).fetchall()
+                print(f"[Phase 2.5]   Top-5 folder_dup_count tiers (count, # groups):")
+                for fdc, n in top:
+                    print(f"[Phase 2.5]     fdc={fdc}: {n} group(s)")
+            except Exception as e:
+                print(f"[Phase 2.5]   stats top-5 query failed (non-fatal): {e}")
 
             elapsed_step = time.time() - step_start
             print(f"[Phase 2.5] Step 5/5 DONE in {elapsed_step:.2f}s")
@@ -1599,20 +1617,105 @@ class DuplicateFinderWorkflow:
                             SELECT MIN(i.mtime) FROM duplicate_groups dg
                             JOIN image_hashes i ON dg.image_id = i.id
                             WHERE dg.group_id = group_stats.group_id
-                        ),
-                        primary_folder = (
-                            SELECT i.dir_path FROM duplicate_groups dg
-                            JOIN image_hashes i ON dg.image_id = i.id
-                            WHERE dg.group_id = group_stats.group_id
-                            GROUP BY i.dir_path
-                            ORDER BY COUNT(*) DESC, i.dir_path ASC
-                            LIMIT 1
                         )
+                        -- NOTE: primary_folder is intentionally NOT updated here.
+                        -- It's now derived from the anchor in Step F below, so
+                        -- the hot-folder sort matches "img1's folder" semantics.
                     WHERE group_id IN ({ph})
                 ''', chunk)
             print(f"[Stats Repair] re-aggregated {len(survivor_groups)} survivor groups")
 
-        # Step E: refresh folder_dup_count for affected folders + old/new primary_folders
+        # Step F: refresh dual anchor (display + sort) for survivor groups.
+        # - representative_file_path ← display anchor (smallest folder, then filename)
+        # - primary_folder           ← sort anchor's dir_path (largest folder_dup_count)
+        # - folder_dup_count         ← folder_dup_count[primary_folder]
+        # Must run BEFORE Step E (folder_dup_count refresh by folder), because
+        # primary_folder may have moved to a different folder.
+        if survivor_groups:
+            survivor_list = list(survivor_groups)
+
+            # Collect distinct dir_paths used by survivor members
+            member_dirs: set = set()
+            for i in range(0, len(survivor_list), BATCH):
+                chunk = survivor_list[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT DISTINCT i.dir_path FROM duplicate_groups dg "
+                    f"JOIN image_hashes i ON dg.image_id = i.id "
+                    f"WHERE dg.group_id IN ({ph}) AND i.dir_path IS NOT NULL",
+                    chunk,
+                )
+                for (dp,) in cur.fetchall():
+                    member_dirs.add(dp)
+
+            # Two per-folder counts: total files (for display anchor) and
+            # duplicate files (for sort anchor + folder_dup_count).
+            folder_total_repair: Dict[str, int] = {}
+            folder_dup_repair: Dict[str, int] = {}
+            member_dirs_list = list(member_dirs)
+            for i in range(0, len(member_dirs_list), BATCH):
+                chunk = member_dirs_list[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT dir_path, COUNT(*) FROM image_hashes "
+                    f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
+                    chunk,
+                )
+                for dp, cnt in cur.fetchall():
+                    folder_total_repair[dp] = cnt
+                cur.execute(
+                    f"SELECT i.dir_path, COUNT(*) "
+                    f"FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                    f"WHERE i.dir_path IN ({ph}) GROUP BY i.dir_path",
+                    chunk,
+                )
+                for dp, cnt in cur.fetchall():
+                    folder_dup_repair[dp] = cnt
+
+            # Per survivor group, pick both anchors and stage the UPDATE
+            anchor_updates: list = []
+            for i in range(0, len(survivor_list), BATCH):
+                chunk = survivor_list[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT dg.group_id, i.file_path, i.dir_path, i.filename "
+                    f"FROM duplicate_groups dg "
+                    f"JOIN image_hashes i ON dg.image_id = i.id "
+                    f"WHERE dg.group_id IN ({ph})",
+                    chunk,
+                )
+                # tuples: (folder_total, folder_dup, filename, file_path, dir_path)
+                members_by_group_repair: Dict[int, list] = {}
+                for gid, fp, dp, fn in cur.fetchall():
+                    members_by_group_repair.setdefault(gid, []).append((
+                        folder_total_repair.get(dp, 0),
+                        folder_dup_repair.get(dp, 0),
+                        fn or '',
+                        fp,
+                        dp,
+                    ))
+                for gid, members in members_by_group_repair.items():
+                    # Single anchor: biggest dup folder wins, ties → smaller folder,
+                    # then dir_path. Same as Phase 2.5 Step 5b.
+                    anchor = min(members, key=lambda x: (-x[1], x[0], x[4]))
+                    fdc = folder_dup_repair.get(anchor[4], 0)
+                    anchor_updates.append((anchor[3], anchor[4], fdc, gid))
+
+            if anchor_updates:
+                for i in range(0, len(anchor_updates), BATCH):
+                    cur.executemany(
+                        "UPDATE group_stats "
+                        "SET representative_file_path = ?, primary_folder = ?, folder_dup_count = ? "
+                        "WHERE group_id = ?",
+                        anchor_updates[i:i + BATCH],
+                    )
+                print(f"[Stats Repair] refreshed dual-anchor "
+                      f"(representative_file_path + primary_folder + folder_dup_count) "
+                      f"for {len(anchor_updates)} groups")
+
+        # Step E: refresh folder_dup_count for OTHER groups (not in survivor list)
+        # whose primary_folder is one of the folders that just changed in count.
+        # (Survivor groups already had folder_dup_count set in Step F above.)
         new_primary_folders: set = set()
         if survivor_groups:
             for i in range(0, len(survivor_groups), BATCH):
@@ -1642,67 +1745,6 @@ class DuplicateFinderWorkflow:
                     WHERE primary_folder IN ({ph})
                 ''', chunk)
             print(f"[Stats Repair] refreshed folder_dup_count for {len(folders_to_refresh)} folders")
-
-        # Step F: refresh representative_file_path for survivor groups (anchor may
-        # have changed if the previous anchor was deleted or whitelisted).
-        if survivor_groups:
-            survivor_list = list(survivor_groups)
-            # Build dir_path -> file_count for any dir_path that members of these
-            # survivors are currently in. Cheaper than recounting globally.
-            member_dirs: set = set()
-            for i in range(0, len(survivor_list), BATCH):
-                chunk = survivor_list[i:i + BATCH]
-                ph = ','.join('?' * len(chunk))
-                cur.execute(
-                    f"SELECT DISTINCT i.dir_path FROM duplicate_groups dg "
-                    f"JOIN image_hashes i ON dg.image_id = i.id "
-                    f"WHERE dg.group_id IN ({ph}) AND i.dir_path IS NOT NULL",
-                    chunk,
-                )
-                for (dp,) in cur.fetchall():
-                    member_dirs.add(dp)
-
-            member_dirs_list = list(member_dirs)
-            folder_counts_repair: Dict[str, int] = {}
-            for i in range(0, len(member_dirs_list), BATCH):
-                chunk = member_dirs_list[i:i + BATCH]
-                ph = ','.join('?' * len(chunk))
-                cur.execute(
-                    f"SELECT dir_path, COUNT(*) FROM image_hashes "
-                    f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
-                    chunk,
-                )
-                for dp, cnt in cur.fetchall():
-                    folder_counts_repair[dp] = cnt
-
-            # Now stream members for survivor groups, pick anchor per group,
-            # batch update.
-            anchor_updates: list = []
-            for i in range(0, len(survivor_list), BATCH):
-                chunk = survivor_list[i:i + BATCH]
-                ph = ','.join('?' * len(chunk))
-                cur.execute(
-                    f"SELECT dg.group_id, i.file_path, i.dir_path, i.filename "
-                    f"FROM duplicate_groups dg "
-                    f"JOIN image_hashes i ON dg.image_id = i.id "
-                    f"WHERE dg.group_id IN ({ph})",
-                    chunk,
-                )
-                members_by_group_repair: Dict[int, list] = {}
-                for gid, fp, dp, fn in cur.fetchall():
-                    cnt = folder_counts_repair.get(dp, 0)
-                    members_by_group_repair.setdefault(gid, []).append((cnt, fn or '', fp))
-                for gid, members in members_by_group_repair.items():
-                    members.sort(key=lambda x: (x[0], x[1]))
-                    anchor_updates.append((members[0][2], gid))
-
-            if anchor_updates:
-                for i in range(0, len(anchor_updates), BATCH):
-                    cur.executemany(
-                        "UPDATE group_stats SET representative_file_path = ? WHERE group_id = ?",
-                        anchor_updates[i:i + BATCH],
-                    )
-                print(f"[Stats Repair] refreshed representative_file_path for {len(anchor_updates)} groups")
 
         # Update meta timestamp
         cur.execute(
@@ -1842,13 +1884,10 @@ class DuplicateFinderWorkflow:
             tiebreakers.append('group_id ASC')
         tiebreaker_sql = (', ' + ', '.join(tiebreakers)) if tiebreakers else ''
 
-        # 3. Totals (single fast aggregate, both indexes already in place)
+        # 3. Totals
         cursor.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM group_stats")
         total_groups_all, total_duplicates = cursor.fetchone()
         total_duplicates = int(total_duplicates)
-        # All known image_hashes rows — this is "Total Files Scanned" semantic.
-        # Whitelisted images are still IN image_hashes (just not in
-        # duplicate_groups), so this count is whitelist-agnostic on purpose.
         cursor.execute("SELECT COUNT(*) FROM image_hashes")
         total_files_in_db = int(cursor.fetchone()[0])
 
@@ -1895,7 +1934,6 @@ class DuplicateFinderWorkflow:
                 'sort_by': sort_by,
                 'sort_order': sort_order_sql.lower(),
             }
-
         # 5. Bulk-fetch members + image details for THIS page only (one JOIN, batched
         #    to stay under SQLite's 999 variable limit). Also pulls dir_path so we
         #    can sort members within each group by (folder_file_count ASC, filename ASC).
@@ -1923,7 +1961,9 @@ class DuplicateFinderWorkflow:
                     '_dir_path': dir_path,  # stripped before returning
                 })
 
-        # 5b. Bulk-fetch folder_file_count for every distinct dir_path on this page
+        # 5b. Bulk-fetch BOTH counts per distinct dir_path on this page:
+        #   - folder_total_count : rows in image_hashes (for tie-break)
+        #   - folder_dup_count   : rows in duplicate_groups (intra-group sort key)
         distinct_dirs: List[str] = []
         seen: set = set()
         for members in images_by_group.values():
@@ -1934,6 +1974,7 @@ class DuplicateFinderWorkflow:
                     distinct_dirs.append(dp)
 
         folder_counts: Dict[str, int] = {}
+        folder_dup_counts: Dict[str, int] = {}
         if distinct_dirs:
             for i in range(0, len(distinct_dirs), batch_size):
                 chunk = distinct_dirs[i:i + batch_size]
@@ -1945,15 +1986,31 @@ class DuplicateFinderWorkflow:
                 )
                 for dp, cnt in cursor.fetchall():
                     folder_counts[dp] = cnt
+                cursor.execute(
+                    f"SELECT i.dir_path, COUNT(*) "
+                    f"FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                    f"WHERE i.dir_path IN ({ph}) GROUP BY i.dir_path",
+                    chunk,
+                )
+                for dp, cnt in cursor.fetchall():
+                    folder_dup_counts[dp] = cnt
 
-        # 5c. Sort each group's members by (folder_file_count ASC, filename ASC)
-        #     and strip the internal _dir_path tag.
+        # 5c. Sort each group's members so img1 comes from the folder with the
+        # MOST dup files (= same as the group's anchor / primary_folder).
+        # Tie-breaks: smaller folder (curated), then filename.
+        # Also annotate each member with `folder_dup` (dup files in its folder)
+        # and `folder_total` (total image_hashes rows in its folder) for the UI
+        # to show as "x/y" next to the filename.
         for gid, members in images_by_group.items():
             members.sort(key=lambda m: (
-                folder_counts.get(m['_dir_path'], 0),
-                m.get('filename') or '',
+                -folder_dup_counts.get(m['_dir_path'], 0),  # biggest dup wins
+                folder_counts.get(m['_dir_path'], 0),       # tie: smaller folder
+                m.get('filename') or '',                     # tie: filename
             ))
             for m in members:
+                dp = m['_dir_path']
+                m['folder_dup']   = int(folder_dup_counts.get(dp, 0))
+                m['folder_total'] = int(folder_counts.get(dp, 0))
                 m.pop('_dir_path', None)
 
         # 6. Compute display_path for THIS page only (current page ≈ a few hundred images;

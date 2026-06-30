@@ -773,6 +773,477 @@ class DeleteResource(Resource):
         }
 
 
+@ns.route("/replace")
+class ReplaceResource(Resource):
+    def post(self):
+        """
+        Replace operation: keep the selected image, delete every other member
+        of the group (move to delete target). The selected image is then
+        moved to the ANCHOR image's directory with the ANCHOR's filename
+        (basename), preserving the SELECTED image's own extension.
+
+        If selected == anchor, no move/rename happens — just delete others.
+
+        Request body:
+        {
+            "selected_file_path": "...",
+            "anchor_file_path":   "...",
+            "group_file_paths":   ["...", "...", "..."]   // ALL members
+        }
+
+        Response:
+        {
+            "deleted_count": int,
+            "renamed":       bool,
+            "new_selected_path": "...",
+            "stats_repair":  {...}
+        }
+        """
+        try:
+            data = request.json or {}
+            selected_raw = (data.get('selected_file_path') or '').strip()
+            anchor_raw   = (data.get('anchor_file_path') or '').strip()
+            group_paths_raw = data.get('group_file_paths') or []
+
+            if not selected_raw or not anchor_raw or not group_paths_raw:
+                return {"error": "Missing one of: selected_file_path, anchor_file_path, group_file_paths"}, 400
+            if not isinstance(group_paths_raw, list):
+                return {"error": "group_file_paths must be a list"}, 400
+            if len(group_paths_raw) != 2:
+                return {"error": "Replace is only allowed when the group has exactly 2 images"}, 400
+
+            sel_abs    = os.path.abspath(selected_raw)
+            anchor_abs = os.path.abspath(anchor_raw)
+            group_abs  = [os.path.abspath(p) for p in group_paths_raw]
+
+            if sel_abs not in group_abs:
+                return {"error": "selected_file_path must appear in group_file_paths"}, 400
+            if anchor_abs not in group_abs:
+                return {"error": "anchor_file_path must appear in group_file_paths"}, 400
+
+            del_target = settings_manager.get_delete_target_path()
+            if not del_target:
+                return {"error": "Delete target path not configured"}, 400
+
+            os.makedirs(del_target, exist_ok=True)
+            folder_paths = settings_manager.get_settings().get('folder_paths', []) or []
+
+            # Compute the new path for the selected image (if move needed)
+            do_rename = (sel_abs != anchor_abs)
+            new_selected_path: str | None = None
+            if do_rename:
+                anchor_dir = os.path.dirname(anchor_abs)
+                anchor_base = os.path.splitext(os.path.basename(anchor_abs))[0]
+                sel_ext = os.path.splitext(os.path.basename(sel_abs))[1]
+                new_selected_path = os.path.join(anchor_dir, anchor_base + sel_ext)
+
+            # Resolve image_ids
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cur = conn.cursor()
+
+            id_by_path: dict = {}
+            BATCH = 900
+            for i in range(0, len(group_abs), BATCH):
+                chunk = group_abs[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT id, file_path FROM image_hashes WHERE file_path IN ({ph})",
+                    chunk,
+                )
+                for img_id, fp in cur.fetchall():
+                    id_by_path[fp] = img_id
+
+            selected_id = id_by_path.get(sel_abs)
+            # Files to delete = group members other than the selected one
+            to_delete_paths = [p for p in group_abs if p != sel_abs]
+            to_delete_ids = [id_by_path[p] for p in to_delete_paths if p in id_by_path]
+
+            print("=" * 80)
+            print(f"[Replace] START")
+            print(f"[Replace]   group size       : {len(group_abs)}")
+            print(f"[Replace]   selected image_id: {selected_id}")
+            print(f"[Replace]   to-delete ids    : {to_delete_ids}")
+            print(f"[Replace]   rename needed    : {do_rename}")
+            if do_rename:
+                print(f"[Replace]   new_selected_path: {new_selected_path}")
+            print("=" * 80)
+
+            # ---- Pre-capture state for incremental stats repair ----
+            # Include both the to-delete ids AND the selected id (because its
+            # dir_path changes when we move it, which affects folder counts).
+            try:
+                ids_for_capture = list(to_delete_ids)
+                if selected_id is not None and do_rename:
+                    ids_for_capture.append(selected_id)
+                affected_capture = workflow.stats_collect_affected_before_mutation(ids_for_capture)
+            except Exception as e:
+                print(f"[Replace] WARNING: stats pre-capture failed: {e}")
+                affected_capture = None
+
+            # ---- Step 1: move all to_delete files to del_target ----
+            def find_scan_folder_for(file_abs: str) -> str:
+                for folder in folder_paths:
+                    folder_abs = os.path.abspath(folder)
+                    if file_abs.startswith(folder_abs + os.sep) or file_abs == folder_abs:
+                        return folder_abs
+                return os.path.dirname(file_abs)
+
+            def move_with_collision_handling(src: str, dest: str) -> str:
+                """Move src to dest, appending _1, _2... if dest exists."""
+                if os.path.exists(dest):
+                    stem, ext = os.path.splitext(dest)
+                    counter = 1
+                    while os.path.exists(dest):
+                        dest = f"{stem}_{counter}{ext}"
+                        counter += 1
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.move(src, dest)
+                return dest
+
+            deleted_count = 0
+            errors: list = []
+            for src in to_delete_paths:
+                if not os.path.exists(src):
+                    errors.append(f"Not on disk: {src}")
+                    continue
+                try:
+                    scan_folder = find_scan_folder_for(src)
+                    try:
+                        relative = os.path.relpath(src, scan_folder)
+                    except ValueError:
+                        relative = os.path.basename(src)
+                    dest = os.path.join(del_target, relative)
+                    dest = move_with_collision_handling(src, dest)
+                    deleted_count += 1
+                    print(f"[Replace] moved (delete): {src} -> {dest}")
+                except Exception as e:
+                    errors.append(f"Move failed for {src}: {e}")
+
+            # ---- Step 2: copy selected to anchor's slot + back up the original ----
+            # Two-step on purpose: COPY first (so we still have the source if
+            # anything goes wrong), then MOVE the original into del_target as a
+            # backup. End state matches the user's example:
+            #   - new file at anchor's dir + anchor's basename + selected's ext
+            #   - original selected backed up in del_target (mirror structure)
+            renamed_to: str | None = None
+            if do_rename and new_selected_path:
+                try:
+                    if not os.path.exists(sel_abs):
+                        errors.append(f"Selected file not on disk: {sel_abs}")
+                    else:
+                        # 2a: COPY selected → new_selected_path (with collision suffix)
+                        dest = new_selected_path
+                        if os.path.exists(dest):
+                            stem, ext = os.path.splitext(dest)
+                            counter = 1
+                            while os.path.exists(dest):
+                                dest = f"{stem}_{counter}{ext}"
+                                counter += 1
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        shutil.copy2(sel_abs, dest)
+                        renamed_to = dest
+                        new_selected_path = dest
+                        print(f"[Replace] copied (selected): {sel_abs} -> {renamed_to}")
+
+                        # 2b: MOVE original selected → del_target as backup
+                        try:
+                            scan_folder = find_scan_folder_for(sel_abs)
+                            try:
+                                relative = os.path.relpath(sel_abs, scan_folder)
+                            except ValueError:
+                                relative = os.path.basename(sel_abs)
+                            backup_dest = os.path.join(del_target, relative)
+                            backup_dest = move_with_collision_handling(sel_abs, backup_dest)
+                            print(f"[Replace] backed up original selected: {sel_abs} -> {backup_dest}")
+                        except Exception as e2:
+                            # Backup failed but copy succeeded; surface error but
+                            # don't undo the copy.
+                            errors.append(f"Backup of original selected failed: {e2}")
+                except Exception as e:
+                    errors.append(f"Replace copy failed: {e}")
+                    new_selected_path = None
+                    renamed_to = None
+
+            # ---- Step 3: DB updates ----
+            # Delete rows for to_delete images (CASCADE handles phash_similarities
+            # and duplicate_groups).
+            if to_delete_ids:
+                for i in range(0, len(to_delete_ids), BATCH):
+                    chunk = to_delete_ids[i:i + BATCH]
+                    ph = ','.join('?' * len(chunk))
+                    cur.execute(f"DELETE FROM image_hashes WHERE id IN ({ph})", chunk)
+            # Update selected image's row if it was moved.
+            if do_rename and new_selected_path and selected_id is not None:
+                new_filename = os.path.basename(new_selected_path)
+                new_dir = os.path.dirname(new_selected_path)
+                cur.execute(
+                    "UPDATE image_hashes "
+                    "SET file_path = ?, filename = ?, dir_path = ? "
+                    "WHERE id = ?",
+                    (new_selected_path, new_filename, new_dir, selected_id),
+                )
+            conn.commit()
+
+            # ---- Step 4: stats repair ----
+            repair_summary = None
+            if affected_capture:
+                try:
+                    repair_summary = workflow.stats_repair_after_mutation(
+                        affected_capture, remove_from_groups=False
+                    )
+                    print(f"[Replace] stats repair: {repair_summary}")
+                except Exception as e:
+                    print(f"[Replace] WARNING: stats repair failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            print(f"[Replace] DONE: deleted={deleted_count}, renamed={bool(renamed_to)}, errors={len(errors)}")
+            return {
+                "deleted_count": deleted_count,
+                "renamed": bool(renamed_to),
+                "new_selected_path": new_selected_path or selected_raw,
+                "errors": errors,
+                "stats_repair": repair_summary,
+            }
+
+        except Exception as e:
+            print(f"[Replace] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+
+@ns.route("/replace-batch")
+class ReplaceBatchResource(Resource):
+    def post(self):
+        """
+        Batch Replace — performs many /replace operations in one call, with a
+        SINGLE stats repair at the end (much faster than N round-trips).
+
+        Strict requirement: every operation's group_file_paths must have
+        EXACTLY 2 entries. Caller (Deep Replace) is expected to enforce this
+        client-side too; backend rejects the whole batch if any op violates.
+
+        Request body:
+        {
+            "operations": [
+                {
+                    "selected_file_path": "...",
+                    "anchor_file_path":   "...",
+                    "group_file_paths":   ["...", "..."]   // must be size 2
+                },
+                ...
+            ]
+        }
+        """
+        try:
+            data = request.json or {}
+            ops = data.get('operations') or []
+            if not isinstance(ops, list) or not ops:
+                return {"error": "Missing or empty 'operations'"}, 400
+
+            # Strict size-2 validation
+            for i, op in enumerate(ops):
+                gp = op.get('group_file_paths') or []
+                if not isinstance(gp, list) or len(gp) != 2:
+                    return {"error": f"Operation {i}: group_file_paths must have exactly 2 entries"}, 400
+                if not op.get('selected_file_path') or not op.get('anchor_file_path'):
+                    return {"error": f"Operation {i}: missing selected_file_path or anchor_file_path"}, 400
+
+            del_target = settings_manager.get_delete_target_path()
+            if not del_target:
+                return {"error": "Delete target path not configured"}, 400
+            os.makedirs(del_target, exist_ok=True)
+            folder_paths = settings_manager.get_settings().get('folder_paths', []) or []
+
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cur = conn.cursor()
+
+            # ---- Resolve all image_ids upfront ----
+            all_paths_set: set = set()
+            for op in ops:
+                for p in op['group_file_paths']:
+                    all_paths_set.add(os.path.abspath(p))
+            all_paths_list = list(all_paths_set)
+            id_by_path: dict = {}
+            BATCH = 900
+            for i in range(0, len(all_paths_list), BATCH):
+                chunk = all_paths_list[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(
+                    f"SELECT id, file_path FROM image_hashes WHERE file_path IN ({ph})",
+                    chunk,
+                )
+                for img_id, fp in cur.fetchall():
+                    id_by_path[fp] = img_id
+
+            # ---- Pre-capture stats (single combined snapshot) ----
+            all_ids_for_capture = list(id_by_path.values())
+            affected_capture = None
+            try:
+                affected_capture = workflow.stats_collect_affected_before_mutation(all_ids_for_capture)
+            except Exception as e:
+                print(f"[Replace Batch] WARNING: pre-capture failed: {e}")
+
+            # ---- Helpers ----
+            def find_scan_folder_for(file_abs: str) -> str:
+                for folder in folder_paths:
+                    folder_abs = os.path.abspath(folder)
+                    if file_abs.startswith(folder_abs + os.sep) or file_abs == folder_abs:
+                        return folder_abs
+                return os.path.dirname(file_abs)
+
+            def move_with_collision_handling(src: str, dest: str) -> str:
+                if os.path.exists(dest):
+                    stem, ext = os.path.splitext(dest)
+                    counter = 1
+                    while os.path.exists(dest):
+                        dest = f"{stem}_{counter}{ext}"
+                        counter += 1
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.move(src, dest)
+                return dest
+
+            # ---- Per-op execution ----
+            print("=" * 80)
+            print(f"[Replace Batch] START: {len(ops)} operation(s)")
+            print("=" * 80)
+
+            total_deleted = 0
+            total_renamed = 0
+            errors_per_op: list = []
+
+            for op_idx, op in enumerate(ops):
+                op_errors: list = []
+                sel_abs = os.path.abspath(op['selected_file_path'])
+                anchor_abs = os.path.abspath(op['anchor_file_path'])
+                group_abs = [os.path.abspath(p) for p in op['group_file_paths']]
+
+                if sel_abs not in group_abs or anchor_abs not in group_abs:
+                    op_errors.append("selected/anchor not in group_file_paths")
+                    errors_per_op.append({"op_index": op_idx, "errors": op_errors})
+                    continue
+
+                do_rename = (sel_abs != anchor_abs)
+                new_selected_path: str | None = None
+                if do_rename:
+                    anchor_dir = os.path.dirname(anchor_abs)
+                    anchor_base = os.path.splitext(os.path.basename(anchor_abs))[0]
+                    sel_ext = os.path.splitext(os.path.basename(sel_abs))[1]
+                    new_selected_path = os.path.join(anchor_dir, anchor_base + sel_ext)
+
+                to_delete_paths = [p for p in group_abs if p != sel_abs]
+
+                # Step 1: MOVE non-selected files to del_target
+                for src in to_delete_paths:
+                    if not os.path.exists(src):
+                        op_errors.append(f"Not on disk: {src}")
+                        continue
+                    try:
+                        scan_folder = find_scan_folder_for(src)
+                        try:
+                            relative = os.path.relpath(src, scan_folder)
+                        except ValueError:
+                            relative = os.path.basename(src)
+                        dest = os.path.join(del_target, relative)
+                        dest = move_with_collision_handling(src, dest)
+                        total_deleted += 1
+                        print(f"[Replace Batch op {op_idx}] moved (delete): {src} -> {dest}")
+                    except Exception as e:
+                        op_errors.append(f"Move failed for {src}: {e}")
+
+                # Step 2: COPY selected to anchor's slot, then backup original
+                renamed_to: str | None = None
+                if do_rename and new_selected_path:
+                    try:
+                        if not os.path.exists(sel_abs):
+                            op_errors.append(f"Selected not on disk: {sel_abs}")
+                        else:
+                            dest = new_selected_path
+                            if os.path.exists(dest):
+                                stem, ext = os.path.splitext(dest)
+                                counter = 1
+                                while os.path.exists(dest):
+                                    dest = f"{stem}_{counter}{ext}"
+                                    counter += 1
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            shutil.copy2(sel_abs, dest)
+                            renamed_to = dest
+                            new_selected_path = dest
+                            total_renamed += 1
+                            print(f"[Replace Batch op {op_idx}] copied: {sel_abs} -> {renamed_to}")
+
+                            try:
+                                scan_folder = find_scan_folder_for(sel_abs)
+                                try:
+                                    relative = os.path.relpath(sel_abs, scan_folder)
+                                except ValueError:
+                                    relative = os.path.basename(sel_abs)
+                                backup_dest = os.path.join(del_target, relative)
+                                backup_dest = move_with_collision_handling(sel_abs, backup_dest)
+                                print(f"[Replace Batch op {op_idx}] backup: {sel_abs} -> {backup_dest}")
+                            except Exception as e2:
+                                op_errors.append(f"Backup of original selected failed: {e2}")
+                    except Exception as e:
+                        op_errors.append(f"Copy/rename failed: {e}")
+                        new_selected_path = None
+                        renamed_to = None
+
+                # Step 3: DB updates (no commit yet — defer to single commit)
+                selected_id = id_by_path.get(sel_abs)
+                to_delete_ids = [id_by_path[p] for p in to_delete_paths if p in id_by_path]
+                if to_delete_ids:
+                    ph = ','.join('?' * len(to_delete_ids))
+                    cur.execute(f"DELETE FROM image_hashes WHERE id IN ({ph})", to_delete_ids)
+                if do_rename and new_selected_path and selected_id is not None:
+                    new_filename = os.path.basename(new_selected_path)
+                    new_dir = os.path.dirname(new_selected_path)
+                    cur.execute(
+                        "UPDATE image_hashes "
+                        "SET file_path = ?, filename = ?, dir_path = ? "
+                        "WHERE id = ?",
+                        (new_selected_path, new_filename, new_dir, selected_id),
+                    )
+
+                if op_errors:
+                    errors_per_op.append({"op_index": op_idx, "errors": op_errors})
+
+            # ---- Single commit + single stats repair ----
+            conn.commit()
+
+            repair_summary = None
+            if affected_capture:
+                try:
+                    repair_summary = workflow.stats_repair_after_mutation(
+                        affected_capture, remove_from_groups=False
+                    )
+                    print(f"[Replace Batch] stats repair: {repair_summary}")
+                except Exception as e:
+                    print(f"[Replace Batch] WARNING: stats repair failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            print("=" * 80)
+            print(f"[Replace Batch] DONE: ops={len(ops)}, deleted={total_deleted}, "
+                  f"renamed={total_renamed}, error_ops={len(errors_per_op)}")
+            print("=" * 80)
+            return {
+                "operations_count": len(ops),
+                "deleted_count": total_deleted,
+                "renamed_count": total_renamed,
+                "errors_per_op": errors_per_op,
+                "stats_repair": repair_summary,
+            }
+
+        except Exception as e:
+            print(f"[Replace Batch] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+
 @ns.route("/settings")
 class SettingsResource(Resource):
     def get(self):
@@ -917,6 +1388,105 @@ class WhitelistResource(Resource):
         except ValueError:
             return {"error": "Invalid group_id value"}, 400
         except Exception as e:
+            return {"error": str(e)}, 500
+
+
+@ns.route("/whitelist/preview-by-path")
+class WhitelistPreviewByPathResource(Resource):
+    def post(self):
+        """
+        Preview which materialized duplicate groups have at least one member
+        whose file is under the given path (recursive). Used by the per-image
+        "Deep Whitelist Path" button so the user can review affected groups
+        before adding them all to whitelist.
+
+        Request body:
+        {
+            "deep_path": "E:\\folder"
+        }
+
+        Response:
+        {
+            "deep_path": "<abs>",
+            "matched_groups": int,
+            "matched_files": int,
+            "groups": [
+                [ { id, filename, filesize, file_path, phash, resolution }, ... ],
+                ...
+            ]
+        }
+        """
+        try:
+            data = request.json or {}
+            deep_path = (data.get('deep_path') or '').strip()
+            if not deep_path:
+                return {"error": "Missing 'deep_path'"}, 400
+
+            deep_path_abs = os.path.abspath(deep_path)
+
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cur = conn.cursor()
+
+            # Step 1: find distinct group_ids where any member lives under deep_path
+            # (exact match OR subdirectory)
+            cur.execute('''
+                SELECT DISTINCT dg.group_id
+                FROM duplicate_groups dg
+                JOIN image_hashes i ON dg.image_id = i.id
+                WHERE i.dir_path = ? OR i.dir_path LIKE ?
+            ''', (deep_path_abs, deep_path_abs.rstrip(os.sep) + os.sep + '%'))
+            matched_group_ids = [r[0] for r in cur.fetchall()]
+
+            if not matched_group_ids:
+                return {
+                    "deep_path": deep_path_abs,
+                    "matched_groups": 0,
+                    "matched_files": 0,
+                    "groups": [],
+                }
+
+            # Step 2: fetch ALL members of those groups (not just the ones in
+            # deep_path — whole group is going to be whitelisted)
+            groups_dict: dict = {gid: [] for gid in matched_group_ids}
+            BATCH = 900
+            for i in range(0, len(matched_group_ids), BATCH):
+                chunk = matched_group_ids[i:i + BATCH]
+                ph = ','.join('?' * len(chunk))
+                cur.execute(f'''
+                    SELECT dg.group_id, i.id, i.filename, i.filesize, i.file_path,
+                           i.phash, i.resolution
+                    FROM duplicate_groups dg
+                    JOIN image_hashes i ON dg.image_id = i.id
+                    WHERE dg.group_id IN ({ph})
+                ''', chunk)
+                for gid, img_id, filename, filesize, file_path, phash, resolution in cur.fetchall():
+                    groups_dict[gid].append({
+                        'id': img_id,
+                        'filename': filename,
+                        'filesize': filesize,
+                        'file_path': file_path,
+                        'phash': phash,
+                        'resolution': resolution,
+                    })
+
+            # Preserve discovery order (group_id ASC); drop empty groups defensively
+            groups = [groups_dict[gid] for gid in matched_group_ids if groups_dict[gid]]
+            matched_files = sum(len(g) for g in groups)
+
+            print(f"[Whitelist Preview by Path] path={deep_path_abs}, "
+                  f"matched_groups={len(groups)}, matched_files={matched_files}")
+            return {
+                "deep_path": deep_path_abs,
+                "matched_groups": len(groups),
+                "matched_files": matched_files,
+                "groups": groups,
+            }
+
+        except Exception as e:
+            print(f"[Whitelist Preview by Path] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}, 500
 
 
@@ -1484,6 +2054,190 @@ class Phase25StopResource(Resource):
         workflow.set_stop()
         print("[Phase 2.5 API] Stop signal sent")
         return {"message": "Phase 2.5 stop signal sent"}
+
+
+@ns.route("/compare-folders-all")
+class CompareFoldersAllResource(Resource):
+    def post(self):
+        """
+        Global Compare Folder — clusters folders that share at least one group,
+        then runs Compare Folder ONCE per cluster (NOT a single giant N² over
+        every folder, which would explode).
+
+        Why clustering: if folder X and folder Y never share any duplicate
+        group, comparing files in X against files in Y is wasted work — they
+        already weren't deemed similar by Phase 2. The interesting unknowns
+        are within each "connected component" of the folder graph (edges =
+        "share a group"). Each component is one independent pairwise pass.
+
+        Request body (optional):
+        {
+            "threshold_percent": 80
+        }
+        """
+        try:
+            data = request.json or {}
+            threshold_percent = int(data.get('threshold_percent', 80))
+
+            scan_id = f"compareall-{uuid.uuid4().hex[:8]}"
+
+            def progress_cb(current, total, message):
+                emit_progress(scan_id, current, total, message)
+
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cur = conn.cursor()
+
+            # Step 1: pull every (group_id, dir_path) pair
+            cur.execute('''
+                SELECT dg.group_id, i.dir_path
+                FROM duplicate_groups dg
+                JOIN image_hashes i ON dg.image_id = i.id
+                WHERE i.dir_path IS NOT NULL
+            ''')
+            rows = cur.fetchall()
+
+            if not rows:
+                return {
+                    "scan_id": scan_id,
+                    "clusters_count": 0,
+                    "folders_count": 0,
+                    "message": "No folders to compare (no materialized groups).",
+                }
+
+            # Step 2: build {folder: {gid, ...}} and {gid: {folder, ...}}
+            groups_per_folder: dict = {}
+            folders_per_group: dict = {}
+            for gid, dp in rows:
+                groups_per_folder.setdefault(dp, set()).add(gid)
+                folders_per_group.setdefault(gid, set()).add(dp)
+            all_folders = list(groups_per_folder.keys())
+
+            # Step 3: BFS to find connected components in the folder graph
+            #         (folders X and Y are connected ↔ some group has files in both)
+            visited: set = set()
+            clusters: list = []
+            for start in all_folders:
+                if start in visited:
+                    continue
+                cluster: set = set()
+                queue: list = [start]
+                visited.add(start)
+                while queue:
+                    f = queue.pop(0)
+                    cluster.add(f)
+                    for gid in groups_per_folder.get(f, ()):
+                        for other_f in folders_per_group.get(gid, ()):
+                            if other_f not in visited:
+                                visited.add(other_f)
+                                queue.append(other_f)
+                clusters.append(sorted(cluster))
+
+            cluster_sizes = sorted((len(c) for c in clusters), reverse=True)
+            print("=" * 80)
+            print(f"[Compare All] START scan_id={scan_id}")
+            print(f"[Compare All]   total folders        : {len(all_folders)}")
+            print(f"[Compare All]   connected clusters   : {len(clusters)}")
+            print(f"[Compare All]   largest cluster sizes: {cluster_sizes[:10]}")
+            print(f"[Compare All]   threshold            : {threshold_percent}%")
+            print("=" * 80)
+
+            from .phash_new_workflow import PHASH_BITS
+            threshold_distance = int(PHASH_BITS * (100 - threshold_percent) / 100)
+            compare_distance = max(threshold_distance, int(PHASH_BITS * 0.20))
+
+            # Step 4: run compare_folders_focused ONCE per cluster.
+            # Skip clusters with ≥4 folders — they're typically degenerate
+            # noise (black-screen frames, blank-cover thumbnails, etc.) that
+            # link unrelated folders into one big cluster, and comparing them
+            # exhaustively is mostly wasted work.
+            import time as _time
+            batch_start_ts = _time.time()
+            aggregate = {
+                'scope_total': 0,
+                'new_phashes_computed': 0,
+                'errors': 0,
+                'pairs_found': 0,
+                'new_similarities_inserted': 0,
+                'elapsed': 0.0,
+            }
+            skipped_clusters = 0
+            skipped_folders = 0
+            MAX_CLUSTER_FOLDERS = 4
+            for idx, cluster in enumerate(clusters):
+                if len(cluster) >= MAX_CLUSTER_FOLDERS:
+                    skipped_clusters += 1
+                    skipped_folders += len(cluster)
+                    print(f"[Compare All] ⏭️  SKIP  cluster {idx + 1}/{len(clusters)} "
+                          f"({len(cluster)} folders ≥ {MAX_CLUSTER_FOLDERS}) "
+                          f"— likely noise (black-screen / blank covers)")
+                    continue
+
+                cluster_start_ts = _time.time()
+                # Reserve 0–80% of progress bar for cluster work; Phase 2.5 takes 80–100%
+                pct = int(80 * idx / max(1, len(clusters)))
+                progress_cb(pct, 100, f"Cluster {idx + 1}/{len(clusters)} ({len(cluster)} folders)")
+                elapsed_so_far = _time.time() - batch_start_ts
+                print(f"[Compare All] ▶ START cluster {idx + 1}/{len(clusters)} "
+                      f"({len(cluster)} folder(s))  [elapsed total: {elapsed_so_far:.1f}s]")
+
+                cr = workflow.compare_folders_focused(
+                    folders=cluster,
+                    threshold_distance=compare_distance,
+                    progress_callback=None,
+                )
+
+                cluster_elapsed = _time.time() - cluster_start_ts
+                if cr:
+                    aggregate['scope_total']               += cr.get('scope_total', 0) or 0
+                    aggregate['new_phashes_computed']      += cr.get('new_phashes_computed', 0) or 0
+                    aggregate['errors']                    += cr.get('errors', 0) or 0
+                    aggregate['pairs_found']               += cr.get('pairs_found', 0) or 0
+                    aggregate['new_similarities_inserted'] += cr.get('new_similarities_inserted', 0) or 0
+                    aggregate['elapsed']                   += cr.get('elapsed', 0.0) or 0.0
+                print(f"[Compare All] ✓ END   cluster {idx + 1}/{len(clusters)} "
+                      f"in {cluster_elapsed:.1f}s — "
+                      f"scope={(cr or {}).get('scope_total', '?')}, "
+                      f"new_phashes={(cr or {}).get('new_phashes_computed', 0)}, "
+                      f"pairs_found={(cr or {}).get('pairs_found', 0)}, "
+                      f"new_edges={(cr or {}).get('new_similarities_inserted', 0)}")
+
+            if skipped_clusters:
+                print(f"[Compare All] Skipped {skipped_clusters} large cluster(s) "
+                      f"covering {skipped_folders} folder(s) "
+                      f"(threshold = ≥{MAX_CLUSTER_FOLDERS} folders per cluster)")
+
+            # Step 5: single Phase 2.5 rematerialization at the end
+            progress_cb(85, 100, "Rematerializing groups (Phase 2.5)")
+            print(f"[Compare All] Triggering Phase 2.5 at {threshold_percent}%")
+            phase25_result = workflow.phase2_5_materialize_groups(
+                threshold_percent=threshold_percent,
+                same_folder_filter=True,
+                progress_callback=progress_cb,
+            )
+
+            print("=" * 80)
+            print(f"[Compare All] ✅ DONE scan_id={scan_id}")
+            print(f"[Compare All]   clusters processed: {len(clusters)}")
+            print(f"[Compare All]   aggregate         : {aggregate}")
+            print("=" * 80)
+
+            return {
+                "scan_id": scan_id,
+                "clusters_count": len(clusters),
+                "clusters_skipped": skipped_clusters,
+                "folders_in_skipped_clusters": skipped_folders,
+                "folders_count": len(all_folders),
+                "largest_cluster_sizes": cluster_sizes[:10],
+                "compare": aggregate,
+                "phase25": phase25_result,
+            }
+
+        except Exception as e:
+            print(f"[Compare All API] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}, 500
 
 
 @ns.route("/compare-folders")

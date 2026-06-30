@@ -140,6 +140,67 @@ export class DuplicateFinderService {
   }
 
   /**
+   * Preview which duplicate groups have files under the given path (recursive).
+   * Used by the per-image "Deep Whitelist Path" action. After preview, the
+   * caller invokes `bulkAddGroupsToWhitelist` with the resolved group_ids.
+   */
+  static async previewWhitelistByPath(deepPath: string): Promise<{
+    deep_path: string
+    matched_groups: number
+    matched_files: number
+    groups: ImageInfo[][]
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/whitelist/preview-by-path`, {}, {
+      deep_path: deepPath
+    })
+    return response
+  }
+
+  /**
+   * Replace operation: keep `selectedFilePath`, delete all other members of
+   * the group, and (if different from `anchorFilePath`) move the selected
+   * file to the anchor's directory with the anchor's basename + selected's
+   * own extension.
+   */
+  static async replaceInGroup(
+    selectedFilePath: string,
+    anchorFilePath: string,
+    groupFilePaths: string[]
+  ): Promise<{
+    deleted_count: number
+    renamed: boolean
+    new_selected_path: string
+    errors?: string[]
+    stats_repair?: any
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/replace`, {}, {
+      selected_file_path: selectedFilePath,
+      anchor_file_path: anchorFilePath,
+      group_file_paths: groupFilePaths
+    })
+    return response
+  }
+
+  /**
+   * Batch Replace — many /replace operations in one call (single stats repair).
+   * Backend requires every operation to be on a 2-image group.
+   */
+  static async replaceBatch(operations: Array<{
+    selected_file_path: string
+    anchor_file_path: string
+    group_file_paths: string[]
+  }>): Promise<{
+    operations_count: number
+    deleted_count: number
+    renamed_count: number
+    errors_per_op: Array<{ op_index: number; errors: string[] }>
+    stats_repair?: any
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/replace-batch`, {}, { operations })
+    return response
+  }
+
+  /**
    * Compare Folder — focused pairwise comparison within the given folders.
    * Reuses existing phash from the DB; only computes phash for files not yet
    * in the DB. Compares ALL images in scope (recursive over subdirs) and
@@ -166,6 +227,29 @@ export class DuplicateFinderService {
   }> {
     const response = await postRequest(`${this.BASE_URL}/compare-folders`, {}, {
       folders,
+      threshold_percent: thresholdPercent
+    })
+    return response
+  }
+
+  /**
+   * Compare ALL folders touched by any materialized duplicate group. Folders
+   * are clustered into connected components first (edges = "share a group"),
+   * and Compare Folder runs ONCE per cluster — so total work is sum of small
+   * O(N²) passes, not one giant N² over every folder.
+   */
+  static async compareAllFolders(
+    thresholdPercent: number = 80
+  ): Promise<{
+    scan_id: string
+    folders_count: number
+    clusters_count?: number
+    largest_cluster_sizes?: number[]
+    compare?: any
+    phase25?: any
+    message?: string
+  }> {
+    const response = await postRequest(`${this.BASE_URL}/compare-folders-all`, {}, {
       threshold_percent: thresholdPercent
     })
     return response
@@ -380,9 +464,6 @@ export class DuplicateFinderService {
       })
       return response
     } catch (err: any) {
-      // Backend returns 409 with structured `error` field when materialization
-      // is missing or its threshold is stale. Unwrap so callers see a normal
-      // response and can branch on `result.error`.
       const data = err?.response?.data
       if (err?.response?.status === 409 && data?.error) {
         return data

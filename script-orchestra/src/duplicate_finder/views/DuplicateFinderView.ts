@@ -143,6 +143,38 @@ export function useDuplicateFinderView() {
   const isPhase3Running = ref(false)
   const isBulkWhitelisting = ref(false)
   const isComparingFolder = ref(false)
+  const isCompareAllRunning = ref(false)
+  const isFullPipelineRunning = ref(false)
+
+  // Group preview dialog (large side-by-side image view).
+  // Only available for groups with ≤3 members.
+  const showGroupPreviewDialog = ref(false)
+  const groupPreviewData = ref<{ group: any[]; groupIndex: number; actualIndex: number }>({
+    group: [],
+    groupIndex: 0,
+    actualIndex: 0,
+  })
+
+  function openGroupPreview(group: any[], groupIndex: number) {
+    if (!Array.isArray(group) || group.length === 0) {
+      ElMessage.info('Empty group')
+      return
+    }
+    if (group.length > 3) {
+      ElMessage.warning('Preview is only available for groups with ≤3 images')
+      return
+    }
+    groupPreviewData.value = {
+      group,
+      groupIndex,
+      actualIndex: getActualGroupIndex(groupIndex),
+    }
+    showGroupPreviewDialog.value = true
+  }
+
+  function closeGroupPreview() {
+    showGroupPreviewDialog.value = false
+  }
   // Latest Phase 2.5 materialization metadata (loaded on mount + after each run)
   const phase25Meta = ref<Record<string, string>>({})
   const phaseProgress = ref({
@@ -855,6 +887,61 @@ export function useDuplicateFinderView() {
     showBulkWhitelistDialog.value = false
   }
 
+  /**
+   * Deep Whitelist (current-page scoped) — given a file under some folder,
+   * find every duplicate group ON THE CURRENT PHASE-3 PAGE that has at least
+   * one member under that folder (recursive), and show them in the bulk-
+   * whitelist confirmation dialog. Confirming reuses the existing bulk-
+   * whitelist confirm flow.
+   *
+   * Constraint: scope is the currently-visible page, not the whole DB.
+   * Use the "Whitelist all on this page" button for everything visible
+   * without the folder filter.
+   */
+  async function deepWhitelistPath(filePath: string) {
+    if (!filePath) {
+      ElMessage.warning('Empty file path')
+      return
+    }
+    // Extract the directory path (works for both / and \)
+    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+    if (lastSep < 0) {
+      ElMessage.warning('Cannot extract folder from path')
+      return
+    }
+    const dirPath = filePath.substring(0, lastSep)
+    const sep     = filePath.includes('\\') ? '\\' : '/'
+    const dirPrefix = dirPath + sep
+
+    // Filter the CURRENT page's groups — recursive match on member.file_path
+    const currentPageGroups = (scanResult.value?.duplicate_groups || []) as any[]
+    const matchedGroups = currentPageGroups.filter((g: any) =>
+      Array.isArray(g) && g.some((img: any) => {
+        const fp = img?.file_path
+        if (typeof fp !== 'string') return false
+        return fp === dirPath || fp.startsWith(dirPrefix)
+      })
+    )
+
+    if (matchedGroups.length === 0) {
+      ElMessage.info('No groups on this page have files under that folder.')
+      return
+    }
+
+    const payload = matchedGroups
+      .map((g: any) => Array.isArray(g) ? g.map((img: any) => img.id).filter((x: any) => typeof x === 'number') : [])
+      .filter((ids: number[]) => ids.length >= 2)
+    const imageCount = payload.reduce((s: number, ids: number[]) => s + ids.length, 0)
+
+    bulkWhitelistPreview.value = {
+      groups: matchedGroups,
+      payload,
+      groupCount: payload.length,
+      imageCount,
+    }
+    showBulkWhitelistDialog.value = true
+  }
+
   async function confirmBulkWhitelist() {
     const { payload, groupCount, imageCount } = bulkWhitelistPreview.value
     if (!payload.length) {
@@ -964,6 +1051,128 @@ export function useDuplicateFinderView() {
       ElMessage.error(error.message || 'Compare folder failed')
     } finally {
       isComparingFolder.value = false
+    }
+  }
+
+  /**
+   * Compare All Folders — server-side collects every folder touching any
+   * materialized duplicate group, then runs Compare Folder over the union.
+   * Used to backfill missed similarities globally in one shot.
+   */
+  async function runCompareAllFolders(skipConfirm: boolean = false) {
+    if (!skipConfirm) {
+      try {
+        await ElMessageBox.confirm(
+          'This will run Compare Folder for every folder that has files in any duplicate group.\n\n' +
+          'Folders are first grouped into connected clusters (folders that share at least one group). ' +
+          'Each cluster is then compared independently — total work scales with the sum of cluster sizes, ' +
+          'not the grand total.\n\n' +
+          'No files on disk are modified. Only new similarity edges may be added; nothing is deleted.\n\n' +
+          'Continue?',
+          'Compare All Folders',
+          { type: 'warning', confirmButtonText: 'Run', cancelButtonText: 'Cancel' },
+        )
+      } catch {
+        return
+      }
+    }
+
+    try {
+      isCompareAllRunning.value = true
+      phaseProgress.value = {
+        phase: 1,
+        message: 'Compare All Folders: starting…',
+        details: 'Building folder clusters',
+        current: 0,
+        total: 100,
+        percentage: 0,
+      }
+      const result = await DuplicateFinderService.compareAllFolders(threshold.value)
+      const cmp = result?.compare || {}
+      const groups25 = result?.phase25?.groups_count ?? '?'
+      if (result.folders_count === 0) {
+        ElMessage.info(result.message || 'No folders to compare')
+      } else {
+        const skipMsg = (result as any).clusters_skipped
+          ? `, skipped ${(result as any).clusters_skipped} large cluster(s) covering ${(result as any).folders_in_skipped_clusters} folder(s)`
+          : ''
+        ElMessage.success(
+          `Compare All complete: ${result.clusters_count ?? '?'} cluster(s) over ${result.folders_count} folder(s)${skipMsg}, ` +
+          `scope=${cmp.scope_total ?? '?'}, ` +
+          `new phashes=${cmp.new_phashes_computed ?? 0}, ` +
+          `pairs found=${cmp.pairs_found ?? 0}, ` +
+          `new edges=${cmp.new_similarities_inserted ?? 0}, ` +
+          `phase2.5 groups=${groups25}`,
+        )
+      }
+      phaseProgress.value = {
+        phase: 25,
+        message: 'Compare All Folders: complete',
+        details: `Materialized ${groups25} groups`,
+        current: 100,
+        total: 100,
+        percentage: 100,
+      }
+      await loadPhase25Meta()
+      await loadDuplicatesPage(1)
+      setTimeout(() => {
+        if (phaseProgress.value.phase === 25) {
+          phaseProgress.value = { phase: 0, message: '', details: '', current: 0, total: 0, percentage: 0 }
+        }
+      }, 2000)
+    } catch (error: any) {
+      console.error('[Frontend] Compare All Folders failed:', error)
+      ElMessage.error(error.message || 'Compare All Folders failed')
+    } finally {
+      isCompareAllRunning.value = false
+    }
+  }
+
+  /**
+   * Full pipeline: Phase 1 → Phase 2 → Phase 2.5 → Compare All Folders.
+   * Sequential, single confirmation. Each underlying phase still manages its
+   * own progress UI and toasts; this wrapper just orchestrates.
+   */
+  async function runFullPipeline() {
+    try {
+      await ElMessageBox.confirm(
+        'This runs the full pipeline in sequence:\n\n' +
+        '  1. Phase 1  — scan filesystem, compute phash for new files\n' +
+        '  2. Phase 2  — build similarity edges\n' +
+        '  3. Phase 2.5 — materialize duplicate groups\n' +
+        '  4. Compare All Folders — backfill missed similarities (clustered, ≥4-folder clusters skipped)\n\n' +
+        'Each phase logs its own progress. Total time depends on file count.\n\nContinue?',
+        'Run Full Pipeline',
+        { type: 'warning', confirmButtonText: 'Run All', cancelButtonText: 'Cancel' },
+      )
+    } catch {
+      return
+    }
+
+    isFullPipelineRunning.value = true
+    try {
+      console.log('[Pipeline] ▶ Phase 1 starting')
+      await runPhase1()
+      console.log('[Pipeline] ✓ Phase 1 done')
+
+      console.log('[Pipeline] ▶ Phase 2 starting')
+      await runPhase2()
+      console.log('[Pipeline] ✓ Phase 2 done')
+
+      console.log('[Pipeline] ▶ Phase 2.5 starting')
+      await runPhase25()
+      console.log('[Pipeline] ✓ Phase 2.5 done')
+
+      console.log('[Pipeline] ▶ Compare All Folders starting')
+      await runCompareAllFolders(true)  // skip its own confirm
+      console.log('[Pipeline] ✓ Compare All Folders done')
+
+      ElMessage.success('Full pipeline complete')
+    } catch (error: any) {
+      console.error('[Pipeline] failed:', error)
+      ElMessage.error('Pipeline failed: ' + (error?.message || String(error)))
+    } finally {
+      isFullPipelineRunning.value = false
     }
   }
 
@@ -1310,6 +1519,216 @@ export function useDuplicateFinderView() {
     } catch (error: any) {
       console.error('[Duplicate Finder] Delete failed:', error)
       ElMessage.error(error.message || 'Delete failed')
+    }
+  }
+
+  /**
+   * Replace operation: keep the single selected image in the group, delete
+   * all others (move to delete target), and move the selected one into the
+   * anchor (img1) position — anchor's directory + anchor's basename +
+   * selected's own extension.
+   *
+   * Requires exactly one image selected in the group.
+   */
+  async function replaceInGroup(group: ImageInfo[], groupIndex: number) {
+    if (!Array.isArray(group) || group.length === 0) {
+      ElMessage.warning('Empty group')
+      return
+    }
+    if (group.length !== 2) {
+      ElMessage.warning('Replace only works on groups with exactly 2 images')
+      return
+    }
+    const selectedImgs = group.filter(img => selectedForDelete.value.has(img.file_path))
+    if (selectedImgs.length !== 1) {
+      ElMessage.warning('Replace requires exactly 1 selected image in this group')
+      return
+    }
+    const selectedImg = selectedImgs[0]
+    const anchorImg = group[0]
+    const isAnchorSelected = selectedImg.file_path === anchorImg.file_path
+
+    const groupPaths = group.map(img => img.file_path)
+    const othersCount = groupPaths.length - 1
+
+    // Compute target path preview for the confirmation message (mirrors backend
+    // logic: anchor's dir + anchor's basename (no ext) + selected's ext).
+    const winSep = anchorImg.file_path.includes('\\')
+    const sep = winSep ? '\\' : '/'
+    const anchorLast = Math.max(anchorImg.file_path.lastIndexOf('/'), anchorImg.file_path.lastIndexOf('\\'))
+    const anchorDir = anchorLast > 0 ? anchorImg.file_path.substring(0, anchorLast) : ''
+    const anchorBase = anchorLast > 0
+      ? anchorImg.file_path.substring(anchorLast + 1)
+      : anchorImg.file_path
+    const anchorBaseNoExt = anchorBase.includes('.')
+      ? anchorBase.substring(0, anchorBase.lastIndexOf('.'))
+      : anchorBase
+    const selBase = (() => {
+      const last = Math.max(selectedImg.file_path.lastIndexOf('/'), selectedImg.file_path.lastIndexOf('\\'))
+      return last > 0 ? selectedImg.file_path.substring(last + 1) : selectedImg.file_path
+    })()
+    const selExt = selBase.includes('.') ? selBase.substring(selBase.lastIndexOf('.')) : ''
+    const previewDest = `${anchorDir}${sep}${anchorBaseNoExt}${selExt}`
+
+    try {
+      await ElMessageBox.confirm(
+        `This will:\n` +
+        `  • Move ${othersCount} non-selected image(s) to the delete target\n` +
+        (isAnchorSelected
+          ? `  • (Selected is already the anchor — no rename)\n`
+          : `  • COPY selected to:\n      ${previewDest}\n` +
+            `  • Then back up the ORIGINAL selected file to the delete target (safety copy)\n`) +
+        `\nContinue?`,
+        'Replace',
+        { type: 'warning', confirmButtonText: 'Replace', cancelButtonText: 'Cancel' },
+      )
+    } catch {
+      return
+    }
+
+    try {
+      const result = await DuplicateFinderService.replaceInGroup(
+        selectedImg.file_path,
+        anchorImg.file_path,
+        groupPaths,
+      )
+      const errs = (result.errors || []).filter(Boolean)
+      if (errs.length) {
+        console.warn('[Replace] errors:', errs)
+        ElMessage.warning(`Completed with ${errs.length} error(s) — see console`)
+      } else {
+        ElMessage.success(
+          `Replace complete: deleted ${result.deleted_count} file(s)` +
+          (result.renamed ? `, kept selected as ${result.new_selected_path}` : ''),
+        )
+      }
+      // Drop selections for files that no longer exist
+      groupPaths.forEach(p => selectedForDelete.value.delete(p))
+      // Reload current page so groups are fresh
+      await loadDuplicatesPage(currentPage.value)
+    } catch (error: any) {
+      console.error('[Frontend] Replace failed:', error)
+      ElMessage.error(error.message || 'Replace failed')
+    }
+  }
+
+  // ---- Deep Replace ----
+  const showDeepReplaceDialog = ref(false)
+  const isDeepReplacing = ref(false)
+  const deepReplacePreview = ref<{
+    folderPath: string
+    operations: Array<{ selected: any; anchor: any; group: any[] }>
+    badGroups: any[][]    // matched groups whose size is NOT 2 — block the batch
+  }>({ folderPath: '', operations: [], badGroups: [] })
+
+  /**
+   * Deep Replace — batch replace for all groups on the current page that
+   * have a file under the clicked image's folder.
+   *
+   * Strict guard: ALL matched groups must have exactly 2 images, otherwise
+   * the WHOLE batch is blocked. We still show the dialog (with bad groups
+   * highlighted) so the user can SEE which groups are blocking and resolve
+   * them manually before retrying.
+   */
+  async function deepReplacePath(filePath: string) {
+    if (!filePath) {
+      ElMessage.warning('Empty file path')
+      return
+    }
+    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+    if (lastSep < 0) {
+      ElMessage.warning('Cannot extract folder from this path')
+      return
+    }
+    const dirPath = filePath.substring(0, lastSep)
+    const sep     = filePath.includes('\\') ? '\\' : '/'
+    const dirPrefix = dirPath + sep
+
+    const currentPageGroups = (scanResult.value?.duplicate_groups || []) as any[][]
+    const matched = currentPageGroups.filter((g: any) =>
+      Array.isArray(g) && g.some((img: any) => {
+        const fp = img?.file_path
+        if (typeof fp !== 'string') return false
+        return fp === dirPath || fp.startsWith(dirPrefix)
+      })
+    )
+
+    if (matched.length === 0) {
+      ElMessage.info('No groups on this page have files under that folder')
+      return
+    }
+
+    // Partition into operations (size=2) and badGroups (size!=2). Show both.
+    const operations: Array<{ selected: any; anchor: any; group: any[] }> = []
+    const badGroups: any[][] = []
+    for (const g of matched) {
+      if (g.length === 2) {
+        const selected = g.find((img: any) => {
+          const fp = img?.file_path
+          return typeof fp === 'string' && (fp === dirPath || fp.startsWith(dirPrefix))
+        })
+        const anchor = g.find((img: any) => img !== selected)
+        if (selected && anchor) {
+          operations.push({ selected, anchor, group: g })
+        } else {
+          badGroups.push(g)
+        }
+      } else {
+        badGroups.push(g)
+      }
+    }
+
+    deepReplacePreview.value = {
+      folderPath: dirPath,
+      operations,
+      badGroups,
+    }
+    showDeepReplaceDialog.value = true
+  }
+
+  function cancelDeepReplace() {
+    showDeepReplaceDialog.value = false
+  }
+
+  async function confirmDeepReplace() {
+    if (deepReplacePreview.value.badGroups.length > 0) {
+      ElMessage.error(
+        `Replace is blocked: ${deepReplacePreview.value.badGroups.length} group(s) have a size other than 2.`
+      )
+      return
+    }
+    const ops = deepReplacePreview.value.operations
+    if (!ops.length) {
+      showDeepReplaceDialog.value = false
+      return
+    }
+    const payload = ops.map(o => ({
+      selected_file_path: o.selected.file_path,
+      anchor_file_path:   o.anchor.file_path,
+      group_file_paths:   o.group.map((m: any) => m.file_path),
+    }))
+    try {
+      isDeepReplacing.value = true
+      const result = await DuplicateFinderService.replaceBatch(payload)
+      const errCount = (result.errors_per_op || []).length
+      if (errCount) {
+        console.warn('[Deep Replace] error_ops:', result.errors_per_op)
+        ElMessage.warning(
+          `Completed with ${errCount} error op(s). deleted=${result.deleted_count}, renamed=${result.renamed_count}. See console.`
+        )
+      } else {
+        ElMessage.success(
+          `Deep Replace complete: ${result.operations_count} ops, deleted=${result.deleted_count}, renamed=${result.renamed_count}`
+        )
+      }
+      showDeepReplaceDialog.value = false
+      selectedForDelete.value.clear()
+      await loadDuplicatesPage(currentPage.value)
+    } catch (error: any) {
+      console.error('[Deep Replace] failed:', error)
+      ElMessage.error(error.message || 'Deep Replace failed')
+    } finally {
+      isDeepReplacing.value = false
     }
   }
 
@@ -2077,7 +2496,23 @@ export function useDuplicateFinderView() {
     confirmBulkWhitelist,
     showBulkWhitelistDialog,
     bulkWhitelistPreview,
+    deepWhitelistPath,
     compareFolderForGroup,
+    runCompareAllFolders,
+    isCompareAllRunning,
+    runFullPipeline,
+    isFullPipelineRunning,
+    showGroupPreviewDialog,
+    groupPreviewData,
+    openGroupPreview,
+    closeGroupPreview,
+    replaceInGroup,
+    deepReplacePath,
+    showDeepReplaceDialog,
+    deepReplacePreview,
+    isDeepReplacing,
+    cancelDeepReplace,
+    confirmDeepReplace,
     runPhase3,
     stopPhase3,
     toggleFileSelection,

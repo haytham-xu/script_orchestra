@@ -15,6 +15,19 @@
       <div class="action-section">
         <!-- 3 Phase Workflow Buttons -->
         <div class="action-buttons">
+          <!-- Run Full Pipeline (Phase 1 → 2 → 2.5 → Compare All) -->
+          <el-button
+            type="success"
+            size="large"
+            :disabled="!settings.folder_paths || settings.folder_paths.length === 0"
+            :loading="isFullPipelineRunning"
+            @click="runFullPipeline"
+            data-testid="run-full-pipeline-btn"
+            title="Run Phase 1 → Phase 2 → Phase 2.5 → Compare All Folders in sequence"
+          >
+            ⚡ Run All
+          </el-button>
+
           <!-- Phase 1 -->
           <el-button
             type="primary"
@@ -95,6 +108,17 @@
             @click="stopPhase3"
           >
             ⏹️ Stop
+          </el-button>
+          <el-button
+            type="primary"
+            plain
+            size="large"
+            :loading="isCompareAllRunning"
+            @click="runCompareAllFolders"
+            data-testid="compare-all-folders-btn"
+            title="Run Compare Folder over EVERY folder touched by any materialized duplicate group. Backfills missed similarities globally."
+          >
+            🔍 Compare All Folders
           </el-button>
         </div>
 
@@ -289,8 +313,8 @@
           <el-card>
             <template #header>
               <div class="group-header">
-                <span class="group-title">Group {{ getActualGroupIndex(groupIndex) + 1 }} ({{ group.length }} similar images)</span>
-                <div class="group-actions">
+                <div class="group-actions-left">
+                  <span class="group-title">Group {{ getActualGroupIndex(groupIndex) + 1 }} ({{ group.length }} similar images)</span>
                   <el-button
                     size="small"
                     @click="selectAllInGroup(group)"
@@ -298,13 +322,23 @@
                   >
                     {{ hasAllSelectedInGroup(group) ? '❎ Deselect All' : '☑️ Select All' }}
                   </el-button>
-                  <el-button
-                    size="small"
-                    @click="addGroupToWhitelist(group, groupIndex)"
-                    data-testid="add-to-whitelist-btn"
+                  <el-tooltip
+                    :content="group.length > 3
+                      ? 'Preview disabled for groups with more than 3 images'
+                      : 'Open a large side-by-side preview of all images in this group'"
+                    placement="top"
                   >
-                    ✅ Add to Whitelist
-                  </el-button>
+                    <span>
+                      <el-button
+                        size="small"
+                        :disabled="group.length > 3"
+                        @click="openGroupPreview(group, groupIndex)"
+                        data-testid="preview-group-btn"
+                      >
+                        🖼️ Preview
+                      </el-button>
+                    </span>
+                  </el-tooltip>
                   <el-button
                     size="small"
                     type="primary"
@@ -316,6 +350,36 @@
                   >
                     🔍 Compare Folder
                   </el-button>
+                </div>
+                <div class="group-actions-right">
+                  <el-button
+                    size="small"
+                    @click="addGroupToWhitelist(group, groupIndex)"
+                    data-testid="add-to-whitelist-btn"
+                  >
+                    ✅ Add to Whitelist
+                  </el-button>
+                  <el-tooltip
+                    :content="group.length !== 2
+                      ? 'Replace only works on groups with exactly 2 images'
+                      : (getSelectedCountInGroup(group) === 1
+                          ? 'Keep selected image (copied to the other one\'s folder + basename, with selected\'s extension); both originals backed up to delete target'
+                          : 'Replace requires exactly 1 selected image')"
+                    placement="top"
+                  >
+                    <span>
+                      <el-button
+                        size="small"
+                        type="warning"
+                        plain
+                        :disabled="group.length !== 2 || getSelectedCountInGroup(group) !== 1"
+                        @click="replaceInGroup(group, groupIndex)"
+                        data-testid="replace-btn"
+                      >
+                        🔄 Replace
+                      </el-button>
+                    </span>
+                  </el-tooltip>
                   <el-button
                     size="small"
                     type="danger"
@@ -344,14 +408,22 @@
                   />
                   <div v-if="selectedForDelete.has(image.file_path)" class="selected-overlay">
                     <el-icon :size="32"><CircleCheck /></el-icon>
-                    <p class="selected-text">DELETE</p>
+                    <p class="selected-text">SELECTED</p>
                   </div>
                   <div v-if="imageIndex === 0" class="highest-badge">🏆 HIGHEST RESOLUTION</div>
                 </div>
                 <div class="image-info">
-                  <p class="image-filename" :title="image.filename || getFilenameFromPath(image.file_path)">
-                    {{ image.filename || getFilenameFromPath(image.file_path) }}
-                  </p>
+                  <div class="image-filename-row">
+                    <p class="image-filename" :title="image.filename || getFilenameFromPath(image.file_path)">
+                      {{ image.filename || getFilenameFromPath(image.file_path) }}
+                    </p>
+                    <span
+                      class="image-folder-counts"
+                      :title="`${image.folder_dup ?? 0} duplicate file(s) in this folder / ${image.folder_total ?? 0} total file(s) in this folder`"
+                    >
+                      {{ image.folder_dup ?? 0 }}/{{ image.folder_total ?? 0 }}
+                    </span>
+                  </div>
                   <p class="image-path" :title="image.display_path || image.file_path">
                     {{ image.display_path || getRelativePath(image.file_path) }}
                   </p>
@@ -370,12 +442,32 @@
                     </el-button>
                     <el-button
                       size="small"
+                      type="success"
+                      @click.stop="deepWhitelistPath(image.file_path)"
+                      class="action-button"
+                      data-testid="deep-whitelist-path-btn"
+                    >
+                      🛡️ Deep Whitelist
+                    </el-button>
+                    <el-button
+                      size="small"
+                      type="warning"
+                      plain
+                      @click.stop="deepReplacePath(image.file_path)"
+                      class="action-button"
+                      data-testid="deep-replace-path-btn"
+                      title="Batch Replace for all groups on this page that have a file under this folder (every matched group must have exactly 2 images)"
+                    >
+                      🔄 Deep Replace
+                    </el-button>
+                    <el-button
+                      size="small"
                       type="warning"
                       @click.stop="setDeepDeletePath(image.file_path)"
                       class="action-button"
                       data-testid="set-deep-delete-path-btn"
                     >
-                      🎯 Deep Delete Path
+                      🎯 Deep Delete
                     </el-button>
                   </div>
                 </div>
@@ -998,6 +1090,195 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- Group Preview Dialog — large side-by-side view (≤3 images only) -->
+    <el-dialog
+      v-model="showGroupPreviewDialog"
+      :title="`Group ${groupPreviewData.actualIndex + 1} Preview (${groupPreviewData.group.length} image${groupPreviewData.group.length > 1 ? 's' : ''})`"
+      width="92%"
+      top="3vh"
+      :close-on-click-modal="true"
+      @close="closeGroupPreview"
+    >
+      <div
+        class="group-preview-strip"
+        :class="`count-${groupPreviewData.group.length}`"
+      >
+        <div
+          v-for="(img, idx) in groupPreviewData.group"
+          :key="idx"
+          class="group-preview-cell"
+        >
+          <div class="group-preview-imgwrap">
+            <img
+              :src="getImageUrl(img.file_path)"
+              :alt="img.filename || img.file_path"
+              loading="lazy"
+            />
+          </div>
+          <div class="group-preview-meta">
+            <div class="group-preview-filename" :title="img.filename || img.file_path">
+              {{ idx === 0 ? '🏆 ' : '' }}{{ img.filename || getFilenameFromPath(img.file_path) }}
+            </div>
+            <div class="group-preview-detail">
+              {{ img.resolution }} · {{ formatFileSize(img.filesize) }}
+            </div>
+            <div class="group-preview-path" :title="img.file_path">
+              {{ img.file_path }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="closeGroupPreview">Close</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- Deep Replace Confirmation Dialog -->
+    <el-dialog
+      v-model="showDeepReplaceDialog"
+      title="Confirm Deep Replace"
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <div class="deep-replace-dialog">
+        <el-alert
+          v-if="deepReplacePreview.badGroups.length > 0"
+          type="error"
+          :closable="false"
+          style="margin-bottom: 12px;"
+        >
+          <template #title>
+            <div style="font-size: 14px; font-weight: 700;">
+              ❌ Blocked: {{ deepReplacePreview.badGroups.length }} group(s) have a size other than 2
+            </div>
+          </template>
+          <div style="font-size: 13px; margin-top: 6px;">
+            Deep Replace can only run when every matched group has exactly 2 images.
+            Resolve the blocking groups below (e.g. delete extras, add to whitelist),
+            then re-open Deep Replace.
+          </div>
+        </el-alert>
+
+        <el-alert
+          v-else
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 12px;"
+        >
+          <template #title>
+            <div style="font-size: 14px; font-weight: 600;">
+              ⚠️ Batch Replace across {{ deepReplacePreview.operations.length }} group(s)
+            </div>
+          </template>
+          <div style="font-size: 13px; margin-top: 8px;">
+            For each pair: KEEP's content is copied into ANCHOR's folder with the
+            anchor's basename + KEEP's extension. Both originals are backed up to
+            the delete target.
+          </div>
+        </el-alert>
+
+        <div class="deep-delete-info">
+          <div class="info-label">Source folder:</div>
+          <div class="info-value path-value">{{ deepReplacePreview.folderPath }}</div>
+        </div>
+        <div class="deep-delete-info">
+          <div class="info-label">Total matched groups:</div>
+          <div class="info-value">
+            {{ deepReplacePreview.operations.length + deepReplacePreview.badGroups.length }}
+            <span style="color: #67c23a;"> ({{ deepReplacePreview.operations.length }} ready)</span>
+            <span v-if="deepReplacePreview.badGroups.length" style="color: #f56c6c;">
+              ({{ deepReplacePreview.badGroups.length }} blocked)
+            </span>
+          </div>
+        </div>
+
+        <!-- Bad groups section — listed FIRST so user notices the blockers -->
+        <div v-if="deepReplacePreview.badGroups.length" class="file-list-section">
+          <div class="file-list-header" style="color: #f56c6c;">
+            <span>❌ Blocking groups (size ≠ 2):</span>
+            <span class="file-count">({{ deepReplacePreview.badGroups.length }})</span>
+          </div>
+          <div class="deep-replace-list">
+            <div
+              v-for="(g, idx) in deepReplacePreview.badGroups"
+              :key="'bad-' + idx"
+              class="deep-replace-bad-group"
+            >
+              <div class="deep-replace-bad-header">
+                Group with {{ g.length }} images (cannot Replace)
+              </div>
+              <div class="deep-replace-bad-thumbs">
+                <div
+                  v-for="(img, i) in g"
+                  :key="i"
+                  class="deep-replace-thumb"
+                >
+                  <img :src="getImageUrl(img.file_path)" :alt="img.filename || ''" loading="lazy" />
+                  <div class="deep-replace-thumb-label" :title="img.file_path">
+                    {{ img.filename || getFilenameFromPath(img.file_path) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Good groups (operations) section -->
+        <div v-if="deepReplacePreview.operations.length" class="file-list-section">
+          <div class="file-list-header" style="color: #67c23a;">
+            <span>✓ Ready to Replace:</span>
+            <span class="file-count">({{ deepReplacePreview.operations.length }} pairs)</span>
+          </div>
+          <div class="deep-replace-list">
+            <div
+              v-for="(op, idx) in deepReplacePreview.operations"
+              :key="'good-' + idx"
+              class="deep-replace-pair"
+            >
+              <div class="deep-replace-pair-header">Pair {{ idx + 1 }}</div>
+              <div class="deep-replace-pair-thumbs">
+                <div class="deep-replace-thumb deep-replace-thumb-keep">
+                  <div class="deep-replace-thumb-tag">KEEP (content)</div>
+                  <img :src="getImageUrl(op.selected.file_path)" :alt="op.selected.filename || ''" loading="lazy" />
+                  <div class="deep-replace-thumb-label" :title="op.selected.file_path">
+                    {{ op.selected.filename || getFilenameFromPath(op.selected.file_path) }}
+                  </div>
+                </div>
+                <div class="deep-replace-arrow">→</div>
+                <div class="deep-replace-thumb deep-replace-thumb-anchor">
+                  <div class="deep-replace-thumb-tag">ANCHOR (location + name)</div>
+                  <img :src="getImageUrl(op.anchor.file_path)" :alt="op.anchor.filename || ''" loading="lazy" />
+                  <div class="deep-replace-thumb-label" :title="op.anchor.file_path">
+                    {{ op.anchor.filename || getFilenameFromPath(op.anchor.file_path) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="cancelDeepReplace">Cancel</el-button>
+          <el-button
+            type="warning"
+            @click="confirmDeepReplace"
+            :loading="isDeepReplacing"
+            :disabled="deepReplacePreview.badGroups.length > 0 || deepReplacePreview.operations.length === 0"
+            data-testid="deep-replace-confirm-btn"
+          >
+            {{ deepReplacePreview.badGroups.length > 0
+              ? `Replace blocked (${deepReplacePreview.badGroups.length} bad)`
+              : `Replace ${deepReplacePreview.operations.length} Pair(s)` }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1066,7 +1347,23 @@ const {
   confirmBulkWhitelist,
   showBulkWhitelistDialog,
   bulkWhitelistPreview,
+  deepWhitelistPath,
   compareFolderForGroup,
+  runCompareAllFolders,
+  isCompareAllRunning,
+  runFullPipeline,
+  isFullPipelineRunning,
+  showGroupPreviewDialog,
+  groupPreviewData,
+  openGroupPreview,
+  closeGroupPreview,
+  replaceInGroup,
+  deepReplacePath,
+  showDeepReplaceDialog,
+  deepReplacePreview,
+  isDeepReplacing,
+  cancelDeepReplace,
+  confirmDeepReplace,
   runPhase3,
   stopPhase3,
   toggleFileSelection,
@@ -1564,6 +1861,21 @@ const {
   gap: 12px;
 }
 
+.group-actions-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.group-actions-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 .group-actions {
   display: flex;
   gap: 8px;
@@ -1624,7 +1936,7 @@ const {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(245, 108, 108, 0.7);
+  background: rgba(64, 158, 255, 0.7);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1668,14 +1980,36 @@ const {
   padding: 12px;
 }
 
-.image-filename {
+.image-filename-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 4px 0;
+}
+
+.image-filename {
+  margin: 0;
   font-size: 14px;
   font-weight: 600;
   color: #303133;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.image-folder-counts {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  background: #f4f4f5;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 .image-path {
@@ -1701,14 +2035,14 @@ const {
 }
 
 .image-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
 }
 
 .image-actions .action-button {
-  flex: 1;
-  min-width: 0;
+  margin: 0;
+  width: 100%;
 }
 
 /* Settings Drawer */
@@ -2023,6 +2357,159 @@ const {
   color: #606266;
 }
 
+/* ===== Group Preview Dialog ===== */
+.group-preview-strip {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+.group-preview-strip.count-1 { grid-template-columns: 1fr; }
+.group-preview-strip.count-2 { grid-template-columns: 1fr 1fr; }
+.group-preview-strip.count-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+.group-preview-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.group-preview-imgwrap {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e1e1e;
+  border-radius: 6px;
+  overflow: hidden;
+  /* dialog top=3vh; subtract footer/header/meta ≈ ~22vh */
+  height: 70vh;
+}
+.group-preview-imgwrap img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.group-preview-meta {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #606266;
+  text-align: center;
+}
+.group-preview-filename {
+  font-weight: 600;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-preview-detail {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #909399;
+}
+.group-preview-path {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #c0c4cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;  /* show the tail (filename end) when truncating */
+  text-align: left;
+}
+
+/* ===== Deep Replace Dialog ===== */
+.deep-replace-list {
+  max-height: 480px;
+  overflow-y: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 8px;
+  background: #fafafa;
+}
+.deep-replace-pair {
+  border-bottom: 1px dashed #dcdfe6;
+  padding: 8px 0;
+}
+.deep-replace-pair:last-child { border-bottom: none; }
+.deep-replace-pair-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+}
+.deep-replace-pair-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.deep-replace-thumb {
+  width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  color: #606266;
+}
+.deep-replace-thumb img {
+  width: 140px;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+}
+.deep-replace-thumb-tag {
+  font-size: 10px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.deep-replace-thumb-keep .deep-replace-thumb-tag {
+  background: #67c23a;
+  color: white;
+}
+.deep-replace-thumb-anchor .deep-replace-thumb-tag {
+  background: #e6a23c;
+  color: white;
+}
+.deep-replace-thumb-label {
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.deep-replace-arrow {
+  font-size: 24px;
+  color: #909399;
+}
+
+.deep-replace-bad-group {
+  border: 1px solid #f56c6c;
+  background: #fef0f0;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.deep-replace-bad-group:last-child { margin-bottom: 0; }
+.deep-replace-bad-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f56c6c;
+  margin-bottom: 6px;
+}
+.deep-replace-bad-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .bulk-whitelist-thumb img {
   width: 100px;
   height: 100px;
