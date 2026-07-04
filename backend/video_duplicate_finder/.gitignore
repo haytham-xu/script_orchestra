@@ -1,0 +1,21 @@
+# Local SQLite + caches
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Generated thumbnail cache
+thumbnails/
+
+# Runtime settings (per-machine; not for version control)
+settings.json
+
+# Test videos & prototype outputs (S0 only; delete when S0 done)
+test_videos/
+
+# Python
+__pycache__/
+*.pyc
+
+# Error reports
+error_files.txt

@@ -9,6 +9,9 @@ from photo_classifier import blueprint as photo_classifier_blueprint
 # Import duplicate_finder tool
 from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
 
+# Import video_duplicate_finder tool (independent of duplicate_finder per D-11)
+from video_duplicate_finder.blueprint import blueprint as video_duplicate_finder_blueprint
+
 # Import roadmap tool
 from roadmap.blueprint import blueprint as roadmap_blueprint
 
@@ -29,6 +32,7 @@ import file_git.controller
 from file_git import websocket_service as fg_websocket
 from duplicate_finder import websocket_service as df_websocket
 from clipboard_share import websocket_service as cs_websocket
+from video_duplicate_finder import websocket_service as v_df_websocket
 
 # Import Cypress support API for E2E testing
 from cypress_support.api import cypress_api
@@ -49,6 +53,9 @@ def create_app() -> Flask:
 
     # Register duplicate_finder blueprint
     app.register_blueprint(duplicate_finder_blueprint)
+
+    # Register video_duplicate_finder blueprint (independent tool per D-11)
+    app.register_blueprint(video_duplicate_finder_blueprint)
 
     # Register roadmap blueprint
     app.register_blueprint(roadmap_blueprint)
@@ -71,11 +78,14 @@ def create_app() -> Flask:
     # This creates a single shared socketio instance for all tools
     socketio = df_websocket.init_socketio(app)
 
-    # Share the same socketio instance with file_git and clipboard_share
+    # Share the same socketio instance with file_git, clipboard_share, and
+    # video_duplicate_finder (pass-in mode per D-16 — video module doesn't
+    # create its own SocketIO, just receives the shared instance).
     if socketio:
         fg_websocket.socketio = socketio
         cs_websocket.init_socketio(socketio)
         cs_websocket.register_socketio_events()
+        v_df_websocket.init_socketio(socketio)
 
     return app, socketio
 

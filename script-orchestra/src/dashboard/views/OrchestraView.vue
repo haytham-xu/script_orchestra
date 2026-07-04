@@ -24,6 +24,10 @@
       <template #header>Duplicate Finder</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/video-duplicate-finder')" data-testid="video-duplicate-finder">
+      <template #header>Video Duplicate Finder</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
     <el-card @click="goTo('/clipboard-share')">
       <template #header>Clipboard Share</template>
       <!-- <p>Here is content</p> -->
