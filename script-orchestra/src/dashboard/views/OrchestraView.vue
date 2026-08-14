@@ -32,6 +32,10 @@
       <template #header>Clipboard Share</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/caffeinate')">
+      <template #header>Caffeinate</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
     <el-card @click="goTo('/file-git')">
       <template #header>File-Git</template>
       <!-- <p>Here is content</p> -->

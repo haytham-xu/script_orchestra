@@ -18,6 +18,9 @@ from roadmap.blueprint import blueprint as roadmap_blueprint
 # Import clipboard_share tool
 from clipboard_share.blueprint import blueprint as clipboard_share_blueprint
 
+# Import caffeinate tool
+from caffeinate.blueprint import blueprint as caffeinate_blueprint
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
@@ -33,6 +36,8 @@ from file_git import websocket_service as fg_websocket
 from duplicate_finder import websocket_service as df_websocket
 from clipboard_share import websocket_service as cs_websocket
 from video_duplicate_finder import websocket_service as v_df_websocket
+from caffeinate import websocket_service as cf_websocket
+from caffeinate.service import get_service as get_caffeinate_service
 
 # Import Cypress support API for E2E testing
 from cypress_support.api import cypress_api
@@ -63,6 +68,9 @@ def create_app() -> Flask:
     # Register clipboard_share blueprint
     app.register_blueprint(clipboard_share_blueprint)
 
+    # Register caffeinate blueprint
+    app.register_blueprint(caffeinate_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -86,6 +94,9 @@ def create_app() -> Flask:
         cs_websocket.init_socketio(socketio)
         cs_websocket.register_socketio_events()
         v_df_websocket.init_socketio(socketio)
+        cf_websocket.init_socketio(socketio)
+        cf_websocket.register_socketio_events()
+        get_caffeinate_service().register_broadcaster(cf_websocket.broadcast_log_entry)
 
     return app, socketio
 

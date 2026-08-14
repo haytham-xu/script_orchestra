@@ -16,6 +16,7 @@ import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
 import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
+import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
@@ -109,6 +110,11 @@ const router = createRouter({
       path: '/clipboard-share',
       name: 'clipboard-share',
       component: ClipboardShareView
+    },
+    {
+      path: '/caffeinate',
+      name: 'caffeinate',
+      component: CaffeinateView
     },
     {
       path: '/file-git',
