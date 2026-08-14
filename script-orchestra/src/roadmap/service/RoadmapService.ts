@@ -7,16 +7,25 @@ import type { Task } from '../models/Task'
 const BASE_PATH = '/roadmap'
 
 export interface TaskCreatePayload {
-  content: string
+  header: string
+  content?: string
   priority?: string
   status?: string
+  size?: string
+  eta?: string
+  category?: string
 }
 
 export interface TaskUpdatePayload {
+  header?: string
   content?: string
   priority?: string
   status?: string
   order?: number
+  size?: string
+  eta?: string
+  category?: string
+  returnedFromInProgress?: boolean
 }
 
 export interface TaskReorderPayload {

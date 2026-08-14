@@ -19,6 +19,12 @@ backend/duplicate_finder/settings.json
 
 # Roadmap user data
 backend/roadmap/tasks.json
+backend/roadmap/*.db
+backend/roadmap/*.db.backup_*
+backend/roadmap/tasks.json.backup_*
+backend/roadmap/tasks.json.broken
+backend/roadmap/tasks_backup.json
+backend/roadmap/tasks_recovered.json
 backend/file_git/default_settings.json
 
 # Manga Viewer settings (generated at runtime)

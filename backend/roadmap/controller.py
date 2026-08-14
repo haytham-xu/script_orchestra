@@ -7,6 +7,8 @@ from flask import request
 from flask_restx import Namespace, Resource
 from .models import Task, TaskStatus, TaskPriority
 from .storage import task_storage
+from .settings_db import settings_db
+from .settings_models import RoadmapSettings
 
 ns = Namespace("")
 
@@ -15,30 +17,13 @@ ns = Namespace("")
 class TaskListResource(Resource):
     def get(self):
         """
-        Get all tasks (auto-delete done tasks older than 7 days)
+        Get all tasks
 
         Returns:
             List of all tasks
         """
         try:
             tasks = task_storage.get_all_tasks()
-
-            # Auto-delete done tasks older than 7 days
-            cutoff_date = datetime.now() - timedelta(days=7)
-            tasks_to_delete = []
-
-            for task in tasks:
-                if task.status == TaskStatus.DONE and task.created_at < cutoff_date:
-                    tasks_to_delete.append(task.id)
-
-            # Delete old tasks
-            for task_id in tasks_to_delete:
-                task_storage.delete_task(task_id)
-
-            # Reload tasks after deletion
-            if tasks_to_delete:
-                tasks = task_storage.get_all_tasks()
-
             return {"tasks": [task.to_dict() for task in tasks]}, 200
         except Exception as e:
             return {"error": str(e)}, 500
@@ -49,40 +34,64 @@ class TaskListResource(Resource):
 
         Body:
             {
-                "content": "Task content",
+                "header": "Short title",
+                "content": "Detailed content",
                 "priority": "medium",
-                "status": "todo"
+                "status": "todo",
+                "size": "M",
+                "eta": "2026-07-05T00:00:00",
+                "category": "日常工作"
             }
 
         Returns:
             Created task
         """
         try:
+            print("[Controller] POST /tasks - Start")
             data = request.json
-            if not data or "content" not in data:
-                return {"error": "Missing required field: content"}, 400
+            print(f"[Controller] Request data: {data}")
+
+            if not data or "header" not in data:
+                print("[Controller] Error: Missing header")
+                return {"error": "Missing required field: header"}, 400
 
             # Generate UUID
             task_id = str(uuid.uuid4())
+            print(f"[Controller] Generated task ID: {task_id}")
 
-            # Get max order for the status
-            tasks = task_storage.get_all_tasks()
-            status = data.get("status", TaskStatus.TODO)
-            status_tasks = [t for t in tasks if t.status == status]
-            max_order = max([t.order for t in status_tasks], default=-1)
+            # Parse ETA if provided
+            eta = None
+            if data.get("eta"):
+                try:
+                    eta = datetime.fromisoformat(data["eta"].replace('Z', '+00:00'))
+                    print(f"[Controller] Parsed ETA: {eta}")
+                except Exception as e:
+                    print(f"[Controller] Failed to parse ETA: {e}")
+                    pass
 
-            # Create task
+            # Create task (order will be auto-calculated by storage)
+            from .models import TaskSize, TaskCategory
+            print(f"[Controller] Creating task with priority={data.get('priority')}, eta={eta}")
             task = Task(
                 id=task_id,
-                content=data["content"],
+                header=data["header"],
+                content=data.get("content", ""),
                 priority=data.get("priority", TaskPriority.MEDIUM),
-                status=status,
-                order=max_order + 1
+                status=data.get("status", TaskStatus.TODO),
+                size=data.get("size", TaskSize.MEDIUM),
+                eta=eta,
+                category=data.get("category", TaskCategory.A),
+                order=0  # Will be recalculated by storage.create_task()
             )
 
+            print(f"[Controller] Calling storage.create_task()")
             created_task = task_storage.create_task(task)
+            print(f"[Controller] Task created successfully with order={created_task.order}")
             return created_task.to_dict(), 201
         except Exception as e:
+            print(f"[Controller] Error creating task: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}, 500
 
 
@@ -109,6 +118,7 @@ class TaskResource(Resource):
 
         Body:
             {
+                "header": "Updated header",
                 "content": "Updated content",
                 "priority": "high",
                 "status": "in_progress"
@@ -173,3 +183,44 @@ class TaskReorderResource(Resource):
             return {"tasks": [task.to_dict() for task in updated_tasks]}, 200
         except Exception as e:
             return {"error": str(e)}, 500
+
+
+@ns.route("/settings")
+class SettingsResource(Resource):
+    def get(self):
+        """
+        Get roadmap settings
+
+        Returns:
+            Settings object
+        """
+        try:
+            settings = settings_db.get_settings()
+            return settings.to_dict(), 200
+        except Exception as e:
+            return {"error": str(e)}, 500
+
+    def put(self):
+        """
+        Update roadmap settings
+
+        Body:
+            {
+                "inProgressTimeoutHours": 4.0,
+                "doneAutoRemoveDays": 7
+            }
+
+        Returns:
+            Updated settings
+        """
+        try:
+            data = request.json
+            if not data:
+                return {"error": "Missing request body"}, 400
+
+            settings = RoadmapSettings.from_dict(data)
+            updated_settings = settings_db.update_settings(settings)
+            return updated_settings.to_dict(), 200
+        except Exception as e:
+            return {"error": str(e)}, 500
+
