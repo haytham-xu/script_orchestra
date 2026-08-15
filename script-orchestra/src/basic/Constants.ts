@@ -1,6 +1,10 @@
 // Backend API Base URL (port 5001 to avoid macOS AirPlay on 5000)
 export const BACKEND_BASE_URL = 'http://127.0.0.1:5001'
 
+export const MANGA_CLASSIFIER_ENDPOINT_CONFIG = '/manga-classifier/config'
+export const MANGA_CLASSIFIER_ENDPOINT_FOLDER = '/manga-classifier/folder'
+export const MANGA_CLASSIFIER_ENDPOINT_SETTINGS = '/manga-classifier/settings'
+
 export const PHOTO_CLASSIFIER_ENDPOINT_FOLDER = '/photo-classifier/folder'
 
 export const MANGA_VIEWER_INDEX_ENDPOINT = '/manga-viewer/index'
