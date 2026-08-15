@@ -3,6 +3,12 @@
     <el-container>
       <el-header>
         <span class="mc-title">{{ currentFolderName }}</span>
+        <div v-if="!isEmpty" class="mc-progress">
+          <div class="mc-progress-label">{{ currentDisplayIndex }} / {{ totalCount }}</div>
+          <div class="mc-progress-bar">
+            <div class="mc-progress-fill" :style="{ width: progressPercent + '%' }"></div>
+          </div>
+        </div>
         <el-button
           class="mc-settings-btn"
           circle
@@ -99,6 +105,35 @@
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
+}
+.mc-progress {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: normal;
+  font-size: 12px;
+  color: #86868b;
+}
+.mc-progress-label {
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+}
+.mc-progress-bar {
+  width: 140px;
+  height: 4px;
+  background: #e5e5ea;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.mc-progress-fill {
+  height: 100%;
+  background: #0071e3;
+  border-radius: 2px;
+  transition: width 0.2s ease;
 }
 .mc-empty-state {
   padding: 80px 20px;

@@ -27,6 +27,15 @@ export default defineComponent({
         return folderObjectList.value.folderList.filter(f => f.status === FolderStatus.Pending).length
     })
     const totalCount = computed(() => folderObjectList.value?.folderList.length ?? 0)
+    // 1-based index of the current focus; 0 when empty; totalCount+1 when past EOL.
+    const currentDisplayIndex = computed(() => {
+      if (!folderObjectList.value?.folderList.length) return 0
+      return Math.min(currentIndex.value + 1, totalCount.value)
+    })
+    const progressPercent = computed(() => {
+      if (!totalCount.value) return 0
+      return Math.round((currentDisplayIndex.value / totalCount.value) * 100)
+    })
     const pageTitle = computed(() => `Manage Classifier - ${pendingCount.value}/${totalCount.value}`)
     const isEmpty = computed(() =>
       folderObjectList.value !== null && folderObjectList.value.folderList.length === 0
@@ -220,6 +229,9 @@ export default defineComponent({
       canRestoreCurrent,
       isProcessedNoUndo,
       handleUndoCurrent,
+      currentDisplayIndex,
+      totalCount,
+      progressPercent,
     };
   },
 });

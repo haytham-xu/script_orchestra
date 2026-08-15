@@ -112,11 +112,15 @@ export default defineComponent({
 
     function resolveTargetPath(folderPath: string): string {
       const target = state.targetPath.trim()
-      const sub = (folderPath || '').replace(/^\/+/, '')
+      // Sub is user-entered relative path; strip leading separators of either flavor.
+      const sub = (folderPath || '').replace(/^[\\/]+/, '')
       if (!target && !sub) return ''
       if (!target) return sub
       if (!sub) return target
-      return target.replace(/\/+$/, '') + '/' + sub
+      // Detect the separator style already used in target so preview matches
+      // the user's platform / typing. Fall back to '/' when target has no separator.
+      const sep = target.includes('\\') && !target.includes('/') ? '\\' : '/'
+      return target.replace(/[\\/]+$/, '') + sep + sub.replace(/\//g, sep)
     }
 
     onMounted(load)

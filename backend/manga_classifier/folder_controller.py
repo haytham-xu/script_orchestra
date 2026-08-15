@@ -52,13 +52,13 @@ class FolderResource(Resource):
         root_path = settings.get("rootPath", "")
         target_root = settings.get("targetPath", "")
         data = request.json
-        source_folder_path = os.path.join(root_path, data["sourceFolderPath"].lstrip("/"))
-        target_folder_path = os.path.join(target_root, data["targetFolderPath"].lstrip("/"))
+        source_folder_path = os.path.join(root_path, data["sourceFolderPath"].lstrip("/\\"))
+        target_folder_path = os.path.join(target_root, data["targetFolderPath"].lstrip("/\\"))
         if not os.path.exists(source_folder_path):
             return "source folder not exist.", 404
         if not os.path.exists(target_folder_path):
             os.makedirs(target_folder_path)
-        source_basename = os.path.basename(source_folder_path.rstrip("/"))
+        source_basename = os.path.basename(source_folder_path.rstrip("/\\"))
         final_path = os.path.join(target_folder_path, source_basename)
         shutil.move(source_folder_path, target_folder_path)
         _record_operation(source_folder_path, final_path)
@@ -75,7 +75,7 @@ class DeleteFolderResource(Resource):
         if not delete_root:
             return {"error": "deletePath is not configured"}, 400
         data = request.json or {}
-        source_name = data.get("sourceFolderPath", "").lstrip("/")
+        source_name = data.get("sourceFolderPath", "").lstrip("/\\")
         if not source_name:
             return {"error": "sourceFolderPath is required"}, 400
         source_folder_path = os.path.join(root_path, source_name)
@@ -83,7 +83,7 @@ class DeleteFolderResource(Resource):
             return {"error": "source folder not exist"}, 404
         if not os.path.exists(delete_root):
             os.makedirs(delete_root)
-        source_basename = os.path.basename(source_folder_path.rstrip("/"))
+        source_basename = os.path.basename(source_folder_path.rstrip("/\\"))
         final_path = os.path.join(delete_root, source_basename)
         shutil.move(source_folder_path, delete_root)
         _record_operation(source_folder_path, final_path)
@@ -100,7 +100,7 @@ class UndoResource(Resource):
         settings = settings_manager.load_settings()
         root_path = settings.get("rootPath", "")
         data = request.json or {}
-        source_name = (data.get("sourceFolderPath") or "").lstrip("/")
+        source_name = (data.get("sourceFolderPath") or "").lstrip("/\\")
         if not source_name:
             return {"error": "sourceFolderPath is required"}, 400
         source_original = os.path.join(root_path, source_name)
@@ -125,7 +125,7 @@ class UndoableResource(Resource):
     def get(self):
         """Return the list of source paths currently undoable in this session."""
         return {
-            "sources": [os.path.basename(e["source_original"].rstrip("/"))
+            "sources": [os.path.basename(e["source_original"].rstrip("/\\"))
                         for e in _operation_stack]
         }, 200
 
