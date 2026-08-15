@@ -1,6 +1,6 @@
 
 
-import {defineComponent, ref, onMounted, onUnmounted, computed, watch, reactive } from 'vue'
+import {defineComponent, ref, onMounted, onUnmounted, computed, watch, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {getButtonConfigJSON, getFolderList, getFileList, postMoveFolder, postDeleteFolder, postUndo} from "@/manga_classifier/service/MangaClassifierService"
 import type {ButtonConfigJSON, FolderObject, FolderObjectList, FileList} from '@/manga_classifier/service/Model'
@@ -32,10 +32,6 @@ export default defineComponent({
       if (!folderObjectList.value?.folderList.length) return 0
       return Math.min(currentIndex.value + 1, totalCount.value)
     })
-    const progressPercent = computed(() => {
-      if (!totalCount.value) return 0
-      return Math.round((currentDisplayIndex.value / totalCount.value) * 100)
-    })
     const pageTitle = computed(() => `Manage Classifier - ${pendingCount.value}/${totalCount.value}`)
     const isEmpty = computed(() =>
       folderObjectList.value !== null && folderObjectList.value.folderList.length === 0
@@ -65,6 +61,98 @@ export default defineComponent({
       document.title = newTitle
     }, { immediate: true })
 
+    const isLoadingFiles = ref(false)
+
+    // Debounced file loader — cancels any in-flight request when the folder
+    // changes again within the debounce window, and only actually calls
+    // getFileList after the user has settled on a folder for LOAD_DEBOUNCE_MS.
+    const LOAD_DEBOUNCE_MS = 500
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    let activeAbort: AbortController | null = null
+
+    function scheduleLoadFiles(folderName: string) {
+      // Cancel any pending debounce.
+      if (debounceTimer) {
+        clearTimeout(debounceTimer)
+        debounceTimer = null
+      }
+      // Abort any in-flight request from a previous folder.
+      if (activeAbort) {
+        activeAbort.abort()
+        activeAbort = null
+      }
+      // Clear the currently-displayed files immediately so the user doesn't
+      // see stale content while paging through.
+      currentFileList.value = null
+      if (!folderName || folderName === 'EOL') {
+        isLoadingFiles.value = false
+        return
+      }
+      isLoadingFiles.value = true
+      debounceTimer = setTimeout(async () => {
+        debounceTimer = null
+        const abort = new AbortController()
+        activeAbort = abort
+        try {
+          const result = await getFileList(folderName, abort.signal)
+          if (abort.signal.aborted) return
+          currentFileList.value = result
+        } catch (e: any) {
+          if (abort.signal.aborted || e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') return
+          console.error('Failed to load files:', e)
+        } finally {
+          if (activeAbort === abort) {
+            activeAbort = null
+            isLoadingFiles.value = false
+          }
+        }
+      }, LOAD_DEBOUNCE_MS)
+    }
+
+    function jumpToIndex(oneBasedIndex: number) {
+      if (folderObjectList.value === null) {
+        ElMessage.warning("folderObjectList is not ready, please wait.");
+        return;
+      }
+      const total = folderObjectList.value.folderList.length;
+      if (!total) return;
+      // Clamp to valid range.
+      const clamped = Math.max(1, Math.min(oneBasedIndex, total));
+      const zeroBased = clamped - 1;
+      if (zeroBased === currentIndex.value && currentFolderObject.value?.folderName !== 'EOL') return;
+      currentIndex.value = zeroBased;
+      currentFolderObject.value = folderObjectList.value.folderList[zeroBased];
+      currentFolderName.value = currentFolderObject.value.folderName;
+      scheduleLoadFiles(currentFolderName.value);
+      window.scrollTo(0, 0);
+    }
+
+    // Inline editing of the current index in the header.
+    const editingIndex = ref(false)
+    const indexInputValue = ref<number | string>('')
+    const indexInputRef = ref<HTMLInputElement | null>(null)
+
+    async function startIndexEdit() {
+      indexInputValue.value = currentDisplayIndex.value
+      editingIndex.value = true
+      await nextTick()
+      indexInputRef.value?.focus()
+      indexInputRef.value?.select()
+    }
+
+    function commitIndexEdit() {
+      if (!editingIndex.value) return
+      const raw = indexInputValue.value
+      const parsed = typeof raw === 'number' ? raw : parseInt(String(raw), 10)
+      editingIndex.value = false
+      if (!Number.isFinite(parsed)) return
+      jumpToIndex(parsed)
+    }
+
+    function cancelIndexEdit() {
+      editingIndex.value = false
+    }
+
     async function processRootFolder() {
       categoryButtonCardJSON.value = await getButtonConfigJSON();
       folderObjectList.value = await getFolderList();
@@ -77,8 +165,8 @@ export default defineComponent({
       }
       currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
       currentFolderName.value = currentFolderObject.value.folderName
-      currentFileList.value = await getFileList(currentFolderName.value);
       maxFolderindex = folderObjectList.value!.folderList.length - 1;
+      scheduleLoadFiles(currentFolderName.value)
     }
 
     async function nextFolder() {
@@ -90,12 +178,12 @@ export default defineComponent({
         currentIndex.value += 1;
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
         currentFolderName.value = currentFolderObject.value.folderName
-        currentFileList.value = await getFileList(currentFolderName.value);
+        scheduleLoadFiles(currentFolderName.value)
         window.scrollTo(0, 0);
       } else if(currentIndex.value == maxFolderindex) {
           currentIndex.value += 1;
           currentFolderName.value = "EOL";
-          currentFileList.value = null;
+          scheduleLoadFiles('EOL');
           ElMessage.info('This is the Lates Folder.');
       } else {
           ElMessage.info('This is the Lates Folder.');
@@ -111,12 +199,12 @@ export default defineComponent({
         currentIndex.value -= 1;
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
         currentFolderName.value = currentFolderObject.value.folderName
-        currentFileList.value = await getFileList(currentFolderName.value);
+        scheduleLoadFiles(currentFolderName.value)
         window.scrollTo(0, 0);
       } else if(currentIndex.value == 0) {
           currentIndex.value -= 1;
           currentFolderName.value = "EOL";
-          currentFileList.value = null;
+          scheduleLoadFiles('EOL');
           ElMessage.info('This is the First Folder.');
       } else {
           ElMessage.info('This is the First Folder.');
@@ -183,7 +271,10 @@ export default defineComponent({
         await postUndo(name);
         folderObj.status = FolderStatus.Pending;
         undoableNames.delete(name);
-        // Reload file list for this folder now that it's back in place.
+        // Reload file list immediately (user explicit action, no debounce).
+        // Cancel any pending debounce/inflight first.
+        if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+        if (activeAbort) { activeAbort.abort(); activeAbort = null; }
         currentFileList.value = await getFileList(name);
         ElMessage.success(`Restored: ${name}`);
       } catch (e: any) {
@@ -195,6 +286,12 @@ export default defineComponent({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
+      // Don't hijack keys while user is typing in an input (index editor,
+      // future search box, etc.).
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
       // ArrowUp ArrowDown ArrowLeft ArrowRight Delete
       switch (event.code) {
         case 'ArrowLeft':
@@ -217,7 +314,11 @@ export default defineComponent({
       window.addEventListener('keydown', handleKeyDown)
     })
 
-    onUnmounted(() => {window.removeEventListener('keydown', handleKeyDown) })
+    onUnmounted(() => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+      if (activeAbort) { activeAbort.abort(); activeAbort = null; }
+    })
 
     return {
       categoryButtonCardJSON,
@@ -231,7 +332,14 @@ export default defineComponent({
       handleUndoCurrent,
       currentDisplayIndex,
       totalCount,
-      progressPercent,
+      isLoadingFiles,
+      jumpToIndex,
+      editingIndex,
+      indexInputValue,
+      indexInputRef,
+      startIndexEdit,
+      commitIndexEdit,
+      cancelIndexEdit,
     };
   },
 });

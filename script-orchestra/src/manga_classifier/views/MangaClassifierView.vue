@@ -4,10 +4,27 @@
       <el-header>
         <span class="mc-title">{{ currentFolderName }}</span>
         <div v-if="!isEmpty" class="mc-progress">
-          <div class="mc-progress-label">{{ currentDisplayIndex }} / {{ totalCount }}</div>
-          <div class="mc-progress-bar">
-            <div class="mc-progress-fill" :style="{ width: progressPercent + '%' }"></div>
-          </div>
+          <input
+            v-if="editingIndex"
+            ref="indexInputRef"
+            v-model="indexInputValue"
+            type="number"
+            :min="1"
+            :max="totalCount"
+            class="mc-progress-input"
+            @keydown.enter="commitIndexEdit"
+            @keydown.esc="cancelIndexEdit"
+            @blur="commitIndexEdit"
+          />
+          <span
+            v-else
+            class="mc-progress-index"
+            title="Click to jump to a folder"
+            @click="startIndexEdit">
+            {{ currentDisplayIndex }}
+          </span>
+          <span class="mc-progress-sep">/</span>
+          <span class="mc-progress-total">{{ totalCount }}</span>
         </div>
         <el-button
           class="mc-settings-btn"
@@ -48,17 +65,23 @@
           <div class="mc-processed-title">{{ currentFolderName }} was moved</div>
           <div class="mc-processed-hint">Undo is no longer available for this folder.</div>
         </div>
+        <div v-else-if="isLoadingFiles && !currentFileList" class="mc-loading-state">
+          <div class="mc-loading-spinner"></div>
+          <div class="mc-loading-hint">Loading files…</div>
+        </div>
         <div v-else v-for="(file, index) in currentFileList?.files" :key="index" class="media-item">
           <img
             v-if="file.fileType === 'image'"
             :src="file.fileUrl"
             alt="image"
+            loading="lazy"
           />
           <video
             v-else-if="file.fileType === 'video'"
             :src="file.fileUrl"
             controls
-            autoplay>
+            autoplay
+            preload="none">
             <!-- muted> -->
           </video>
         </div>
@@ -113,27 +136,46 @@
   transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   font-weight: normal;
-  font-size: 12px;
+  font-size: 13px;
+  color: #86868b;
+  font-variant-numeric: tabular-nums;
+}
+.mc-progress-index {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #1d1d1f;
+  min-width: 24px;
+  text-align: right;
+  transition: background 0.15s;
+}
+.mc-progress-index:hover {
+  background: #f0f0f5;
+}
+.mc-progress-sep,
+.mc-progress-total {
   color: #86868b;
 }
-.mc-progress-label {
+.mc-progress-input {
+  width: 60px;
+  padding: 2px 6px;
+  border: 1px solid #0071e3;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #1d1d1f;
+  outline: none;
   font-variant-numeric: tabular-nums;
-  min-width: 60px;
+  text-align: right;
+  /* Suppress spinner arrows to keep it clean. */
+  -moz-appearance: textfield;
 }
-.mc-progress-bar {
-  width: 140px;
-  height: 4px;
-  background: #e5e5ea;
-  border-radius: 2px;
-  overflow: hidden;
-}
-.mc-progress-fill {
-  height: 100%;
-  background: #0071e3;
-  border-radius: 2px;
-  transition: width 0.2s ease;
+.mc-progress-input::-webkit-outer-spin-button,
+.mc-progress-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .mc-empty-state {
   padding: 80px 20px;
@@ -184,6 +226,28 @@
   font-size: 13px;
   color: #86868b;
   margin-bottom: 12px;
+}
+.mc-loading-state {
+  padding: 120px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.mc-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e5e5ea;
+  border-top-color: #0071e3;
+  border-radius: 50%;
+  animation: mc-spin 0.8s linear infinite;
+}
+.mc-loading-hint {
+  font-size: 12px;
+  color: #86868b;
+}
+@keyframes mc-spin {
+  to { transform: rotate(360deg); }
 }
 .el-main{
   margin: 0px;

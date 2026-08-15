@@ -14,8 +14,8 @@ export async function getFolderList():Promise<FolderObjectList> {
     return responseData
 }
 
-export async function getFileList(folderName:string):Promise<FileList> {
-    const responseData = await getRequest<FileList>(MANGA_CLASSIFIER_ENDPOINT_FOLDER + "/" + folderName)
+export async function getFileList(folderName:string, signal?: AbortSignal):Promise<FileList> {
+    const responseData = await getRequest<FileList>(MANGA_CLASSIFIER_ENDPOINT_FOLDER + "/" + folderName, {}, signal)
     return responseData
 }
 

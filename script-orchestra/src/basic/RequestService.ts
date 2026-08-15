@@ -4,8 +4,8 @@ import { ElMessage } from 'element-plus'
 
 import {BACKEND_BASE_URL} from '@/basic/Constants.ts'
 
-export async function getRequest<T>(uriPath: string, params = {}): Promise<T> {
-  const res = await axios.get(BACKEND_BASE_URL + uriPath, { params })
+export async function getRequest<T>(uriPath: string, params = {}, signal?: AbortSignal): Promise<T> {
+  const res = await axios.get(BACKEND_BASE_URL + uriPath, { params, signal })
   if (res.status !== 200) {
     ElMessage.error(`Request Failed: ${res.statusText}`)
     throw new Error(`Request Failed: ${res.statusText}`)
