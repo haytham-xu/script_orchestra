@@ -56,4 +56,7 @@ export interface MangaClassifierSettings {
   imageExts: string[]
   videoExts: string[]
   categoty: ButtonConfigJSON
+  imageWidthPx: number
+  scrollPageRatio: number
+  pinSidebars: boolean
 }

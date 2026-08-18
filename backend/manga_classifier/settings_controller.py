@@ -35,6 +35,23 @@ def _validate_and_normalize(patch: dict, current: dict) -> dict:
     if "categoty" in patch:
         merged["categoty"] = settings_manager.validate_button_config(patch["categoty"])
 
+    if "imageWidthPx" in patch:
+        try:
+            width = int(patch["imageWidthPx"])
+        except (TypeError, ValueError):
+            raise ValueError("imageWidthPx must be an integer")
+        merged["imageWidthPx"] = max(200, min(width, 2000))
+
+    if "scrollPageRatio" in patch:
+        try:
+            ratio = float(patch["scrollPageRatio"])
+        except (TypeError, ValueError):
+            raise ValueError("scrollPageRatio must be a number")
+        merged["scrollPageRatio"] = max(0.1, min(ratio, 1.0))
+
+    if "pinSidebars" in patch:
+        merged["pinSidebars"] = bool(patch["pinSidebars"])
+
     return merged
 
 

@@ -18,6 +18,10 @@ export default defineComponent({
       type: String as PropType<string>,
       required: true,
     },
+    pinned: {
+      type: Boolean as PropType<boolean>,
+      default: false,
+    },
   },
   emits: ['folderChange'],
   setup(props, { emit }) {
@@ -26,6 +30,9 @@ export default defineComponent({
       emit('folderChange', props.currentFolderPath, btn.folderPath)
     };
 
-    return { expanded, handleButtonClick}
+    const onEnter = () => { if (!props.pinned) expanded.value = true }
+    const onLeave = () => { if (!props.pinned) expanded.value = false }
+
+    return { expanded, handleButtonClick, onEnter, onLeave }
   }
 });

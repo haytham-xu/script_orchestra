@@ -23,6 +23,9 @@ const DEFAULT_SETTINGS: MangaClassifierSettings = {
     left:  { name: 'Left',  mainButtons: [], subButtons: [] },
     right: { name: 'Right', mainButtons: [], subButtons: [] },
   },
+  imageWidthPx: 520,
+  scrollPageRatio: 0.85,
+  pinSidebars: false,
 }
 
 function cloneSettings(s: MangaClassifierSettings): MangaClassifierSettings {
@@ -43,6 +46,12 @@ export default defineComponent({
     const newVideoExt = ref('')
 
     const isDirty = computed(() => JSON.stringify(state) !== originalJson.value)
+
+    // Slider works in whole percent; state stores a 0.1–1.0 ratio.
+    const scrollPagePercent = computed<number>({
+      get: () => Math.round((state.scrollPageRatio ?? 0.85) * 100),
+      set: (v: number) => { state.scrollPageRatio = Math.max(0.1, Math.min(v / 100, 1)) },
+    })
 
     async function load() {
       loading.value = true
@@ -130,6 +139,7 @@ export default defineComponent({
       loading,
       saving,
       isDirty,
+      scrollPagePercent,
       newImageExt,
       newVideoExt,
       load,

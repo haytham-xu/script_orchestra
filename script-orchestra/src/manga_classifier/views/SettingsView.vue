@@ -94,6 +94,40 @@
         </div>
       </section>
 
+      <!-- Reading -->
+      <section class="mc-card">
+        <div class="mc-card-header">
+          <h2>Reading</h2>
+          <p class="mc-hint">Fixed image column width, keyboard page-scroll amount, and sidebar visibility.</p>
+        </div>
+        <div class="mc-card-body">
+          <div class="mc-row">
+            <label class="mc-label">Image width (px)</label>
+            <el-input-number
+              v-model="state.imageWidthPx"
+              :min="200"
+              :max="2000"
+              :step="20"
+              controls-position="right" />
+          </div>
+          <div class="mc-row">
+            <label class="mc-label">Page scroll (↑/↓)</label>
+            <div class="mc-slider-row">
+              <el-slider
+                v-model="scrollPagePercent"
+                :min="10"
+                :max="100"
+                :step="5"
+                show-input />
+            </div>
+          </div>
+          <div class="mc-row">
+            <label class="mc-label">Pin sidebars</label>
+            <el-switch v-model="state.pinSidebars" />
+          </div>
+        </div>
+      </section>
+
       <!-- Category buttons -->
       <section class="mc-card">
         <div class="mc-card-header">
@@ -323,6 +357,10 @@
 
 .mc-tag-add {
   width: 90px;
+}
+
+.mc-slider-row {
+  padding-right: 8px;
 }
 
 .mc-two-col {

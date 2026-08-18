@@ -2,7 +2,7 @@
   <div>
     <el-container>
       <el-header>
-        <span class="mc-title">{{ currentFolderName }}</span>
+        <span class="mc-title" :style="{ fontSize: titleFontSize }">{{ currentFolderName }}</span>
         <div v-if="!isEmpty" class="mc-progress">
           <input
             v-if="editingIndex"
@@ -26,13 +26,24 @@
           <span class="mc-progress-sep">/</span>
           <span class="mc-progress-total">{{ totalCount }}</span>
         </div>
-        <el-button
-          class="mc-settings-btn"
-          circle
-          text
-          @click="goToSettings">
-          <el-icon><Setting /></el-icon>
-        </el-button>
+        <div class="mc-header-actions">
+          <el-button
+            class="mc-action-btn"
+            circle
+            text
+            :disabled="isEmpty || currentFolderName === 'EOL'"
+            title="Open folder in file manager"
+            @click="openCurrentFolder">
+            <el-icon><FolderOpened /></el-icon>
+          </el-button>
+          <el-button
+            class="mc-action-btn"
+            circle
+            text
+            @click="goToSettings">
+            <el-icon><Setting /></el-icon>
+          </el-button>
+        </div>
       </el-header>
       <el-main>
         <div v-if="isEmpty" class="mc-empty-state">
@@ -69,21 +80,23 @@
           <div class="mc-loading-spinner"></div>
           <div class="mc-loading-hint">Loading files…</div>
         </div>
-        <div v-else v-for="(file, index) in currentFileList?.files" :key="index" class="media-item">
-          <img
-            v-if="file.fileType === 'image'"
-            :src="file.fileUrl"
-            alt="image"
-            loading="lazy"
-          />
-          <video
-            v-else-if="file.fileType === 'video'"
-            :src="file.fileUrl"
-            controls
-            autoplay
-            preload="none">
-            <!-- muted> -->
-          </video>
+        <div v-else class="mc-reader">
+          <div v-for="(file, index) in currentFileList?.files" :key="index" class="media-item">
+            <img
+              v-if="file.fileType === 'image'"
+              :src="file.fileUrl"
+              alt="image"
+              loading="lazy"
+            />
+            <video
+              v-else-if="file.fileType === 'video'"
+              :src="file.fileUrl"
+              controls
+              autoplay
+              preload="none">
+              <!-- muted> -->
+            </video>
+          </div>
         </div>
       </el-main>
     </el-container>
@@ -92,6 +105,7 @@
         v-if="categoryButtonCardJSON && categoryButtonCardJSON.left"
         :currentFolderPath="currentFolderName"
         side="left"
+        :pinned="pinSidebars"
         :buttonCard="categoryButtonCardJSON.left"
         @folderChange="moveFolder"
       />
@@ -99,6 +113,7 @@
         v-if="categoryButtonCardJSON && categoryButtonCardJSON.right"
         :currentFolderPath="currentFolderName"
         side="right"
+        :pinned="pinSidebars"
         :buttonCard="categoryButtonCardJSON.right"
         @folderChange="moveFolder"
       />
@@ -115,19 +130,35 @@
   height: 40px;
   font-size: 20px;
   font-weight: bold;
-  /* background-color: aqua; */
   border: 1px solid #eee;
-  position: relative;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 .mc-title {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 50%;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: font-size 0.15s;
 }
-.mc-settings-btn {
+.mc-header-actions {
   position: absolute;
   right: 12px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.mc-action-btn {
+  margin: 0;
 }
 .mc-progress {
   position: absolute;
@@ -253,19 +284,22 @@
   margin: 0px;
   padding: 0px;
 }
+.mc-reader {
+  width: var(--mc-img-width, 520px);
+  max-width: 100%;
+  margin: 0 auto;
+}
 img {
   display: block;
-  max-width: 100%;
+  width: 100%;
   height: auto;
   margin: 0 auto;
-  width: auto;
 }
 video {
   display: block;
-  max-width: 100%;
+  width: 100%;
   height: auto;
   margin: 0 auto;
-  width: auto;
 }
 </style>
 

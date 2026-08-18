@@ -1,12 +1,12 @@
 <template>
   <div
-    :class="['side-panel', side]"
-    @mouseenter="expanded = true"
-    @mouseleave="expanded = false"
+    :class="['side-panel', side, { pinned }]"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
   >
     <!-- {{ buttonCard.name }} -->
     <transition :name="side === 'left' ? 'side-slide-left' : 'side-slide-right'" appear>
-      <div v-if="expanded">
+      <div v-if="expanded || pinned">
         <div class="main-buttons">
           <div v-for="btn in buttonCard.mainButtons" :key="btn.label" class="main-btn" @click="handleButtonClick(btn)">
             {{ btn.label }}
@@ -99,6 +99,11 @@
 }
 
 .side-panel:hover {
+  width: auto;
+}
+
+/* When pinned, the panel is always expanded to fit its buttons. */
+.side-panel.pinned {
   width: auto;
 }
 

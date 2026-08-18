@@ -130,6 +130,41 @@ class UndoableResource(Resource):
         }, 200
 
 
+@ns.route("/manga-classifier/folder/open")
+class OpenFolderResource(Resource):
+    def post(self):
+        """Open a folder in the system file manager (cross-platform)."""
+        import subprocess
+        import platform
+
+        settings = settings_manager.load_settings()
+        root_path = settings.get("rootPath", "")
+        data = request.json or {}
+        folder_name = (data.get("folderName") or "").lstrip("/\\")
+        if not folder_name:
+            return {"error": "folderName is required"}, 400
+        folder_path = os.path.join(root_path, folder_name)
+        if not os.path.exists(folder_path):
+            return {"error": f"Folder path does not exist: {folder_path}"}, 404
+
+        try:
+            system = platform.system()
+            if system == "Darwin":
+                subprocess.Popen(["open", folder_path])
+            elif system == "Windows":
+                try:
+                    os.startfile(folder_path)  # type: ignore[attr-defined]
+                except AttributeError:
+                    subprocess.Popen(["explorer", os.path.normpath(folder_path)])
+            elif system == "Linux":
+                subprocess.Popen(["xdg-open", folder_path])
+            else:
+                return {"error": f"Unsupported operating system: {system}"}, 400
+            return {"message": "Folder opened successfully"}, 200
+        except Exception as e:
+            return {"error": f"Failed to open folder: {e}"}, 500
+
+
 @ns.route("/manga-classifier/folder/<folder_name>")
 class FilesResource(Resource):
     def get(self, folder_name):

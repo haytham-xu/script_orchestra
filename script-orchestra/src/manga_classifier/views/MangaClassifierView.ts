@@ -2,16 +2,17 @@
 
 import {defineComponent, ref, onMounted, onUnmounted, computed, watch, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import {getButtonConfigJSON, getFolderList, getFileList, postMoveFolder, postDeleteFolder, postUndo} from "@/manga_classifier/service/MangaClassifierService"
+import {getButtonConfigJSON, getFolderList, getFileList, postMoveFolder, postDeleteFolder, postUndo, postOpenFolder} from "@/manga_classifier/service/MangaClassifierService"
 import type {ButtonConfigJSON, FolderObject, FolderObjectList, FileList} from '@/manga_classifier/service/Model'
 import {FolderStatus} from '@/manga_classifier/service/Model'
+import {getSettings} from '@/manga_classifier/service/SettingsService'
 import CategoryButtonCardComponment from "@/manga_classifier/components/CategoryButtonCardComponment.vue"
 import { ElMessage } from 'element-plus'
-import { Setting, RefreshLeft } from '@element-plus/icons-vue'
+import { Setting, RefreshLeft, FolderOpened } from '@element-plus/icons-vue'
 
 export default defineComponent({
   name: 'ParentView',
-  components: { CategoryButtonCardComponment, Setting, RefreshLeft },
+  components: { CategoryButtonCardComponment, Setting, RefreshLeft, FolderOpened },
   setup() {
     const router = useRouter()
     const currentFolderName = ref<string>('')
@@ -21,6 +22,20 @@ export default defineComponent({
     const currentFolderObject = ref<FolderObject | null>(null);
     const currentIndex = ref<number>(0);
     let maxFolderindex = 0;
+
+    // Reading UI preferences loaded from settings (with sensible defaults).
+    const imageWidthPx = ref<number>(520)
+    const scrollPageRatio = ref<number>(0.85)
+    const pinSidebars = ref<boolean>(false)
+
+    // Dynamically shrink the header title font for long folder names so it
+    // doesn't crowd the progress indicator / action buttons.
+    const titleFontSize = computed(() => {
+      const len = currentFolderName.value?.length ?? 0
+      if (len <= 20) return '20px'
+      if (len <= 35) return '16px'
+      return '13px'
+    })
 
     const pendingCount = computed(() => {
       if (!folderObjectList.value) return 0
@@ -151,6 +166,37 @@ export default defineComponent({
 
     function cancelIndexEdit() {
       editingIndex.value = false
+    }
+
+    async function loadReadingSettings() {
+      try {
+        const s = await getSettings()
+        if (typeof s.imageWidthPx === 'number') imageWidthPx.value = s.imageWidthPx
+        if (typeof s.scrollPageRatio === 'number') scrollPageRatio.value = s.scrollPageRatio
+        if (typeof s.pinSidebars === 'boolean') pinSidebars.value = s.pinSidebars
+      } catch (e) {
+        console.error('Failed to load reading settings:', e)
+      }
+      // Inject the fixed reader width as a CSS variable consumed by the view.
+      document.documentElement.style.setProperty('--mc-img-width', `${imageWidthPx.value}px`)
+    }
+
+    // ArrowUp / ArrowDown scroll the page by a fraction of the viewport so the
+    // user keeps their reading position (a small overlap, like PageDown).
+    function scrollByPage(dir: number) {
+      const amount = dir * window.innerHeight * scrollPageRatio.value
+      window.scrollBy({ top: amount, behavior: 'smooth' })
+    }
+
+    async function openCurrentFolder() {
+      const name = currentFolderName.value
+      if (!name || name === 'EOL') return
+      try {
+        await postOpenFolder(name)
+      } catch (e: any) {
+        const msg = e?.response?.data?.error || e.message || 'Failed to open folder'
+        ElMessage.error(msg)
+      }
     }
 
     async function processRootFolder() {
@@ -300,6 +346,14 @@ export default defineComponent({
         case 'ArrowRight':
           nextFolder()
           break
+        case 'ArrowDown':
+          scrollByPage(1)
+          event.preventDefault()
+          break
+        case 'ArrowUp':
+          scrollByPage(-1)
+          event.preventDefault()
+          break
         case 'Space':
           nextFolder()
           break
@@ -310,6 +364,7 @@ export default defineComponent({
     }
 
     onMounted(() => {
+      loadReadingSettings()
       processRootFolder()
       window.addEventListener('keydown', handleKeyDown)
     })
@@ -340,6 +395,9 @@ export default defineComponent({
       startIndexEdit,
       commitIndexEdit,
       cancelIndexEdit,
+      titleFontSize,
+      pinSidebars,
+      openCurrentFolder,
     };
   },
 });

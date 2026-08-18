@@ -44,3 +44,9 @@ export async function getUndoableSources(): Promise<string[]> {
     const responseData = await getRequest<{ sources: string[] }>(MANGA_CLASSIFIER_ENDPOINT_FOLDER + "/undoable")
     return responseData.sources
 }
+
+export async function postOpenFolder(folderName: string) {
+    const payload = { "folderName": folderName }
+    const responseData = await postRequest(MANGA_CLASSIFIER_ENDPOINT_FOLDER + "/open", {}, payload)
+    return responseData
+}
