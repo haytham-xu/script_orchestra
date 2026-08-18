@@ -1,55 +1,62 @@
-
 ## Backend
 
-## Intelligent Bank Receipt Claiming and AR Clearing
-#### Python version management
-```
+Flask backend for Script Orchestra. Runs on `http://localhost:5001`.
+
+### Python version management (optional, via pyenv)
+
+```bash
 brew install pyenv
 
 pyenv install --list | grep 3.13
 pyenv install 3.13.5
-
 pyenv global 3.13.5
 
 cd /path/to/project
 pyenv local 3.13.5
 ```
 
-#### Venv - Unix
+### Virtual environment
+
+```bash
+# create
 python3 -m venv venv
+
+# activate — macOS / Linux
 source venv/bin/activate
-deactivate
-
-#### Venv - Win
-python3 -m venv venv
+# activate — Windows (PowerShell)
 .\venv\Scripts\Activate.ps1
+
+# deactivate (any OS)
 deactivate
+```
 
-#### Requirment - Unix/Win
-pip3 install -r requirements.txt
-pip3 freeze > requirements.txt
+### Dependencies
 
+```bash
+# install everything (run inside the activated venv)
+pip install -r requirements.txt
 
-#### code checker
+# regenerate the lock file after adding a dependency
+pip freeze > requirements.txt
+```
+
+### Run
+
+```bash
+python app.py
+```
+
+### Code checks
+
+```bash
 python -m py_compile your_file.py
 python -m compileall .
-
-
-#### for local test - Mysql
 ```
-docker run --name my-mysql \
-  -e MYSQL_ROOT_PASSWORD=secret \
-  -e MYSQL_DATABASE=mydb \
-  -e MYSQL_USER=myuser \
-  -e MYSQL_PASSWORD=mypassword \
-  -p 3306:3306 \
-  -d mysql:latest
-```
-
-
 
 ## Lesson Learn
-#### send_from_directory vs HTTP 
+
+#### send_from_directory vs HTTP
+
 | 方式                    | 访问方式                           | 安全控制            | 性能           | 用途           |
 | --------------------- | ------------------------------ | --------------- | ------------ | ------------ |
 | `send_from_directory` | Flask route `/files/<filename>`   | 可加认证、权限控制       | 受 Flask 进程限制 | 内部文件下载、受保护资源 |
