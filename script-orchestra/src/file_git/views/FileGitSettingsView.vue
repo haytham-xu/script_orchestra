@@ -1,238 +1,116 @@
 <template>
-  <div class="settings-container">
-    <!-- Header -->
-    <el-card class="header-card">
-      <div class="header-content">
-        <div class="title-section">
-          <h2>Global Settings</h2>
-          <p class="subtitle">Configure Baidu Cloud credentials and default options</p>
-        </div>
+  <div class="fg-settings" v-loading="isLoading">
+    <header class="fg-topbar">
+      <div class="fg-topbar-left">
+        <el-button link @click="goBack">
+          <el-icon><ArrowLeft /></el-icon>
+          <span>Repositories</span>
+        </el-button>
+        <h1>Global Settings</h1>
       </div>
-    </el-card>
+    </header>
 
-    <!-- Settings Content -->
-    <el-card v-loading="isLoading" class="settings-card">
-      <el-form :model="settingsForm" label-width="200px" label-position="left">
-        <!-- Mock Mode -->
-        <el-form-item label="Use Mock Baidu Cloud">
-          <el-switch
-            v-model="settingsForm.use_mock_baidu"
-            active-text="Enabled (for testing)"
-            inactive-text="Disabled (use real API)"
-          />
-          <p class="form-description">
-            Enable this to use mock Baidu Cloud service for local testing without real API calls
-          </p>
-        </el-form-item>
-
-        <el-divider />
-
-        <!-- Default Password -->
-        <el-form-item label="Default Encryption Password">
-          <el-input
-            v-model="settingsForm.default_password"
-            type="password"
-            placeholder="Enter default password for encryption"
-            show-password
-            clearable
-          />
-          <p class="form-description">
-            This password will be used for encrypting files in ENCRYPTED mode repositories
-          </p>
-        </el-form-item>
-
-        <el-divider />
-
-        <!-- Baidu Cloud Credentials -->
-        <h3 class="section-title">Baidu Cloud Credentials</h3>
-        <p class="section-description">
-          Configure your Baidu Pan API credentials. These are shared across all repositories.
+    <main class="fg-content">
+      <section class="fg-card">
+        <h2>Baidu Cloud Credentials</h2>
+        <p class="fg-hint">
+          Placeholder for a future BaiduStorage backend. The current build
+          uses a local MockCloudStorage (development). Repo-level password
+          &amp; remote_path live in the repository detail page.
         </p>
-
-        <el-form-item label="App ID">
-          <el-input
-            v-model="settingsForm.baidu_cloud.app_id"
-            placeholder="Enter your Baidu Cloud App ID"
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="Secret Key">
-          <el-input
-            v-model="settingsForm.baidu_cloud.secret_key"
-            type="password"
-            placeholder="Enter your Secret Key"
-            show-password
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="App Key">
-          <el-input
-            v-model="settingsForm.baidu_cloud.app_key"
-            placeholder="Enter your App Key"
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="Sign Code">
-          <el-input
-            v-model="settingsForm.baidu_cloud.sign_code"
-            placeholder="Enter your Sign Code"
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="Expires In">
-          <el-input
-            v-model="settingsForm.baidu_cloud.expires_in"
-            placeholder="Token expiration time"
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="Refresh Token">
-          <el-input
-            v-model="settingsForm.baidu_cloud.refresh_token"
-            type="password"
-            placeholder="Enter your Refresh Token"
-            show-password
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item label="Access Token">
-          <el-input
-            v-model="settingsForm.baidu_cloud.access_token"
-            type="password"
-            placeholder="Enter your Access Token"
-            show-password
-            clearable
-          />
-        </el-form-item>
-
-        <!-- Action Buttons -->
-        <el-form-item>
-          <div class="action-buttons">
-            <el-button type="primary" @click="saveSettings" :loading="isSaving" size="large">
-              Save Settings
-            </el-button>
-            <el-button @click="loadSettings" size="large">
-              Reset
-            </el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-    </el-card>
+        <el-form label-position="top" v-if="settings.baidu_cloud">
+          <el-form-item label="App ID">
+            <el-input v-model="settings.baidu_cloud.app_id" spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="App Key">
+            <el-input v-model="settings.baidu_cloud.app_key" spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="Secret Key">
+            <el-input v-model="settings.baidu_cloud.secret_key" type="password" show-password spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="Sign Code">
+            <el-input v-model="settings.baidu_cloud.sign_code" type="password" show-password spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="Access Token">
+            <el-input v-model="settings.baidu_cloud.access_token" type="password" show-password spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="Refresh Token">
+            <el-input v-model="settings.baidu_cloud.refresh_token" type="password" show-password spellcheck="false" />
+          </el-form-item>
+          <el-form-item label="Expires In">
+            <el-input v-model="settings.baidu_cloud.expires_in" spellcheck="false" />
+          </el-form-item>
+        </el-form>
+        <div class="fg-actions">
+          <el-button type="primary" :loading="isSaving" @click="save">Save</el-button>
+          <el-button @click="load">Discard</el-button>
+        </div>
+      </section>
+    </main>
   </div>
 </template>
 
-<script setup lang="ts">
-import { useFileGitSettings } from './FileGitSettingsView'
+<script lang="ts" setup>
+import { useFileGitSettingsView } from './FileGitSettingsView'
+import { ArrowLeft } from '@element-plus/icons-vue'
 
-const {
-  settingsForm,
-  isLoading,
-  isSaving,
-  loadSettings,
-  saveSettings
-} = useFileGitSettings()
+const { settings, isLoading, isSaving, load, save, goBack } = useFileGitSettingsView()
 </script>
 
 <style scoped>
-.settings-container {
-  padding: 20px;
-  max-width: 100vw;
-  overflow-x: hidden;
+.fg-settings {
   min-height: 100vh;
   background: #f5f5f7;
-  box-sizing: border-box;
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+.fg-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(245, 245, 247, 0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 12px 24px;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 16px;
 }
-
-.header-card {
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  flex-shrink: 0;
-}
-
-.header-content {
+.fg-topbar-left {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
+  gap: 16px;
 }
-
-.title-section h2 {
+.fg-topbar-left h1 {
+  font-size: 17px;
   margin: 0;
-  font-size: 28px;
   font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.5px;
 }
-
-.subtitle {
-  margin: 8px 0 0 0;
-  color: #86868b;
-  font-size: 15px;
-  font-weight: 400;
+.fg-content {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px;
 }
-
-.settings-card {
-  flex: 1;
+.fg-card {
+  background: #ffffff;
   border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  padding: 16px 20px;
 }
-
-.form-description {
-  margin: 4px 0 0 0;
-  font-size: 13px;
-  color: #86868b;
-  line-height: 1.4;
-}
-
-.el-divider {
-  margin: 24px 0;
-}
-
-.section-title {
-  margin: 0 0 8px 0;
-  font-size: 19px;
+.fg-card h2 {
+  font-size: 15px;
   font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.3px;
+  margin: 0 0 4px;
 }
-
-.section-description {
-  margin: 0 0 24px 0;
-  font-size: 14px;
+.fg-hint {
+  font-size: 12px;
   color: #86868b;
-  line-height: 1.5;
+  margin: 0 0 12px;
 }
-
-.action-buttons {
+.fg-actions {
   display: flex;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.el-form-item {
-  margin-bottom: 24px;
-}
-
-.el-form-item :deep(.el-form-item__label) {
-  font-weight: 500;
-  color: #1d1d1f;
-}
-
-.el-input {
-  max-width: 500px;
-}
-
-.el-switch {
-  --el-switch-on-color: #34c759;
+  gap: 8px;
+  margin-top: 8px;
 }
 </style>

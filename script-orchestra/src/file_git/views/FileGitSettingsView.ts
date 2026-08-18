@@ -1,87 +1,72 @@
 /**
- * File-Git Settings View Logic
+ * File-Git global settings — currently a placeholder for future
+ * Baidu Cloud credentials. Repo-level credentials (mode, password,
+ * remote_path) live in the repo detail page instead.
  */
-import { ref, reactive, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { FileGitService, type Settings } from '../service/FileGitService'
+import { FileGitService, type GlobalSettings } from '../service/FileGitService'
 
-export function useFileGitSettings() {
+export function useFileGitSettingsView() {
+  const router = useRouter()
+  const settings = ref<GlobalSettings>({
+    baidu_cloud: {
+      app_id: '', secret_key: '', app_key: '',
+      sign_code: '', expires_in: '',
+      refresh_token: '', access_token: '',
+    },
+  })
   const isLoading = ref(false)
   const isSaving = ref(false)
 
-  const settingsForm = reactive<Settings>({
-    baidu_cloud: {
-      app_id: '',
-      secret_key: '',
-      app_key: '',
-      sign_code: '',
-      expires_in: '',
-      refresh_token: '',
-      access_token: ''
-    },
-    use_mock_baidu: true,
-    default_password: ''
-  })
-
-  /**
-   * Load settings from backend
-   */
-  async function loadSettings() {
-    console.log('[FileGit] Loading settings...')
+  async function load() {
     isLoading.value = true
     try {
-      const response = await FileGitService.getSettings()
-      console.log('[FileGit] Settings loaded:', response)
-
-      if (response.success && response.settings) {
-        // Update form with loaded settings
-        Object.assign(settingsForm, response.settings)
-        ElMessage.success('Settings loaded successfully')
-      } else {
-        ElMessage.error(response.error || 'Failed to load settings')
+      const res = await FileGitService.getSettings()
+      if (res.success && res.settings) {
+        settings.value = {
+          ...settings.value,
+          ...res.settings,
+          baidu_cloud: {
+            ...(settings.value.baidu_cloud || {}),
+            ...(res.settings.baidu_cloud || {}),
+          },
+        }
+      } else if (res.error) {
+        ElMessage.error(res.error)
       }
-    } catch (error: any) {
-      console.error('[FileGit] Load settings failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to load settings')
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load settings')
     } finally {
       isLoading.value = false
     }
   }
 
-  /**
-   * Save settings to backend
-   */
-  async function saveSettings() {
-    console.log('[FileGit] Saving settings...', settingsForm)
+  async function save() {
     isSaving.value = true
     try {
-      const response = await FileGitService.updateSettings(settingsForm)
-      console.log('[FileGit] Settings saved:', response)
-
-      if (response.success) {
-        ElMessage.success(response.message || 'Settings saved successfully')
-        // Reload to get updated settings
-        await loadSettings()
+      const res = await FileGitService.updateSettings({
+        baidu_cloud: settings.value.baidu_cloud,
+      })
+      if (res.success) {
+        ElMessage.success(res.message || 'Settings saved')
+        await load()
       } else {
-        ElMessage.error(response.error || 'Failed to save settings')
+        ElMessage.error(res.error || 'Failed to save settings')
       }
-    } catch (error: any) {
-      console.error('[FileGit] Save settings failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to save settings')
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to save settings')
     } finally {
       isSaving.value = false
     }
   }
 
-  onMounted(() => {
-    loadSettings()
-  })
-
-  return {
-    settingsForm,
-    isLoading,
-    isSaving,
-    loadSettings,
-    saveSettings
+  function goBack() {
+    router.push('/file-git')
   }
+
+  onMounted(load)
+
+  return { settings, isLoading, isSaving, load, save, goBack }
 }

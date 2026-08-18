@@ -1,580 +1,266 @@
 <template>
-  <div class="file-git-repos-container">
-    <!-- Header -->
-    <el-card class="header-card">
-      <div class="header-content">
-        <div class="title-section">
-          <h2>File-Git Repositories</h2>
-          <p class="subtitle">Encrypted cloud backup with git-style operations</p>
-        </div>
-        <div class="header-actions">
-          <el-button :icon="Setting" @click="goToSettings">
-            Settings
-          </el-button>
-          <el-button @click="openImportDialog" :icon="FolderOpened">
-            Import Existing
-          </el-button>
-          <el-button type="primary" @click="openAddDialog" :icon="Plus">
-            Add Repository
-          </el-button>
-        </div>
+  <div class="fg-repos">
+    <header class="fg-topbar">
+      <div class="fg-topbar-left">
+        <h1>File-Git</h1>
+        <p class="fg-sub">Repositories for git-style cloud backup</p>
       </div>
-    </el-card>
+      <div class="fg-topbar-right">
+        <el-button :icon="Setting" @click="goToSettings">Settings</el-button>
+        <el-button :icon="FolderOpened" @click="openImportDialog">Import</el-button>
+        <el-button :icon="Plus" type="primary" @click="openAddDialog">Add Repository</el-button>
+      </div>
+    </header>
 
-    <!-- Repository List -->
-    <el-card v-loading="isLoading" class="repos-list-card">
-      <div v-if="repos.length === 0" class="empty-state">
+    <main class="fg-content" v-loading="isLoading">
+      <div v-if="!hasRepos && !isLoading" class="fg-empty">
         <el-empty description="No repositories yet">
           <el-button type="primary" @click="openAddDialog">Add Your First Repository</el-button>
         </el-empty>
       </div>
 
-      <div v-else class="repos-grid">
+      <div v-else class="fg-grid">
         <el-card
           v-for="repo in repos"
           :key="repo.id"
-          class="repo-card"
+          class="fg-repo-card"
           shadow="hover"
-          @click="goToRepo(repo.id)"
-        >
-          <div class="repo-header">
-            <div class="repo-title">
-              <el-icon class="repo-icon"><FolderOpened /></el-icon>
-              <span class="repo-name">{{ repo.name }}</span>
+          @click="goToRepo(repo.id)">
+          <div class="fg-repo-head">
+            <div class="fg-repo-name">
+              <el-icon><FolderOpened /></el-icon>
+              <span>{{ repo.name }}</span>
             </div>
-            <div class="repo-actions" @click.stop>
-              <el-button
-                type="primary"
-                size="small"
-                :icon="FolderOpened"
-                @click="openFolder(repo.id)"
-                circle
-                title="Open Folder"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                :icon="Delete"
-                @click="openDeleteDialog(repo)"
-                circle
-                title="Delete Repository"
-              />
+            <div class="fg-repo-actions" @click.stop>
+              <el-button :icon="FolderOpened" circle size="small"
+                         @click="openFolder(repo.id)" title="Open folder" />
+              <el-button :icon="Delete" circle size="small" type="danger"
+                         @click="openDeleteDialog(repo)" title="Delete" />
             </div>
           </div>
 
-          <div class="repo-info">
-            <div class="info-row">
-              <span class="info-label">Path:</span>
-              <span class="info-value">{{ repo.local_path }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Mode:</span>
+          <dl class="fg-repo-meta">
+            <dt>Path</dt>
+            <dd class="mono">{{ repo.local_path }}</dd>
+
+            <dt>Mode</dt>
+            <dd>
               <el-tag :type="repo.mode === 'ENCRYPTED' ? 'success' : 'info'" size="small">
-                {{ repo.mode }}
+                {{ repo.mode || 'unknown' }}
               </el-tag>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Status:</span>
+            </dd>
+
+            <dt>Status</dt>
+            <dd>
               <el-tag
-                :type="
-                  repo.status === 'ready'
-                    ? 'success'
-                    : repo.status === 'syncing'
-                    ? 'warning'
-                    : 'danger'
-                "
-                size="small"
-              >
-                {{
-                  repo.status === 'ready'
-                    ? 'Ready'
-                    : repo.status === 'syncing'
-                    ? 'Syncing'
-                    : 'Error'
-                }}
+                :type="statusColor(repo.status)"
+                size="small">
+                {{ repo.status || 'unknown' }}
               </el-tag>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Updated:</span>
-              <span class="info-value">{{ new Date(repo.last_updated).toLocaleString() }}</span>
-            </div>
-          </div>
+            </dd>
+
+            <dt>Updated</dt>
+            <dd class="mono">{{ formatTime(repo.last_updated) }}</dd>
+          </dl>
         </el-card>
       </div>
-    </el-card>
+    </main>
 
-    <!-- Add Repository Dialog -->
-    <el-dialog
-      v-model="showAddDialog"
-      title="Add New Repository"
-      width="520px"
-      :close-on-click-modal="false"
-      class="apple-dialog"
-    >
-      <div class="dialog-content">
-        <div class="form-group">
-          <label class="form-label">Folder Path</label>
-          <el-input
-            v-model="newRepoPath"
-            placeholder="/absolute/path/to/folder"
-            size="large"
-            clearable
-          />
-          <p class="form-description">Enter the absolute path to the folder you want to backup</p>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Mode</label>
-          <el-radio-group v-model="newRepoMode" size="large" class="mode-radio-group">
-            <el-radio-button value="ENCRYPTED">Encrypted (Recommended)</el-radio-button>
-            <el-radio-button value="ORIGINAL">Original</el-radio-button>
+    <!-- Add dialog -->
+    <el-dialog v-model="showAddDialog" title="Add Repository" width="480">
+      <el-form label-position="top">
+        <el-form-item label="Local path (absolute)">
+          <el-input v-model="newRepoPath" placeholder="/absolute/path/to/folder" />
+        </el-form-item>
+        <el-form-item label="Mode (cannot be changed later)">
+          <el-radio-group v-model="newRepoMode">
+            <el-radio-button label="ORIGINAL">ORIGINAL (plaintext)</el-radio-button>
+            <el-radio-button label="ENCRYPTED">ENCRYPTED (AES-256-GCM)</el-radio-button>
           </el-radio-group>
-          <p class="form-description warning">
-            ⚠️ Mode cannot be changed after creation
-          </p>
-        </div>
-      </div>
-
+        </el-form-item>
+        <p class="fg-hint">
+          Password and remote path are configured after creation in the
+          repo detail page.
+        </p>
+      </el-form>
       <template #footer>
-        <div class="dialog-footer">
-          <el-button size="large" @click="showAddDialog = false">Cancel</el-button>
-          <el-button size="large" type="primary" @click="addRepo">Add Repository</el-button>
-        </div>
+        <el-button @click="showAddDialog = false">Cancel</el-button>
+        <el-button type="primary" @click="addRepo">Create</el-button>
       </template>
     </el-dialog>
 
-    <!-- Import Existing Repository Dialog -->
-    <el-dialog
-      v-model="showImportDialog"
-      title="Import Existing Repository"
-      width="520px"
-      :close-on-click-modal="false"
-      class="apple-dialog"
-    >
-      <div class="dialog-content">
-        <div class="info-box">
-          <div class="info-icon">ℹ️</div>
-          <div class="info-text">
-            <h4>Import existing File-Git repository</h4>
-            <p>
-              This will import a folder that already has a <code>.fgit</code> directory.
-              The mode (ENCRYPTED/ORIGINAL) will be automatically detected from the existing configuration.
-            </p>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Folder Path</label>
-          <el-input
-            v-model="importRepoPath"
-            placeholder="/path/to/existing/repo"
-            size="large"
-            clearable
-          />
-          <p class="form-description">Path to a folder that already contains a .fgit directory</p>
-        </div>
-      </div>
-
+    <!-- Import dialog -->
+    <el-dialog v-model="showImportDialog" title="Import Existing Repository" width="480">
+      <el-form label-position="top">
+        <el-form-item label="Local path (must contain .fgit/)">
+          <el-input v-model="importRepoPath" placeholder="/absolute/path/to/folder" />
+        </el-form-item>
+        <p class="fg-hint">Mode is read from the existing .fgit/config.json.</p>
+      </el-form>
       <template #footer>
-        <div class="dialog-footer">
-          <el-button size="large" @click="showImportDialog = false">Cancel</el-button>
-          <el-button size="large" type="primary" @click="importRepo">Import Repository</el-button>
-        </div>
+        <el-button @click="showImportDialog = false">Cancel</el-button>
+        <el-button type="primary" @click="importRepo">Import</el-button>
       </template>
     </el-dialog>
 
-    <!-- Delete Confirmation Dialog -->
-    <el-dialog
-      v-model="showDeleteDialog"
-      title="Delete Repository"
-      width="520px"
-      :close-on-click-modal="false"
-      class="apple-dialog"
-    >
-      <div class="dialog-content">
-        <div class="warning-box">
-          <div class="warning-icon">⚠️</div>
-          <div class="warning-text">
-            <h4>This action cannot be undone</h4>
-            <p>
-              Deleting this repository will remove it from the registry, but the
-              <code>.fgit</code> folder and your files will NOT be deleted.
-            </p>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Repository Name</label>
-          <el-input :value="deleteRepoName" size="large" disabled />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Confirm Deletion</label>
-          <el-input
-            v-model="deleteConfirmInput"
-            :placeholder="`Type '${deleteRepoName}' to confirm`"
-            size="large"
-            clearable
-          />
-          <p class="form-description">Type the repository name exactly to confirm deletion</p>
-        </div>
-      </div>
-
+    <!-- Delete dialog -->
+    <el-dialog v-model="showDeleteDialog" title="Delete Repository" width="480">
+      <p>
+        This removes the repo from the registry AND deletes its
+        <code>.fgit/</code> folder. Files in the working tree are NOT touched.
+      </p>
+      <p>Type <b>{{ deleteRepoName }}</b> to confirm:</p>
+      <el-input v-model="deleteConfirmInput" placeholder="repository name" />
       <template #footer>
-        <div class="dialog-footer">
-          <el-button size="large" @click="showDeleteDialog = false">Cancel</el-button>
-          <el-button
-            size="large"
-            type="danger"
-            @click="deleteRepo"
-            :disabled="deleteConfirmInput !== deleteRepoName"
-          >
-            Delete Repository
-          </el-button>
-        </div>
+        <el-button @click="showDeleteDialog = false">Cancel</el-button>
+        <el-button
+          type="danger"
+          :disabled="deleteConfirmInput !== deleteRepoName"
+          @click="confirmDelete">
+          Delete
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
-<script setup lang="ts">
-import { Plus, Delete, FolderOpened, Setting } from '@element-plus/icons-vue'
+<script lang="ts" setup>
 import { useFileGitReposView } from './FileGitReposView'
+import { FolderOpened, Setting, Plus, Delete } from '@element-plus/icons-vue'
 
 const {
-  repos,
-  isLoading,
-  showAddDialog,
-  showImportDialog,
-  showDeleteDialog,
-  newRepoPath,
-  newRepoMode,
-  importRepoPath,
-  deleteRepoName,
-  deleteConfirmInput,
-  openAddDialog,
-  openImportDialog,
-  addRepo,
-  importRepo,
-  openDeleteDialog,
-  deleteRepo,
-  goToRepo,
-  openFolder,
-  goToSettings
+  repos, hasRepos, isLoading,
+  showAddDialog, showImportDialog, showDeleteDialog,
+  newRepoPath, newRepoMode, importRepoPath, deleteRepoName, deleteConfirmInput,
+  openAddDialog, addRepo, openImportDialog, importRepo,
+  openDeleteDialog, confirmDelete, openFolder, goToRepo, goToSettings,
 } = useFileGitReposView()
+
+function statusColor(status: string) {
+  if (status === 'ready') return 'success'
+  if (status === 'syncing') return 'warning'
+  if (status === 'locked') return 'warning'
+  return 'danger'
+}
+
+function formatTime(iso: string) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleString()
+  } catch {
+    return iso
+  }
+}
 </script>
 
 <style scoped>
-.file-git-repos-container {
-  padding: 20px;
-  max-width: 100vw;
-  overflow-x: hidden;
+.fg-repos {
   min-height: 100vh;
-  height: 100vh;
   background: #f5f5f7;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
+  color: #1d1d1f;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
-.header-card {
-  margin-bottom: 16px;
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  flex-shrink: 0;
-}
-
-.header-content {
+.fg-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(245, 245, 247, 0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 16px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
 }
 
-.title-section h2 {
+.fg-topbar-left h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.5px;
 }
 
-.subtitle {
-  margin: 8px 0 0 0;
+.fg-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
   color: #86868b;
-  font-size: 15px;
-  font-weight: 400;
 }
 
-.header-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.repos-list-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
-}
-
-.repos-list-card :deep(.el-card__body) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-
-.empty-state {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 300px;
-}
-
-.repos-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 20px;
-  width: 100%;
-}
-
-.repo-card {
-  cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 12px;
-  border: 1px solid #e5e5e7;
-  background: #ffffff;
-}
-
-.repo-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  border-color: #d2d2d7;
-}
-
-.repo-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f5f5f7;
-}
-
-.repo-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.repo-icon {
-  font-size: 26px;
-  color: #007aff;
-}
-
-.repo-name {
-  font-size: 19px;
-  font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.3px;
-}
-
-.repo-actions {
+.fg-topbar-right {
   display: flex;
   gap: 8px;
 }
 
-.repo-info {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.info-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.info-label {
-  font-weight: 500;
-  color: #86868b;
-  min-width: 70px;
-  font-size: 14px;
-}
-
-.info-value {
-  color: #1d1d1f;
-  font-size: 14px;
-  word-break: break-all;
-}
-
-/* Apple-style Dialog */
-.apple-dialog :deep(.el-dialog) {
-  border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
-  overflow: hidden;
-}
-
-.apple-dialog :deep(.el-dialog__header) {
-  padding: 24px 24px 16px;
-  border-bottom: 1px solid #f5f5f7;
-}
-
-.apple-dialog :deep(.el-dialog__title) {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.3px;
-}
-
-.apple-dialog :deep(.el-dialog__body) {
+.fg-content {
+  max-width: 1100px;
+  margin: 0 auto;
   padding: 24px;
 }
 
-.apple-dialog :deep(.el-dialog__footer) {
-  padding: 16px 24px 24px;
-  border-top: 1px solid #f5f5f7;
+.fg-empty {
+  padding: 60px 20px;
+  display: flex;
+  justify-content: center;
 }
 
-.dialog-content {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+.fg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
 }
 
-.form-group {
+.fg-repo-card {
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+.fg-repo-card:hover {
+  transform: translateY(-1px);
+}
+
+.fg-repo-head {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.fg-repo-name {
+  display: flex;
+  align-items: center;
   gap: 8px;
-}
-
-.form-label {
-  font-size: 14px;
   font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.1px;
-}
-
-.form-description {
-  font-size: 13px;
-  color: #86868b;
-  margin: 4px 0 0 0;
-  line-height: 1.4;
-}
-
-.form-description.warning {
-  color: #ff9500;
-  font-weight: 500;
-}
-
-.mode-radio-group {
-  width: 100%;
-}
-
-.mode-radio-group :deep(.el-radio-button) {
-  flex: 1;
-}
-
-.mode-radio-group :deep(.el-radio-button__inner) {
-  width: 100%;
-  border-radius: 8px;
-  padding: 12px 20px;
   font-size: 15px;
-  font-weight: 500;
 }
-
-.info-box {
+.fg-repo-actions {
   display: flex;
-  gap: 12px;
-  padding: 12px 14px;
-  background: #f0f9ff;
-  border-radius: 8px;
-  border: 1px solid #cce5ff;
+  gap: 4px;
 }
 
-.info-icon {
-  font-size: 20px;
-  flex-shrink: 0;
-  line-height: 1.2;
-}
-
-.info-text h4 {
-  margin: 0 0 4px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1d1d1f;
-  line-height: 1.3;
-}
-
-.info-text p {
+.fg-repo-meta {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  row-gap: 4px;
+  column-gap: 8px;
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
+}
+.fg-repo-meta dt {
   color: #86868b;
-  line-height: 1.4;
 }
-
-.info-text code {
-  background-color: #f5f5f7;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 13px;
-  color: #1d1d1f;
-}
-
-.warning-box {
-  display: flex;
-  gap: 12px;
-  padding: 12px 14px;
-  background: #fff9f0;
-  border-radius: 8px;
-  border: 1px solid #ffe5cc;
-}
-
-.warning-icon {
-  font-size: 20px;
-  flex-shrink: 0;
-  line-height: 1.2;
-}
-
-.warning-text h4 {
-  margin: 0 0 4px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1d1d1f;
-  line-height: 1.3;
-}
-
-.warning-text p {
+.fg-repo-meta dd {
   margin: 0;
-  font-size: 13px;
-  color: #86868b;
-  line-height: 1.4;
-}
-
-.warning-text code {
-  background-color: #f5f5f7;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 13px;
   color: #1d1d1f;
 }
-
-.dialog-footer {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
 }
 
-.dialog-footer .el-button {
-  min-width: 120px;
-  border-radius: 8px;
-  font-weight: 500;
+.fg-hint {
+  font-size: 12px;
+  color: #86868b;
+  margin: 8px 0 0;
 }
 </style>

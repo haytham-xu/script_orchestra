@@ -1,11 +1,23 @@
 /**
- * File-Git Repository Detail View Logic
+ * File-Git Repository Detail — UI logic.
+ *
+ * Buttons (REQUIREMENTS §3.13):
+ *   Push, Pull, Manual Upload, Post Manual Upload,
+ *   Pre Manual Download, Post Manual Download,
+ *   Diff, Rebuild Local Index, Rebuild Cloud Index,
+ *   Cleanup, Resume (visible only when lock=true)
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { FileGitService, type Repository, type RepoStatus } from '../service/FileGitService'
-import io from 'socket.io-client'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  FileGitService,
+  type CleanupMode,
+  type DiffEntry,
+  type QueueStatus,
+  type RepoConfig,
+  type Repository,
+} from '../service/FileGitService'
 
 export function useFileGitRepoDetail() {
   const route = useRoute()
@@ -13,447 +25,341 @@ export function useFileGitRepoDetail() {
   const repoId = ref<string>(route.params.id as string)
 
   const repo = ref<Repository | null>(null)
-  const status = ref<RepoStatus | null>(null)
-  const activeTab = ref('changes')
+  const queue = ref<QueueStatus | null>(null)
+  const config = ref<RepoConfig | null>(null)
+
   const isLoading = ref(false)
-  const isLoadingStatus = ref(false)
-  const isPushing = ref(false)
-  const isPulling = ref(false)
+  const isBusy = ref(false)              // any single action in flight
 
-  // File queue for progress tracking
-  interface QueueFile {
-    path: string
-    name: string
-    action: string // 'Uploading (new)', 'Uploading (modified)', 'Deleting'
-    status: 'pending' | 'uploading' | 'success' | 'error'
-    error?: string
-  }
+  // Diff panel state
+  const diffAdded = ref<DiffEntry[]>([])
+  const diffModified = ref<DiffEntry[]>([])
+  const diffDeleted = ref<DiffEntry[]>([])
+  const diffTotalLocal = ref(0)
+  const diffTotalCloud = ref(0)
+  const diffMessage = ref('')
 
-  const fileQueue = ref<QueueFile[]>([])
-  const isOperating = computed(() => isPushing.value || isPulling.value)
+  // Config edit state (buffered so the user can edit before saving)
+  const editPassword = ref('')
+  const editRemotePath = ref('')
+  const editHookDays = ref<number | null>(null)
 
-  // Show all files including completed ones (they fade out after delay)
-  const visibleFiles = computed(() => {
-    return fileQueue.value
-  })
+  // Manual upload state
+  const manualSubpath = ref('')
 
-  // WebSocket connection
-  let socket: any = null
+  // ------------------------------------------------------------------
+  // Derived
+  // ------------------------------------------------------------------
 
-  const hasChanges = computed(() => {
-    if (!status.value) return false
-    return (
-      status.value.added.length > 0 ||
-      status.value.modified.length > 0 ||
-      status.value.deleted.length > 0
-    )
-  })
+  const isLocked = computed(() => queue.value?.lock === true)
+  const lockActionType = computed(() => queue.value?.action_type ?? null)
+  const pendingUploadCount = computed(() => queue.value?.pending_upload_count ?? 0)
+  const pendingQueueCount = computed(() => queue.value?.pending_count ?? 0)
+  const isEncrypted = computed(() => repo.value?.mode === 'ENCRYPTED')
 
-  /**
-   * Load repository details
-   */
-  async function loadRepo() {
-    console.log('[FileGit] Loading repo:', repoId.value)
+  // Which buttons are enabled given the current lock state?
+  // (REQUIREMENTS §3.8 lock semantics)
+  const canPushPull = computed(() => !isBusy.value && !isLocked.value)
+  const canResume = computed(() =>
+    !isBusy.value && isLocked.value &&
+    (lockActionType.value === 'push' || lockActionType.value === 'pull')
+  )
+  const canManualUploadPrepare = computed(() =>
+    !isBusy.value && !isLocked.value
+  )
+  const canPostManualUpload = computed(() =>
+    !isBusy.value && isLocked.value && lockActionType.value === 'manual_upload'
+  )
+  const canPreManualDownload = computed(() =>
+    !isBusy.value && !isLocked.value
+  )
+  const canPostManualDownload = computed(() =>
+    !isBusy.value && isLocked.value && lockActionType.value === 'manual_download'
+  )
+  // Read-only actions can run in most states
+  const canDiff = computed(() => !isBusy.value)
+  const canRebuildLocal = computed(() => !isBusy.value)
+  const canRebuildCloud = computed(() => !isBusy.value && !isLocked.value)
+  const canCleanup = computed(() => !isBusy.value)
+
+  // ------------------------------------------------------------------
+  // Loaders
+  // ------------------------------------------------------------------
+
+  async function loadAll() {
     isLoading.value = true
     try {
-      const response = await FileGitService.getRepo(repoId.value)
-      console.log('[FileGit] Repo loaded:', response)
-      if (response.success && response.repo) {
-        repo.value = response.repo
-      } else {
-        ElMessage.error(response.error || 'Failed to load repository')
-      }
-    } catch (error: any) {
-      console.error('[FileGit] Load repo failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to load repository')
+      await Promise.all([loadStatus(), loadConfig()])
     } finally {
       isLoading.value = false
     }
   }
 
-  /**
-   * Load repository file status
-   */
   async function loadStatus() {
-    console.log('[FileGit] Loading repo status:', repoId.value)
-    isLoadingStatus.value = true
     try {
-      const response = await FileGitService.getRepoStatus(repoId.value)
-      console.log('[FileGit] Status loaded:', response)
-      if (response.success && response.status) {
-        status.value = response.status
-        ElMessage.success('Status loaded successfully')
-      } else {
-        ElMessage.error(response.error || 'Failed to load status')
+      const res = await FileGitService.getStatus(repoId.value)
+      if (res.success) {
+        repo.value = res.repo
+        queue.value = res.queue
+      } else if (res.error) {
+        ElMessage.error(res.error)
       }
-    } catch (error: any) {
-      console.error('[FileGit] Load status failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to load status')
-    } finally {
-      isLoadingStatus.value = false
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load status')
     }
   }
 
-  /**
-   * Refresh status manually
-   */
-  async function refreshStatus() {
-    await loadStatus()
+  async function loadConfig() {
+    try {
+      const res = await FileGitService.getConfig(repoId.value)
+      if (res.success && res.config) {
+        config.value = res.config
+        editPassword.value = ''
+        editRemotePath.value = res.config.remote_path
+        editHookDays.value = res.config.hook_retention_days ?? 7
+      } else if (res.error) {
+        ElMessage.error(res.error)
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load config')
+    }
   }
 
-  /**
-   * Go back to repositories list
-   */
+  // ------------------------------------------------------------------
+  // Config save
+  // ------------------------------------------------------------------
+
+  async function saveConfig() {
+    isBusy.value = true
+    try {
+      const patch: any = {
+        remote_path: editRemotePath.value.trim(),
+        hook_retention_days: editHookDays.value ?? 7,
+      }
+      // Only send password when the user typed a new one
+      if (editPassword.value) patch.password = editPassword.value
+      const res = await FileGitService.updateConfig(repoId.value, patch)
+      if (res.success) {
+        ElMessage.success('Config saved')
+        editPassword.value = ''
+        await loadConfig()
+      } else {
+        ElMessage.error(res.error || 'Failed to save config')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to save config')
+    } finally {
+      isBusy.value = false
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Commands
+  // ------------------------------------------------------------------
+
+  async function runAction<T>(
+    label: string,
+    fn: () => Promise<T & { success: boolean; message?: string; error?: string }>,
+    onSuccess?: (data: T) => void,
+  ): Promise<void> {
+    isBusy.value = true
+    try {
+      const res: any = await fn()
+      if (res.success) {
+        ElMessage.success(res.message || `${label} done`)
+        onSuccess?.(res)
+      } else {
+        ElMessage.error(res.error || res.message || `${label} failed`)
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || `${label} failed`)
+    } finally {
+      isBusy.value = false
+      await loadStatus()
+    }
+  }
+
+  const push = () => runAction('Push', () => FileGitService.push(repoId.value))
+  const pull = () => runAction('Pull', () => FileGitService.pull(repoId.value))
+  const resume = () => runAction('Resume', () => FileGitService.resume(repoId.value))
+
+  const manualUpload = () => runAction(
+    'Manual Upload',
+    () => FileGitService.manualUpload(repoId.value, manualSubpath.value.trim()),
+  )
+  const postManualUpload = () => runAction(
+    'Post Manual Upload',
+    () => FileGitService.postManualUpload(repoId.value),
+  )
+  const preManualDownload = () => runAction(
+    'Pre Manual Download',
+    () => FileGitService.preManualDownload(repoId.value),
+  )
+  const postManualDownload = () => runAction(
+    'Post Manual Download',
+    () => FileGitService.postManualDownload(repoId.value),
+  )
+
+  async function runDiff() {
+    isBusy.value = true
+    try {
+      const res = await FileGitService.diff(repoId.value)
+      if (res.success) {
+        diffAdded.value = res.added
+        diffModified.value = res.modified
+        diffDeleted.value = res.deleted
+        diffTotalLocal.value = res.total_local
+        diffTotalCloud.value = res.total_cloud
+        diffMessage.value = res.message || ''
+      } else {
+        ElMessage.error('Diff failed')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Diff failed')
+    } finally {
+      isBusy.value = false
+    }
+  }
+
+  const rebuildLocalIndex = () => runAction(
+    'Rebuild Local Index',
+    () => FileGitService.rebuildLocalIndex(repoId.value),
+  )
+
+  async function rebuildCloudIndex() {
+    if (isBusy.value) return
+    // Estimate first
+    isBusy.value = true
+    try {
+      const est = await FileGitService.estimateRebuildCloudIndex(repoId.value)
+      if (!est.success) {
+        ElMessage.error(est.error || 'Failed to estimate')
+        return
+      }
+      const count = est.approximate_file_count ?? 0
+      const remoteRoot = est.remote_root ?? '?'
+      await ElMessageBox.confirm(
+        `This will list all files under "${remoteRoot}" (~${count} entries) and rebuild cloud_index.json. It hits the cloud API ${count} times. Continue?`,
+        'Rebuild Cloud Index',
+        { confirmButtonText: 'Rebuild', cancelButtonText: 'Cancel', type: 'warning' },
+      )
+    } catch {
+      isBusy.value = false
+      return // user cancelled
+    }
+
+    // Confirmed — run
+    try {
+      const res = await FileGitService.rebuildCloudIndex(repoId.value)
+      if (res.success) {
+        ElMessage.success(res.message || 'Cloud index rebuilt')
+      } else {
+        ElMessage.error(res.error || 'Rebuild failed')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Rebuild failed')
+    } finally {
+      isBusy.value = false
+      await loadStatus()
+    }
+  }
+
+  async function cleanup(mode: CleanupMode) {
+    if (isBusy.value) return
+    isBusy.value = true
+    try {
+      const dry = await FileGitService.cleanupDryRun(repoId.value, mode)
+      if (!dry.success) {
+        ElMessage.error(dry.error || 'Cleanup dry-run failed')
+        return
+      }
+      const trashN = dry.trash_candidates?.length ?? 0
+      const actionN = dry.action_candidates?.length ?? 0
+      await ElMessageBox.confirm(
+        `Cleanup (${mode}) will remove ${trashN} trash folder(s) and ${actionN} action folder(s). Continue?`,
+        'Cleanup',
+        { confirmButtonText: 'Delete', cancelButtonText: 'Cancel', type: 'warning' },
+      )
+    } catch {
+      isBusy.value = false
+      return
+    }
+    try {
+      const res = await FileGitService.cleanup(repoId.value, mode)
+      if (res.success) {
+        ElMessage.success(res.message || 'Cleanup complete')
+      } else {
+        ElMessage.error(res.error || 'Cleanup failed')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Cleanup failed')
+    } finally {
+      isBusy.value = false
+      await loadStatus()
+    }
+  }
+
+  const openFolder = () => runAction(
+    'Open folder',
+    () => FileGitService.openFolder(repoId.value),
+  )
+
   function goBack() {
     router.push('/file-git')
   }
 
-  /**
-   * Open repository folder in system file manager
-   */
-  async function openFolder() {
-    console.log('[FileGit] Opening folder for repo:', repoId.value)
-    try {
-      const response = await FileGitService.openFolder(repoId.value)
-      if (response.success) {
-        ElMessage.success('Folder opened successfully')
-      } else {
-        ElMessage.error(response.error || 'Failed to open folder')
-      }
-    } catch (error: any) {
-      console.error('[FileGit] Open folder failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to open folder')
-    }
-  }
+  // ------------------------------------------------------------------
 
-  /**
-   * Initialize WebSocket connection
-   */
-  function initWebSocket() {
-    try {
-      // Connect to backend WebSocket
-      socket = io('http://localhost:5001', {
-        transports: ['websocket', 'polling']
-      })
-
-      socket.on('connect', () => {
-        console.log('[FileGit] WebSocket connected')
-      })
-
-      socket.on('disconnect', () => {
-        console.log('[FileGit] WebSocket disconnected')
-      })
-
-      // Listen to progress updates for this repo
-      socket.on(`repo:${repoId.value}:progress`, (data: any) => {
-        console.log('[FileGit] Progress update:', data)
-
-        // Use phase to determine what's happening
-        if (data.phase === 'uploading' || data.phase === 'deleting' || data.phase === 'downloading') {
-          // Extract filename and action from message
-          // Push: "Uploading (new): path" or "Uploading (modified): path" or "Deleting: path"
-          // Pull: "Downloading (new): path" or "Downloading (modified): path" or "Local deleting: path"
-          let filePath = null
-          let action = null
-
-          const uploadMatch = data.message.match(/Uploading \((.+?)\): (.+)$/)
-          const downloadMatch = data.message.match(/Downloading \((.+?)\): (.+)$/)
-          const remoteDeleteMatch = data.message.match(/Deleting: (.+)$/)
-          const localDeleteMatch = data.message.match(/Local deleting: (.+)$/)
-
-          if (uploadMatch) {
-            action = `Uploading (${uploadMatch[1]})`
-            filePath = uploadMatch[2]
-          } else if (downloadMatch) {
-            action = `Downloading (${downloadMatch[1]})`
-            filePath = downloadMatch[2]
-          } else if (remoteDeleteMatch) {
-            action = 'Remote deleting'
-            filePath = remoteDeleteMatch[1]
-          } else if (localDeleteMatch) {
-            action = 'Local deleting'
-            filePath = localDeleteMatch[1]
-          }
-
-          if (filePath) {
-            // For pull operations, dynamically add files to queue
-            let file = fileQueue.value.find(f => f.path === filePath)
-            if (!file) {
-              file = {
-                path: filePath,
-                name: filePath.split('/').pop() || filePath,
-                action: action || 'Processing',
-                status: 'pending'
-              }
-              fileQueue.value.push(file)
-            }
-
-            // Update status to uploading
-            if (file.status === 'pending') {
-              file.status = 'uploading'
-            }
-          }
-        }
-      })
-
-      // Listen to log messages
-      socket.on(`repo:${repoId.value}:log`, (data: any) => {
-        console.log('[FileGit] Log:', data)
-
-        // Parse log message to update file status
-        const message = data.message
-
-        // Success: "✓ Uploaded: path" or "✓ Deleted: path"
-        if (message.startsWith('✓')) {
-          const match = message.match(/: (.+)$/)
-          if (match) {
-            const filePath = match[1]
-            const file = fileQueue.value.find(f => f.path === filePath)
-            if (file) {
-              file.status = 'success'
-
-              // Immediately remove from status lists
-              if (status.value) {
-                // Remove from added
-                const addedIndex = status.value.added.findIndex(f => f.middle_path === filePath)
-                if (addedIndex !== -1) {
-                  status.value.added.splice(addedIndex, 1)
-                }
-
-                // Remove from modified
-                const modifiedIndex = status.value.modified.findIndex(f => f.middle_path === filePath)
-                if (modifiedIndex !== -1) {
-                  status.value.modified.splice(modifiedIndex, 1)
-                }
-
-                // Remove from deleted
-                const deletedIndex = status.value.deleted.findIndex(f => f.middle_path === filePath)
-                if (deletedIndex !== -1) {
-                  status.value.deleted.splice(deletedIndex, 1)
-                }
-
-                // Update total count
-                status.value.total_files = status.value.added.length + status.value.modified.length + status.value.deleted.length
-              }
-
-              // Remove from fileQueue after a short delay for visual feedback
-              setTimeout(() => {
-                const index = fileQueue.value.findIndex(f => f.path === filePath)
-                if (index !== -1 && fileQueue.value[index].status === 'success') {
-                  fileQueue.value.splice(index, 1)
-                }
-              }, 1000)
-            }
-          }
-        }
-        // Error: "✗ Failed: path - error"
-        else if (message.startsWith('✗')) {
-          const match = message.match(/: (.+?) - (.+)$/)
-          if (match) {
-            const filePath = match[1]
-            const errorMsg = match[2]
-            const file = fileQueue.value.find(f => f.path === filePath)
-            if (file) {
-              file.status = 'error'
-              file.error = errorMsg
-            }
-          }
-        }
-        // No need for Starting upload/delete parsing - handled by progress event
-      })
-
-      // Listen to status updates
-      socket.on(`repo:${repoId.value}:status`, (data: any) => {
-        console.log('[FileGit] Status update:', data)
-        if (repo.value) {
-          repo.value.status = data.status
-        }
-      })
-    } catch (error) {
-      console.error('[FileGit] WebSocket init failed:', error)
-    }
-  }
-
-  /**
-   * Disconnect WebSocket
-   */
-  function disconnectWebSocket() {
-    if (socket) {
-      socket.disconnect()
-      socket = null
-    }
-  }
-
-  /**
-   * Initialize file queue from changes
-   */
-  function initFileQueue(changes: RepoStatus) {
-    fileQueue.value = []
-
-    // Add files to upload
-    for (const file of changes.added) {
-      fileQueue.value.push({
-        path: file.middle_path,
-        name: file.middle_path.split('/').pop() || file.middle_path,
-        action: 'Uploading (new)',
-        status: 'pending'
-      })
-    }
-
-    for (const file of changes.modified) {
-      fileQueue.value.push({
-        path: file.middle_path,
-        name: file.middle_path.split('/').pop() || file.middle_path,
-        action: 'Uploading (modified)',
-        status: 'pending'
-      })
-    }
-
-    // Add files to delete
-    for (const file of changes.deleted) {
-      fileQueue.value.push({
-        path: file.middle_path,
-        name: file.middle_path.split('/').pop() || file.middle_path,
-        action: 'Remote deleting',
-        status: 'pending'
-      })
-    }
-  }
-  /**
-   * Get file sync status from queue by path
-   */
-  function getFileStatus(middlePath: string) {
-    const file = fileQueue.value.find(f => f.path === middlePath)
-    return file ? file.status : null
-  }
-
-  /**
-   * Get file action from queue by path
-   */
-  function getFileAction(middlePath: string) {
-    const file = fileQueue.value.find(f => f.path === middlePath)
-    return file ? file.action : null
-  }
-
-  /**
-   * Extract operation type from action string
-   * Returns: 'uploading', 'downloading', 'local-deleting', 'remote-deleting', or 'unknown'
-   */
-  function getActionType(action: string): string {
-    if (!action) return 'unknown'
-    if (action.startsWith('Uploading')) return 'uploading'
-    if (action.startsWith('Downloading')) return 'downloading'
-    if (action.startsWith('Local deleting')) return 'local-deleting'
-    if (action.startsWith('Remote deleting')) return 'remote-deleting'
-    return 'unknown'
-  }
-
-  function formatFileSize(bytes: number): string {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  /**
-   * Push changes to cloud
-   */
-  async function pushChanges() {
-    console.log('[FileGit] Pushing changes for repo:', repoId.value)
-
-    if (!status.value) return
-
-    // Initialize file queue from current changes
-    initFileQueue(status.value)
-
-    isPushing.value = true
-    try {
-      const response = await FileGitService.pushRepo(repoId.value)
-      console.log('[FileGit] Push response:', response)
-
-      if (response.success) {
-        ElMessage.success(response.message || 'Changes pushed successfully')
-        // Clear queue after success
-        fileQueue.value = []
-        // Reload status and repo after push
-        await loadStatus()
-        await loadRepo()
-      } else {
-        ElMessage.error(response.error || 'Failed to push changes')
-      }
-    } catch (error: any) {
-      console.error('[FileGit] Push failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to push changes')
-    } finally {
-      isPushing.value = false
-    }
-  }
-
-  /**
-   * Pull changes from cloud
-   */
-  async function pullChanges() {
-    console.log('[FileGit] Pulling changes for repo:', repoId.value)
-
-    // Clear file queue - files will be added dynamically via WebSocket
-    fileQueue.value = []
-
-    isPulling.value = true
-    try {
-      const response = await FileGitService.pullRepo(repoId.value)
-      console.log('[FileGit] Pull response:', response)
-
-      if (response.success) {
-        ElMessage.success(response.message || 'Changes pulled successfully')
-        // Clear queue after success
-        fileQueue.value = []
-        // Reload status and repo after pull
-        await loadStatus()
-        await loadRepo()
-      } else {
-        ElMessage.error(response.error || 'Failed to pull changes')
-      }
-    } catch (error: any) {
-      console.error('[FileGit] Pull failed:', error)
-      ElMessage.error(error.response?.data?.error || 'Failed to pull changes')
-    } finally {
-      isPulling.value = false
-    }
-  }
-
-  onMounted(async () => {
-    await loadRepo()
-    // Automatically load status when page opens
-    await loadStatus()
-    // Initialize WebSocket for real-time updates
-    initWebSocket()
-  })
-
-  onBeforeUnmount(() => {
-    disconnectWebSocket()
-  })
+  onMounted(loadAll)
 
   return {
+    repoId,
     repo,
-    status,
-    activeTab,
+    queue,
+    config,
     isLoading,
-    isLoadingStatus,
-    isPushing,
-    isPulling,
-    hasChanges,
-    fileQueue,
-    visibleFiles,
-    isOperating,
-    getFileStatus,
-    getFileAction,
-    getActionType,
-    goBack,
+    isBusy,
+    isLocked,
+    lockActionType,
+    pendingUploadCount,
+    pendingQueueCount,
+    isEncrypted,
+    canPushPull,
+    canResume,
+    canManualUploadPrepare,
+    canPostManualUpload,
+    canPreManualDownload,
+    canPostManualDownload,
+    canDiff,
+    canRebuildLocal,
+    canRebuildCloud,
+    canCleanup,
+    diffAdded,
+    diffModified,
+    diffDeleted,
+    diffTotalLocal,
+    diffTotalCloud,
+    diffMessage,
+    editPassword,
+    editRemotePath,
+    editHookDays,
+    manualSubpath,
+    loadAll,
+    loadStatus,
+    loadConfig,
+    saveConfig,
+    push,
+    pull,
+    resume,
+    manualUpload,
+    postManualUpload,
+    preManualDownload,
+    postManualDownload,
+    runDiff,
+    rebuildLocalIndex,
+    rebuildCloudIndex,
+    cleanup,
     openFolder,
-    refreshStatus,
-    formatFileSize,
-    pushChanges,
-    pullChanges
+    goBack,
   }
 }

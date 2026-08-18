@@ -1,370 +1,510 @@
 """
-File-Git Controller - RESTful API for repository management
+File-Git Controller — RESTful API for repository management (§3.7, §3.8).
+
+Endpoints:
+    /file-git/repos                          list, add
+    /file-git/repos/<id>                     get, delete
+    /file-git/repos/<id>/open-folder         POST — reveal in file manager
+    /file-git/repos/<id>/status              GET  — lock + queue snapshot
+    /file-git/repos/<id>/push                POST — CommandService.push
+    /file-git/repos/<id>/pull                POST — CommandService.pull
+    /file-git/repos/<id>/resume              POST — CommandService.queue
+    /file-git/repos/<id>/config              GET, PUT — read/patch .fgit/config.json
+    /file-git/settings                       GET, PUT — global settings
 """
+import json
 import os
+import platform
+import subprocess
 from flask import request
 from flask_restx import Namespace, Resource
+
 from extensions import restx_api
+from .command import (
+    command_pull,
+    command_push,
+    command_queue,
+    command_manual_upload,
+    command_post_manual_upload,
+    command_pre_manual_download,
+    command_post_manual_download,
+    command_diff,
+    command_rebuild_local_index,
+    command_rebuild_cloud_index,
+    estimate_rebuild_cloud_index,
+    command_cleanup,
+)
 from .repository_manager import RepositoryManager
+from .service import QueueService
 from .settings_manager import SettingsManager
-from .file_index_service import FileIndexService
-from .sync_service import SyncService
 
 ns = Namespace("")
+
+
+def _ok(payload: dict) -> tuple:
+    return {"success": True, **payload}, 200
+
+
+def _err(msg: str, status: int = 500) -> tuple:
+    return {"success": False, "error": msg}, status
 
 
 @ns.route('/file-git/repos')
 class ReposListResource(Resource):
     def get(self):
-        """List all repositories"""
         try:
-            repos = RepositoryManager.list_repos()
-            return {
-                "success": True,
-                "repos": repos
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+            return _ok({"repos": RepositoryManager.list_repos()})
+        except Exception as exc:
+            return _err(str(exc))
 
     def post(self):
-        """Add new repository"""
         try:
-            data = request.get_json()
+            data = request.get_json() or {}
+            local_path = data.get('local_path')
+            mode = data.get('mode')
+            skip_init = data.get('skip_init', False)
 
-            if not data or 'local_path' not in data:
-                return {
-                    "success": False,
-                    "error": "Missing 'local_path' parameter"
-                }, 400
-
-            if 'mode' not in data:
-                return {
-                    "success": False,
-                    "error": "Missing 'mode' parameter"
-                }, 400
-
-            local_path = data['local_path']
-            mode = data['mode']
-            skip_init = data.get('skip_init', False)  # Optional: default False
+            if not local_path:
+                return _err("Missing 'local_path' parameter", 400)
+            if not mode:
+                return _err("Missing 'mode' parameter", 400)
 
             repo = RepositoryManager.add_repo(local_path, mode, skip_init)
-
             action = "imported" if skip_init else "added"
-            return {
-                "success": True,
+            return _ok({
                 "repo": repo,
-                "message": f"Repository '{repo['name']}' {action} successfully"
-            }
-
-        except ValueError as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 400
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+                "message": f"Repository '{repo['name']}' {action} successfully",
+            })
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
 
 @ns.route('/file-git/repos/<string:repo_id>')
 class RepoResource(Resource):
     def get(self, repo_id):
-        """Get repository details"""
         try:
             repo = RepositoryManager.get_repo_by_id(repo_id)
             if not repo:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
-
-            return {
-                "success": True,
-                "repo": repo
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+                return _err("Repository not found", 404)
+            return _ok({"repo": repo})
+        except Exception as exc:
+            return _err(str(exc))
 
     def delete(self, repo_id):
-        """Delete repository from registry"""
         try:
-            success = RepositoryManager.delete_repo(repo_id)
-
-            if not success:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
-
-            return {
-                "success": True,
-                "message": "Repository deleted successfully"
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+            if not RepositoryManager.delete_repo(repo_id):
+                return _err("Repository not found", 404)
+            return _ok({"message": "Repository deleted successfully"})
+        except Exception as exc:
+            return _err(str(exc))
 
 
 @ns.route('/file-git/repos/<string:repo_id>/open-folder')
 class RepoOpenFolderResource(Resource):
     def post(self, repo_id):
-        """Open repository folder in system file manager"""
         try:
-            import subprocess
-            import platform
-
             repo = RepositoryManager.get_repo_by_id(repo_id)
             if not repo:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
+                return _err("Repository not found", 404)
 
-            local_path = repo['local_path']
-
-            # Open folder based on OS
             system = platform.system()
-            if system == 'Darwin':  # macOS
+            local_path = repo['local_path']
+            if system == 'Darwin':
                 subprocess.Popen(['open', local_path])
             elif system == 'Windows':
                 subprocess.Popen(['explorer', local_path])
             elif system == 'Linux':
                 subprocess.Popen(['xdg-open', local_path])
             else:
-                return {
-                    "success": False,
-                    "error": f"Unsupported operating system: {system}"
-                }, 400
-
-            return {
-                "success": True,
-                "message": "Folder opened successfully"
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+                return _err(f"Unsupported OS: {system}", 400)
+            return _ok({"message": "Folder opened successfully"})
+        except Exception as exc:
+            return _err(str(exc))
 
 
 @ns.route('/file-git/repos/<string:repo_id>/status')
 class RepoStatusResource(Resource):
     def get(self, repo_id):
-        """Get repository file status (added/modified/deleted)"""
         try:
             repo = RepositoryManager.get_repo_by_id(repo_id)
             if not repo:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
+                return _err("Repository not found", 404)
+            qstate = QueueService.load(repo['local_path'])
 
-            local_path = repo['local_path']
+            # Count pending_upload entries so UI can show a red-dot hint
+            # while a manual upload session is open.
+            pending_upload_count = 0
+            pending_path = os.path.join(
+                repo['local_path'], '.fgit', 'pending_upload.json'
+            )
+            if os.path.isfile(pending_path):
+                try:
+                    with open(pending_path, 'r', encoding='utf-8') as f:
+                        pending_data = json.load(f)
+                    pending_upload_count = len(pending_data.get('entries', []))
+                except Exception:
+                    pending_upload_count = 0
 
-            # Scan and compare files
-            status = FileIndexService.get_repo_status(local_path)
+            return _ok({
+                "repo": repo,
+                "queue": {
+                    "lock": qstate.lock,
+                    "action_folder": qstate.action_folder,
+                    "action_type": qstate.action_type,
+                    "pending_count": len(qstate.queue),
+                    "pending_upload_count": pending_upload_count,
+                },
+            })
+        except Exception as exc:
+            return _err(str(exc))
 
-            return {
-                "success": True,
-                "status": status
-            }
 
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+@ns.route('/file-git/repos/<string:repo_id>/config')
+class RepoConfigResource(Resource):
+    """Read / patch .fgit/config.json. The UI uses this to set password,
+    remote_path, and cloud credentials after repo creation (§S1)."""
 
-
-@ns.route('/file-git/settings')
-class SettingsResource(Resource):
-    def get(self):
-        """Get global settings"""
+    def get(self, repo_id):
         try:
-            settings = SettingsManager.get_settings()
-            return {
-                "success": True,
-                "settings": settings
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            cfg = _load_repo_config(repo['local_path'])
+            # Never echo the password back verbatim; return a bool flag
+            safe = dict(cfg)
+            safe['password_set'] = bool(cfg.get('password'))
+            safe.pop('password', None)
+            return _ok({"config": safe})
+        except Exception as exc:
+            return _err(str(exc))
 
-    def put(self):
-        """Update global settings"""
+    def put(self, repo_id):
         try:
-            data = request.get_json()
-            if not data:
-                return {
-                    "success": False,
-                    "error": "Missing settings data"
-                }, 400
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            data = request.get_json() or {}
+            if not isinstance(data, dict):
+                return _err("body must be an object", 400)
 
-            settings = SettingsManager.update_settings(data)
-            return {
-                "success": True,
-                "settings": settings,
-                "message": "Settings updated successfully"
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+            cfg = _load_repo_config(repo['local_path'])
+
+            # Mode is immutable
+            if 'mode' in data and data['mode'] != cfg.get('mode'):
+                return _err("mode is immutable after creation", 400)
+
+            # Merge shallow keys; baidu_cloud is a nested object we merge too
+            for k, v in data.items():
+                if k == 'baidu_cloud' and isinstance(v, dict):
+                    cfg.setdefault('baidu_cloud', {}).update(v)
+                elif k == 'mode':
+                    continue
+                else:
+                    cfg[k] = v
+
+            _save_repo_config(repo['local_path'], cfg)
+            RepositoryManager.update_last_updated(repo_id)
+            return _ok({"message": "Config updated"})
+        except Exception as exc:
+            return _err(str(exc))
 
 
 @ns.route('/file-git/repos/<string:repo_id>/push')
 class RepoPushResource(Resource):
     def post(self, repo_id):
-        """Push changes to cloud"""
         try:
-            repo = RepositoryManager.get_repo_by_id(repo_id)
-            if not repo:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
-
-            # Update status to syncing
-            RepositoryManager.update_status(repo_id, 'syncing')
-
-            local_path = repo['local_path']
-
-            # Read remote path from config
-            config_path = os.path.join(local_path, '.fgit', 'config.json')
-            if not os.path.exists(config_path):
-                RepositoryManager.update_status(repo_id, 'error')
-                return {
-                    "success": False,
-                    "error": "Repository not configured. Please set remote_path in config.json"
-                }, 400
-
-            import json
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-            remote_path = config.get('remote_path')
-            if not remote_path:
-                RepositoryManager.update_status(repo_id, 'error')
-                return {
-                    "success": False,
-                    "error": "remote_path not configured in config.json"
-                }, 400
-
-            # Get changes
-            status = FileIndexService.get_repo_status(local_path)
-
-            # Check if there are any changes
-            has_changes = (
-                len(status['added']) > 0 or
-                len(status['modified']) > 0 or
-                len(status['deleted']) > 0
-            )
-
-            if not has_changes:
-                RepositoryManager.update_status(repo_id, 'ready')
-                return {
-                    "success": True,
-                    "message": "No changes to push",
-                    "uploaded": 0,
-                    "deleted": 0
-                }
-
-            # Push changes
-            result = SyncService.push_changes(local_path, remote_path, status, repo_id)
-
-            # Update repository status
-            if result['success']:
-                RepositoryManager.update_status(repo_id, 'ready')
-                RepositoryManager.update_last_updated(repo_id)
-            else:
-                RepositoryManager.update_status(repo_id, 'error')
-
-            return {
-                "success": result['success'],
-                "uploaded": result['uploaded'],
-                "deleted": result['deleted'],
-                "errors": result['errors'],
-                "message": f"Push complete: {result['uploaded']} uploaded, {result['deleted']} deleted"
+            result = command_push(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "uploaded": result.counters.uploaded,
+                "remote_deleted": result.counters.remote_deleted,
+                "errors": result.counters.errors,
             }
-
-        except Exception as e:
-            RepositoryManager.update_status(repo_id, 'error')
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 500))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
 
 @ns.route('/file-git/repos/<string:repo_id>/pull')
 class RepoPullResource(Resource):
     def post(self, repo_id):
-        """Pull changes from cloud"""
         try:
-            repo = RepositoryManager.get_repo_by_id(repo_id)
-            if not repo:
-                return {
-                    "success": False,
-                    "error": "Repository not found"
-                }, 404
+            result = command_pull(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "downloaded": result.counters.downloaded,
+                "local_deleted": result.counters.local_deleted,
+                "errors": result.counters.errors,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 500))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
-            repo_path = repo['local_path']
-            remote_root = repo['remote_path']
 
-            if not remote_root:
-                return {
-                    "success": False,
-                    "error": "remote_path not configured"
-                }, 400
+@ns.route('/file-git/repos/<string:repo_id>/resume')
+class RepoResumeResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_queue(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "uploaded": result.counters.uploaded,
+                "downloaded": result.counters.downloaded,
+                "local_deleted": result.counters.local_deleted,
+                "remote_deleted": result.counters.remote_deleted,
+                "errors": result.counters.errors,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 500))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
-            # Update status to syncing
-            RepositoryManager.update_status(repo_id, 'syncing')
 
-            # Pull changes from cloud
-            result = SyncService.pull_changes(repo_path, remote_root, repo_id)
+@ns.route('/file-git/repos/<string:repo_id>/manual-upload')
+class RepoManualUploadResource(Resource):
+    def post(self, repo_id):
+        try:
+            data = request.get_json(silent=True) or {}
+            subpath = data.get('subpath', '')
+            result = command_manual_upload(repo_id, subpath=subpath)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "buffer_dir": result.buffer_dir,
+                "file_count": result.file_count,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 400))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
-            # Update status based on result
-            if result['success']:
-                RepositoryManager.update_status(repo_id, 'ready')
-                RepositoryManager.update_last_updated(repo_id)
 
-                return {
-                    "success": True,
-                    "message": f"Pulled {result['downloaded']} files, deleted {result['deleted']} local files",
-                    "downloaded": result['downloaded'],
-                    "deleted": result['deleted']
-                }
-            else:
-                RepositoryManager.update_status(repo_id, 'error')
-                return {
-                    "success": False,
-                    "error": result.get('error', 'Pull failed'),
-                    "downloaded": result.get('downloaded', 0),
-                    "deleted": result.get('deleted', 0),
-                    "errors": result.get('errors', [])
-                }, 500
+@ns.route('/file-git/repos/<string:repo_id>/post-manual-upload')
+class RepoPostManualUploadResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_post_manual_upload(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "confirmed": result.confirmed,
+                "missing": result.missing,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 500))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
 
-        except Exception as e:
-            RepositoryManager.update_status(repo_id, 'error')
-            return {
-                "success": False,
-                "error": str(e)
-            }, 500
+
+@ns.route('/file-git/repos/<string:repo_id>/pre-manual-download')
+class RepoPreManualDownloadResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_pre_manual_download(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "buffer_dir": result.buffer_dir,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 400))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/post-manual-download')
+class RepoPostManualDownloadResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_post_manual_download(repo_id)
+            payload = {
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "decrypted": result.decrypted,
+                "unmapped": result.unmapped,
+            }
+            return (_ok(payload) if result.ok
+                    else ({"success": False, "error": result.message, **payload}, 500))
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/diff')
+class RepoDiffResource(Resource):
+    def get(self, repo_id):
+        try:
+            result = command_diff(repo_id)
+            return _ok({
+                "message": result.message,
+                "added": result.added,
+                "modified": result.modified,
+                "deleted": result.deleted,
+                "total_local": result.total_local,
+                "total_cloud": result.total_cloud,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/rebuild-local-index')
+class RepoRebuildLocalIndexResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_rebuild_local_index(repo_id)
+            return _ok({"message": result.message, "count": result.count})
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/rebuild-cloud-index')
+class RepoRebuildCloudIndexResource(Resource):
+    def get(self, repo_id):
+        """Estimate — used by UI to build the confirmation dialog."""
+        try:
+            estimate = estimate_rebuild_cloud_index(repo_id)
+            return _ok({
+                "message": estimate.message,
+                "remote_root": estimate.remote_root,
+                "approximate_file_count": estimate.approximate_file_count,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+    def post(self, repo_id):
+        try:
+            result = command_rebuild_cloud_index(repo_id)
+            return _ok({
+                "message": result.message,
+                "count": result.count,
+                "unknown": result.unknown,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/cleanup')
+class RepoCleanupResource(Resource):
+    def get(self, repo_id):
+        """Dry-run: what would be removed?"""
+        try:
+            mode = request.args.get('mode', 'expired')
+            result = command_cleanup(repo_id, mode=mode, dry_run=True)
+            return _ok({
+                "message": result.message,
+                "trash_candidates": result.trash_candidates,
+                "action_candidates": result.action_candidates,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+    def post(self, repo_id):
+        try:
+            data = request.get_json(silent=True) or {}
+            mode = data.get('mode', 'expired')
+            result = command_cleanup(repo_id, mode=mode, dry_run=False)
+            return _ok({
+                "message": result.message,
+                "trash_removed": result.trash_removed,
+                "action_removed": result.action_removed,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/settings')
+class SettingsResource(Resource):
+    def get(self):
+        try:
+            return _ok({"settings": SettingsManager.get_settings()})
+        except Exception as exc:
+            return _err(str(exc))
+
+    def put(self):
+        try:
+            data = request.get_json()
+            if not data:
+                return _err("Missing settings data", 400)
+            return _ok({
+                "settings": SettingsManager.update_settings(data),
+                "message": "Settings updated successfully",
+            })
+        except Exception as exc:
+            return _err(str(exc))
+
+
+# ----------------------------------------------------------------------
+# helpers
+# ----------------------------------------------------------------------
+
+def _load_repo_config(local_path: str) -> dict:
+    path = os.path.join(local_path, '.fgit', 'config.json')
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def _save_repo_config(local_path: str, cfg: dict) -> None:
+    path = os.path.join(local_path, '.fgit', 'config.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
 
 
 restx_api.add_namespace(ns)

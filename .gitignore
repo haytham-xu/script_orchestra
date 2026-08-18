@@ -18,6 +18,14 @@ backend/duplicate_finder/delete/
 backend/duplicate_finder/settings.json
 backend/manga_classifier/settings.json
 
+# File-Git runtime storage (mock cloud in dev, playwright test snapshots)
+backend/file_git/mock_cloud_storage/
+.playwright-mcp/
+
+# Internal design docs, not tracked
+backend/file_git/REQUIREMENTS.md
+backend/file_git/USAGE.md
+
 # Roadmap user data
 backend/roadmap/tasks.json
 backend/roadmap/*.db

@@ -1,629 +1,400 @@
 <template>
-  <div class="repo-detail-container">
-    <!-- Left Sidebar -->
-    <div class="sidebar">
-      <!-- Repository Info Card -->
-      <el-card class="sidebar-card info-card">
-        <el-button :icon="ArrowLeft" @click="goBack" text class="back-button">Back</el-button>
+  <div class="fg-detail" v-loading="isLoading">
+    <header class="fg-topbar">
+      <div class="fg-topbar-left">
+        <el-button link @click="goBack">
+          <el-icon><ArrowLeft /></el-icon>
+          <span>Repositories</span>
+        </el-button>
+        <h1 v-if="repo">{{ repo.name }}</h1>
+      </div>
+      <div class="fg-topbar-right">
+        <el-tag v-if="repo" :type="repo.mode === 'ENCRYPTED' ? 'success' : 'info'" size="small">
+          {{ repo.mode }}
+        </el-tag>
+        <el-tag :type="statusColor(repo?.status)" size="small">
+          {{ repo?.status ?? 'unknown' }}
+        </el-tag>
+        <el-button :icon="FolderOpened" size="small" @click="openFolder">Open Folder</el-button>
+        <el-button :icon="Refresh" size="small" @click="loadAll">Refresh</el-button>
+      </div>
+    </header>
 
-        <div class="repo-title">
-          <el-icon class="repo-icon"><FolderOpened /></el-icon>
-          <h2>{{ repo?.name }}</h2>
+    <!-- Lock banner -->
+    <section v-if="isLocked" class="fg-banner">
+      <el-icon><Lock /></el-icon>
+      <div class="fg-banner-body">
+        <div class="fg-banner-title">
+          {{ lockLabel }} in progress
+          <template v-if="lockActionType === 'manual_upload' && pendingUploadCount > 0">
+            — {{ pendingUploadCount }} file(s) waiting to be uploaded manually
+          </template>
         </div>
-
-        <div class="meta-tags">
-          <el-tag :type="repo?.mode === 'ENCRYPTED' ? 'success' : 'info'" size="small">
-            {{ repo?.mode }}
-          </el-tag>
-          <el-tag
-            :type="
-              repo?.status === 'ready'
-                ? 'success'
-                : repo?.status === 'syncing'
-                ? 'warning'
-                : 'danger'
-            "
-            size="small"
-          >
-            {{ repo?.status === 'ready' ? 'Ready' : repo?.status === 'syncing' ? 'Syncing' : 'Error' }}
-          </el-tag>
+        <div class="fg-banner-sub">
+          Action folder: <code>{{ queue?.action_folder }}</code>
+          <template v-if="pendingQueueCount > 0">
+            &nbsp;·&nbsp; {{ pendingQueueCount }} queued item(s)
+          </template>
         </div>
+      </div>
+      <el-button
+        v-if="canResume"
+        size="small"
+        type="primary"
+        @click="resume"
+        :loading="isBusy">
+        Resume
+      </el-button>
+    </section>
 
-        <div class="quick-actions">
-          <el-button @click="refreshStatus" :loading="isLoadingStatus" class="quick-button">
-            <el-icon><Refresh /></el-icon>
-            <span>Refresh</span>
-          </el-button>
-          <el-button @click="openFolder" class="quick-button">
-            <el-icon><FolderOpened /></el-icon>
-            <span>Open Folder</span>
-          </el-button>
-        </div>
-      </el-card>
+    <main class="fg-content">
 
-      <!-- Statistics Card -->
-      <el-card v-if="status" class="sidebar-card stats-card">
-        <div class="stats-list">
-          <div class="stat-row added">
-            <span class="stat-label">Added</span>
-            <span class="stat-value">{{ status.added.length }}</span>
-          </div>
-          <div class="stat-row modified">
-            <span class="stat-label">Modified</span>
-            <span class="stat-value">{{ status.modified.length }}</span>
-          </div>
-          <div class="stat-row deleted">
-            <span class="stat-label">Deleted</span>
-            <span class="stat-value">{{ status.deleted.length }}</span>
-          </div>
-          <div class="stat-row total">
-            <span class="stat-label">Total</span>
-            <span class="stat-value">{{ status.total_files }}</span>
-          </div>
-        </div>
-      </el-card>
-
-      <!-- Actions Card -->
-      <el-card class="sidebar-card actions-card">
-        <div class="actions-list">
-          <el-button @click="pushChanges" :disabled="!hasChanges" :loading="isPushing" plain class="action-button">
-            <el-icon><Upload /></el-icon>
-            <span>Push</span>
+      <section class="fg-card">
+        <h2>Sync</h2>
+        <p class="fg-hint">Fully automated via API. Fast for small changes.</p>
+        <div class="fg-actions">
+          <el-button
+            type="primary"
+            :icon="Upload"
+            :disabled="!canPushPull"
+            @click="push"
+            :loading="isBusy">
+            Push
           </el-button>
-          <el-button @click="pullChanges" :loading="isPulling" plain class="action-button">
-            <el-icon><Download /></el-icon>
-            <span>Pull</span>
-          </el-button>
-          <el-button plain class="action-button">
-            <el-icon><CircleCheck /></el-icon>
-            <span>Verify</span>
+          <el-button
+            type="primary"
+            plain
+            :icon="Download"
+            :disabled="!canPushPull"
+            @click="pull"
+            :loading="isBusy">
+            Pull
           </el-button>
         </div>
-      </el-card>
-    </div>
+      </section>
 
-    <!-- Main Content -->
-    <el-card v-loading="isLoading" class="content-card">
-      <el-tabs v-model="activeTab" class="content-tabs">
-        <!-- Changes Tab -->
-        <el-tab-pane label="Changes" name="changes">
-          <div class="changes-content">
-            <!-- Changes List -->
-            <div v-if="hasChanges" class="changes-list">
-              <!-- Added Files -->
-              <div v-if="status.added.length > 0" class="change-group">
-                <h3 class="group-title added-title">
-                  <el-icon><Plus /></el-icon>
-                  Added ({{ status.added.length }})
-                </h3>
-                <div class="file-list">
-                  <div v-for="file in status.added" :key="file.middle_path"
-                       :class="['file-item', 'added-item', getFileStatus(file.middle_path) ? `status-${getFileStatus(file.middle_path)}` : '']">
-                    <el-icon class="file-icon">
-                      <Upload v-if="getFileStatus(file.middle_path) === 'uploading'" class="rotating" />
-                      <CircleCheck v-else-if="getFileStatus(file.middle_path) === 'success'" />
-                      <Delete v-else-if="getFileStatus(file.middle_path) === 'error'" />
-                      <Document v-else />
-                    </el-icon>
-                    <div class="file-info">
-                      <span class="file-path">{{ file.middle_path }}</span>
-                      <span v-if="getFileAction(file.middle_path)" class="file-action-badge" :class="`action-type-${getActionType(getFileAction(file.middle_path))}`">
-                        {{ getFileAction(file.middle_path) }}
-                      </span>
-                    </div>
-                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
-                  </div>
-                </div>
-              </div>
+      <section class="fg-card">
+        <h2>Manual Upload</h2>
+        <p class="fg-hint">
+          For large batches. {{ isEncrypted
+            ? 'Files are encrypted into .fgit/buffer/; drag them into the cloud APP by hand.'
+            : 'Drag source files into the cloud APP directly.' }}
+        </p>
+        <el-form label-position="top" style="margin-bottom: 12px;">
+          <el-form-item label="Subpath (relative, empty = whole repo)">
+            <el-input
+              v-model="manualSubpath"
+              placeholder="e.g. photos/2024"
+              :disabled="isLocked" />
+          </el-form-item>
+        </el-form>
+        <div class="fg-actions">
+          <el-button
+            :icon="Upload"
+            :disabled="!canManualUploadPrepare"
+            @click="manualUpload">
+            Manual Upload — prepare
+          </el-button>
+          <el-button
+            :icon="Check"
+            :disabled="!canPostManualUpload"
+            @click="postManualUpload">
+            Post Manual Upload — confirm
+          </el-button>
+        </div>
+      </section>
 
-              <!-- Modified Files -->
-              <div v-if="status.modified.length > 0" class="change-group">
-                <h3 class="group-title modified-title">
-                  <el-icon><Edit /></el-icon>
-                  Modified ({{ status.modified.length }})
-                </h3>
-                <div class="file-list">
-                  <div v-for="file in status.modified" :key="file.middle_path"
-                       :class="['file-item', 'modified-item', getFileStatus(file.middle_path) ? `status-${getFileStatus(file.middle_path)}` : '']">
-                    <el-icon class="file-icon">
-                      <Upload v-if="getFileStatus(file.middle_path) === 'uploading'" class="rotating" />
-                      <CircleCheck v-else-if="getFileStatus(file.middle_path) === 'success'" />
-                      <Delete v-else-if="getFileStatus(file.middle_path) === 'error'" />
-                      <Document v-else />
-                    </el-icon>
-                    <div class="file-info">
-                      <span class="file-path">{{ file.middle_path }}</span>
-                      <span v-if="getFileAction(file.middle_path)" class="file-action-badge" :class="`action-type-${getActionType(getFileAction(file.middle_path))}`">
-                        {{ getFileAction(file.middle_path) }}
-                      </span>
-                    </div>
-                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
-                  </div>
-                </div>
-              </div>
+      <section class="fg-card">
+        <h2>Manual Download</h2>
+        <p class="fg-hint">
+          {{ isEncrypted
+            ? 'Download ciphertext from the cloud APP into .fgit/buffer/; the tool decrypts on Post.'
+            : 'Download files from the cloud APP directly into the repo.' }}
+        </p>
+        <div class="fg-actions">
+          <el-button
+            :icon="Download"
+            :disabled="!canPreManualDownload"
+            @click="preManualDownload">
+            Pre Manual Download — acquire lock
+          </el-button>
+          <el-button
+            :icon="Check"
+            :disabled="!canPostManualDownload"
+            @click="postManualDownload">
+            Post Manual Download — decrypt &amp; reconcile
+          </el-button>
+        </div>
+      </section>
 
-              <!-- Deleted Files -->
-              <div v-if="status.deleted.length > 0" class="change-group">
-                <h3 class="group-title deleted-title">
-                  <el-icon><Delete /></el-icon>
-                  Deleted ({{ status.deleted.length }})
-                </h3>
-                <div class="file-list">
-                  <div v-for="file in status.deleted" :key="file.middle_path"
-                       :class="['file-item', 'deleted-item', getFileStatus(file.middle_path) ? `status-${getFileStatus(file.middle_path)}` : '']">
-                    <el-icon class="file-icon">
-                      <Upload v-if="getFileStatus(file.middle_path) === 'uploading'" class="rotating" />
-                      <CircleCheck v-else-if="getFileStatus(file.middle_path) === 'success'" />
-                      <Delete v-else-if="getFileStatus(file.middle_path) === 'error'" />
-                      <Document v-else />
-                    </el-icon>
-                    <div class="file-info">
-                      <span class="file-path">{{ file.middle_path }}</span>
-                      <span v-if="getFileAction(file.middle_path)" class="file-action-badge" :class="`action-type-${getActionType(getFileAction(file.middle_path))}`">
-                        {{ getFileAction(file.middle_path) }}
-                      </span>
-                    </div>
-                    <span class="file-size">{{ formatFileSize(file.size) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+      <section class="fg-card">
+        <h2>Diff</h2>
+        <p class="fg-hint">Compare local files against cloud_index mirror. Read-only; safe while locked.</p>
+        <div class="fg-actions">
+          <el-button :icon="View" :disabled="!canDiff" @click="runDiff">Compute Diff</el-button>
+        </div>
 
-            <!-- No Changes -->
-            <div v-else class="no-changes">
-              <el-empty description="No changes detected">
-                <el-icon :size="64" color="#c0c4cc"><CircleCheck /></el-icon>
-              </el-empty>
-            </div>
+        <div v-if="diffMessage" class="fg-diff-summary">{{ diffMessage }}</div>
+        <div v-if="diffAdded.length || diffModified.length || diffDeleted.length" class="fg-diff-lists">
+          <div v-if="diffAdded.length" class="fg-diff-group">
+            <h3><el-icon><Plus /></el-icon> Added ({{ diffAdded.length }})</h3>
+            <ul>
+              <li v-for="e in diffAdded" :key="'a_' + e.middle_path" class="mono">
+                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
+              </li>
+            </ul>
           </div>
-        </el-tab-pane>
-
-        <!-- Logs Tab -->
-        <el-tab-pane label="Logs" name="logs">
-          <div class="logs-content">
-            <el-empty description="Operation logs - Coming soon" />
+          <div v-if="diffModified.length" class="fg-diff-group">
+            <h3><el-icon><Refresh /></el-icon> Modified ({{ diffModified.length }})</h3>
+            <ul>
+              <li v-for="e in diffModified" :key="'m_' + e.middle_path" class="mono">
+                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
+              </li>
+            </ul>
           </div>
-        </el-tab-pane>
-      </el-tabs>
-    </el-card>
+          <div v-if="diffDeleted.length" class="fg-diff-group">
+            <h3><el-icon><Delete /></el-icon> Deleted ({{ diffDeleted.length }})</h3>
+            <ul>
+              <li v-for="e in diffDeleted" :key="'d_' + e.middle_path" class="mono">
+                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="fg-card">
+        <h2>Index &amp; Cleanup</h2>
+        <div class="fg-actions">
+          <el-button :icon="Refresh" :disabled="!canRebuildLocal" @click="rebuildLocalIndex">
+            Rebuild Local Index
+          </el-button>
+          <el-button :icon="Refresh" :disabled="!canRebuildCloud" @click="rebuildCloudIndex">
+            Rebuild Cloud Index…
+          </el-button>
+          <el-button :icon="Delete" :disabled="!canCleanup" @click="cleanup('expired')">
+            Cleanup Expired
+          </el-button>
+          <el-button :icon="Delete" type="danger" plain :disabled="!canCleanup" @click="cleanup('all')">
+            Cleanup All
+          </el-button>
+        </div>
+      </section>
+
+      <section class="fg-card">
+        <h2>Config</h2>
+        <el-form v-if="config" label-position="top">
+          <el-form-item label="Local path">
+            <el-input :model-value="config.local_path" disabled />
+          </el-form-item>
+          <el-form-item label="Mode (immutable)">
+            <el-input :model-value="config.mode" disabled />
+          </el-form-item>
+          <el-form-item label="Remote path (cloud folder)">
+            <el-input v-model="editRemotePath" placeholder="/backup/photos" spellcheck="false" />
+          </el-form-item>
+          <el-form-item v-if="config.mode === 'ENCRYPTED'" label="Password">
+            <el-input
+              v-model="editPassword"
+              type="password"
+              show-password
+              :placeholder="config.password_set ? 'set already — enter new to change' : 'set a password'"
+              spellcheck="false" />
+            <p class="fg-hint">
+              Stored in <code>.fgit/config.json</code> (that folder is gitignored).
+              AES-256-GCM keyed by scrypt(password, remote_path).
+            </p>
+          </el-form-item>
+          <el-form-item label="Auto-cleanup retention (days)">
+            <el-input-number v-model="editHookDays" :min="0" :max="365" />
+          </el-form-item>
+        </el-form>
+        <div class="fg-actions">
+          <el-button type="primary" @click="saveConfig" :loading="isBusy">Save Config</el-button>
+          <el-button @click="loadConfig">Discard</el-button>
+        </div>
+      </section>
+
+    </main>
   </div>
 </template>
 
-<script setup lang="ts">
-import { ArrowLeft, FolderOpened, Refresh, Upload, Download, CircleCheck, Plus, Edit, Delete, Document } from '@element-plus/icons-vue'
+<script lang="ts" setup>
+import { computed } from 'vue'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
+import {
+  ArrowLeft, FolderOpened, Refresh, Upload, Download, Check,
+  View, Plus, Delete, Lock,
+} from '@element-plus/icons-vue'
 
+const view = useFileGitRepoDetail()
 const {
-  repo,
-  status,
-  activeTab,
-  isLoading,
-  isLoadingStatus,
-  isPushing,
-  isPulling,
-  hasChanges,
-  fileQueue,
-  visibleFiles,
-  isOperating,
-  getFileStatus,
-  getFileAction,
-  getActionType,
-  goBack,
-  openFolder,
-  refreshStatus,
-  formatFileSize,
-  pushChanges,
-  pullChanges
-} = useFileGitRepoDetail()
+  repo, queue, config, isLoading, isBusy,
+  isLocked, lockActionType, pendingUploadCount, pendingQueueCount,
+  isEncrypted,
+  canPushPull, canResume,
+  canManualUploadPrepare, canPostManualUpload,
+  canPreManualDownload, canPostManualDownload,
+  canDiff, canRebuildLocal, canRebuildCloud, canCleanup,
+  diffAdded, diffModified, diffDeleted, diffMessage,
+  editPassword, editRemotePath, editHookDays, manualSubpath,
+  loadAll, loadConfig,
+  push, pull, resume,
+  manualUpload, postManualUpload,
+  preManualDownload, postManualDownload,
+  runDiff, rebuildLocalIndex, rebuildCloudIndex,
+  cleanup, openFolder, goBack, saveConfig,
+} = view
+
+const lockLabel = computed(() => {
+  switch (lockActionType.value) {
+    case 'push': return 'Push'
+    case 'pull': return 'Pull'
+    case 'manual_upload': return 'Manual upload'
+    case 'manual_download': return 'Manual download'
+    default: return 'Operation'
+  }
+})
+
+function statusColor(status?: string) {
+  if (status === 'ready') return 'success'
+  if (status === 'syncing') return 'warning'
+  if (status === 'locked') return 'warning'
+  return 'danger'
+}
+
+function formatSize(n: number) {
+  if (!Number.isFinite(n)) return '?'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  return `${(n / 1024 ** 3).toFixed(2)} GB`
+}
 </script>
 
 <style scoped>
-.repo-detail-container {
-  padding: 20px;
-  max-width: 100vw;
-  overflow-x: hidden;
+.fg-detail {
   min-height: 100vh;
-  height: 100vh;
   background: #f5f5f7;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: row;
-  gap: 16px;
-}
-
-.sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-self: flex-start;
-}
-
-.back-button {
-  margin-bottom: 12px;
-  padding-left: 0 !important;
-}
-
-.sidebar-card {
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-.sidebar-card :deep(.el-card__body) {
-  padding: 16px;
-}
-
-.card-header {
-  font-size: 13px;
-  font-weight: 600;
   color: #1d1d1f;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
-
-.sidebar-card :deep(.el-card__header) {
-  padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-/* Info Card */
-.info-card .repo-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.repo-icon {
-  font-size: 24px;
-  color: #007aff;
-  flex-shrink: 0;
-}
-
-.repo-title h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.3px;
-  word-break: break-word;
-}
-
-.meta-tags {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 16px;
-}
-
-.quick-button {
-  width: 100%;
-  height: 32px;
-  justify-content: flex-start !important;
-  padding: 0 12px !important;
-  margin: 0 !important;
-}
-
-.quick-button :deep(.el-icon) {
-  margin-right: 8px !important;
-  margin-left: 0 !important;
-  font-size: 14px;
-}
-
-.quick-button :deep(span) {
-  font-size: 13px;
-  margin-left: 0 !important;
-}
-
-/* Stats Card */
-.stats-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.stat-row {
+.fg-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(245, 245, 247, 0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 12px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 10px;
-  background: #f5f5f7;
-  border-radius: 6px;
-  transition: background 0.2s;
+  gap: 16px;
 }
-
-.stat-row:hover {
-  background: #ebebed;
+.fg-topbar-left {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
 }
-
-.stat-label {
-  font-size: 13px;
-  color: #1d1d1f;
-  font-weight: 500;
-}
-
-.stat-value {
-  font-size: 15px;
+.fg-topbar-left h1 {
+  font-size: 17px;
+  margin: 0;
   font-weight: 600;
 }
-
-.stat-row.added .stat-value {
-  color: #34c759;
-}
-
-.stat-row.modified .stat-value {
-  color: #ff9500;
-}
-
-.stat-row.deleted .stat-value {
-  color: #ff3b30;
-}
-
-.stat-row.total .stat-value {
-  color: #1d1d1f;
-}
-
-/* Actions Card */
-.actions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.action-button {
-  width: 100%;
-  height: 36px;
-  justify-content: flex-start !important;
-  padding: 0 12px !important;
-  margin: 0 !important;
-}
-
-.action-button :deep(.el-icon) {
-  margin-right: 8px !important;
-  margin-left: 0 !important;
-  font-size: 16px;
-}
-
-.action-button :deep(span) {
-  font-size: 14px;
-  margin-left: 0 !important;
-}
-
-.content-card {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  border-radius: 12px;
-  border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
-  min-width: 0;
-}
-
-.content-card :deep(.el-card__body) {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.content-tabs {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.content-tabs :deep(.el-tabs__header) {
-  margin: 0;
-  padding: 0 24px;
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.content-tabs :deep(.el-tabs__content) {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 24px;
-  min-height: 0;
-}
-
-.changes-content {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.changes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.change-group {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.group-title {
+.fg-topbar-right {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: #1d1d1f;
-  letter-spacing: -0.2px;
 }
-
-.added-title {
-  color: #34c759;
-}
-
-.modified-title {
-  color: #ff9500;
-}
-
-.deleted-title {
-  color: #ff3b30;
-}
-
-.file-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.file-item {
+.fg-banner {
+  max-width: 900px;
+  margin: 12px auto 0;
+  padding: 12px 16px;
+  background: #fff8e6;
+  border: 1px solid #f5d97e;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e5e5e7;
-  transition: all 0.2s;
 }
-
-.file-item:hover {
-  border-color: #d2d2d7;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+.fg-banner-body { flex: 1; }
+.fg-banner-title {
+  font-weight: 600;
+  color: #7a5a00;
 }
-
-/* Status-based styling */
-.file-item.status-uploading {
-  background: #f0f9ff;
-  border-left-width: 3px;
+.fg-banner-sub {
+  font-size: 12px;
+  color: #7a5a00;
+  margin-top: 2px;
 }
-
-.file-item.status-success {
-  background: #f0fff4;
-  border-left-width: 3px;
-}
-
-.file-item.status-error {
-  background: #fff0f0;
-  border-left-width: 3px;
-}
-
-.file-icon {
-  font-size: 20px;
-  color: #86868b;
-  flex-shrink: 0;
-}
-
-.file-item.status-uploading .file-icon {
-  color: #007aff;
-}
-
-.file-item.status-success .file-icon {
-  color: #34c759;
-}
-
-.file-item.status-error .file-icon {
-  color: #ff3b30;
-}
-
-.file-info {
-  flex: 1;
-  min-width: 0;
+.fg-content {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
   display: flex;
   flex-direction: column;
+  gap: 16px;
+}
+.fg-card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  padding: 16px 20px;
+}
+.fg-card h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.fg-hint {
+  font-size: 12px;
+  color: #86868b;
+  margin: 0 0 12px;
+}
+.fg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fg-diff-summary {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #f5f5f7;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.fg-diff-lists {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fg-diff-group h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
   gap: 4px;
 }
-
-.file-path {
-  font-size: 14px;
-  color: #1d1d1f;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.fg-diff-group ul {
+  margin: 0;
+  padding-left: 20px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
 }
-
-.file-action-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  width: fit-content;
+.fg-diff-group li {
+  padding: 2px 0;
 }
-
-/* Action type colors */
-.file-action-badge.action-type-uploading {
-  background: #f0f9ff;
-  color: #007aff;
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
 }
-
-.file-action-badge.action-type-downloading {
-  background: #f0f4ff;
-  color: #5856d6;
-}
-
-.file-action-badge.action-type-remote-deleting {
-  background: #fff0f0;
-  color: #ff3b30;
-}
-
-.file-action-badge.action-type-local-deleting {
-  background: #fff5e5;
-  color: #ff9500;
-}
-
-.file-size {
-  font-size: 13px;
+.fg-size {
   color: #86868b;
-  flex-shrink: 0;
-}
-
-.added-item {
-  border-left: 3px solid #34c759;
-}
-
-.modified-item {
-  border-left: 3px solid #ff9500;
-}
-
-.deleted-item {
-  border-left: 3px solid #ff3b30;
-  opacity: 0.7;
-}
-
-.no-changes {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 300px;
-}
-
-/* Rotating animation */
-@keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.rotating {
-  animation: rotate 2s linear infinite;
+  font-size: 11px;
 }
 </style>
-
-
