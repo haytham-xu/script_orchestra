@@ -54,6 +54,9 @@ typing_extensions==4.15.0
 Werkzeug==3.1.3
 wsproto==1.3.2
 
+# file-git tool — AES-256-GCM encryption (pulls in cffi as a dependency)
+cryptography==49.0.0
+
 # assistant tool — Claude API client (pin to poc03's version for parity)
 anthropic==0.42.0
 
