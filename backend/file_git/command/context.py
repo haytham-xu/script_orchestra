@@ -90,15 +90,21 @@ def build_context(repo_id: str) -> RepoContext:
 def _build_storage() -> CloudStorage:
     """Pick a CloudStorage backend based on global settings.
 
-    For now only MockCloudStorage is available; BaiduStorage will land
-    in phase 6. Falls back to a local mock root under
-    ``<file_git>/mock_cloud_storage/`` for development.
+    When ``use_mock_baidu`` is true (default) we use a local-filesystem
+    MockCloudStorage. Otherwise we use the real BaiduCloudStorage, whose
+    token is refreshed automatically via baidu_oauth.get_valid_token.
     """
     settings = SettingsManager.get_settings()
-    # In phase 1-5 the only backend is mock. Point it at a stable
-    # per-installation folder so restarts see the same "cloud".
-    mock_root = os.environ.get("FILE_GIT_MOCK_ROOT")
-    if not mock_root:
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        mock_root = os.path.join(base, "mock_cloud_storage")
-    return MockCloudStorage(mock_root)
+    if settings.get("use_mock_baidu", True):
+        mock_root = os.environ.get("FILE_GIT_MOCK_ROOT")
+        if not mock_root:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            mock_root = os.path.join(base, "mock_cloud_storage")
+        return MockCloudStorage(mock_root)
+
+    from ..cloud import BaiduCloudStorage
+    from .. import baidu_oauth
+    return BaiduCloudStorage(
+        token_provider=baidu_oauth.get_valid_token,
+        root_prefix=SettingsManager.get_baidu_root_prefix(),
+    )

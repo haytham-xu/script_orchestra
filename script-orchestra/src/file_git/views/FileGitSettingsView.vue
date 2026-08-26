@@ -12,11 +12,50 @@
 
     <main class="fg-content">
       <section class="fg-card">
+        <h2>Baidu Cloud Connection</h2>
+        <p class="fg-hint">
+          Use the real Baidu NetDisk backend instead of the local mock.
+          Toggle off "Use mock" and connect your Baidu account.
+        </p>
+        <el-form label-position="top">
+          <el-form-item label="Use mock storage (local, no cloud)">
+            <el-switch v-model="settings.use_mock_baidu" />
+          </el-form-item>
+        </el-form>
+        <div class="fg-conn">
+          <el-tag v-if="baiduConnected" type="success">
+            Connected{{ baiduName ? ': ' + baiduName : '' }}
+          </el-tag>
+          <el-tag v-else type="info">Not connected</el-tag>
+          <el-button size="small" @click="connectBaidu">Connect Baidu</el-button>
+          <el-button size="small" text @click="refreshBaiduStatus">Refresh status</el-button>
+        </div>
+      </section>
+
+      <!-- In-page OAuth: Baidu authorize page loads in an iframe; the callback
+           page posts a message back to auto-close and refresh status. -->
+      <el-dialog
+        v-model="authDialogVisible"
+        title="Connect Baidu"
+        width="640px"
+        top="5vh"
+        @close="closeAuthDialog">
+        <iframe
+          v-if="authUrl"
+          :src="authUrl"
+          class="fg-auth-frame"
+          referrerpolicy="no-referrer" />
+        <template #footer>
+          <span class="fg-hint">Authorize in the frame above; this closes automatically when done.</span>
+        </template>
+      </el-dialog>
+
+      <section class="fg-card">
         <h2>Baidu Cloud Credentials</h2>
         <p class="fg-hint">
-          Placeholder for a future BaiduStorage backend. The current build
-          uses a local MockCloudStorage (development). Repo-level password
-          &amp; remote_path live in the repository detail page.
+          App credentials from the Baidu open platform. Tokens are filled in
+          automatically after "Connect Baidu". Repo-level password &amp;
+          remote_path live in the repository detail page.
         </p>
         <el-form label-position="top" v-if="settings.baidu_cloud">
           <el-form-item label="App ID">
@@ -28,17 +67,20 @@
           <el-form-item label="Secret Key">
             <el-input v-model="settings.baidu_cloud.secret_key" type="password" show-password spellcheck="false" />
           </el-form-item>
-          <el-form-item label="Sign Code">
-            <el-input v-model="settings.baidu_cloud.sign_code" type="password" show-password spellcheck="false" />
+          <el-form-item label="Root prefix (app directory)">
+            <el-input v-model="settings.baidu_cloud.root_prefix" placeholder="/apps/sync-assistant" spellcheck="false" />
           </el-form-item>
-          <el-form-item label="Access Token">
+          <el-form-item label="Access Token (auto)">
             <el-input v-model="settings.baidu_cloud.access_token" type="password" show-password spellcheck="false" />
           </el-form-item>
-          <el-form-item label="Refresh Token">
+          <el-form-item label="Refresh Token (auto)">
             <el-input v-model="settings.baidu_cloud.refresh_token" type="password" show-password spellcheck="false" />
           </el-form-item>
-          <el-form-item label="Expires In">
-            <el-input v-model="settings.baidu_cloud.expires_in" spellcheck="false" />
+          <el-form-item label="Token expires (auto)">
+            <el-input
+              :model-value="baiduExpiresBeijing || 'not connected'"
+              disabled
+              spellcheck="false" />
           </el-form-item>
         </el-form>
         <div class="fg-actions">
@@ -54,7 +96,12 @@
 import { useFileGitSettingsView } from './FileGitSettingsView'
 import { ArrowLeft } from '@element-plus/icons-vue'
 
-const { settings, isLoading, isSaving, load, save, goBack } = useFileGitSettingsView()
+const {
+  settings, isLoading, isSaving,
+  baiduConnected, baiduName, baiduExpiresBeijing,
+  authDialogVisible, authUrl,
+  load, save, connectBaidu, refreshBaiduStatus, closeAuthDialog, goBack,
+} = useFileGitSettingsView()
 </script>
 
 <style scoped>
@@ -112,5 +159,18 @@ const { settings, isLoading, isSaving, load, save, goBack } = useFileGitSettings
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+.fg-conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fg-auth-frame {
+  width: 100%;
+  height: 70vh;
+  border: none;
+}
+.fg-content > .fg-card + .fg-card {
+  margin-top: 16px;
 }
 </style>

@@ -47,6 +47,86 @@ export function useFileGitRepoDetail() {
   // Manual upload state
   const manualSubpath = ref('')
 
+  // Baidu root prefix (from global settings) — used to preview the final
+  // remote path the repo maps to on the cloud.
+  const rootPrefix = ref('')
+
+  // The absolute cloud path this repo's files land under, combining the
+  // global root_prefix with the repo's remote_path. Normalizes slashes.
+  const finalRemotePath = computed(() => {
+    const root = (rootPrefix.value || '').replace(/\/+$/, '')
+    const rp = (editRemotePath.value || '').trim().replace(/^\/+/, '').replace(/\/+$/, '')
+    if (!rp) return ''
+    return root ? `${root}/${rp}` : `/${rp}`
+  })
+
+  // ------------------------------------------------------------------
+  // Sync filter (selective sync) tree
+  // ------------------------------------------------------------------
+
+  // The sync decision, edited locally and PUT on save. The backend resolves
+  // each path by longest-prefix match (parent→child cascade, override wins).
+  const syncDecision = ref<{ checked_prefixes: string[]; unchecked_overrides: string[] }>({
+    checked_prefixes: [],
+    unchecked_overrides: [],
+  })
+  const syncDirty = ref(false)
+
+  // el-tree lazy loader: fetch a node's children from the backend.
+  async function loadSyncChildren(node: any, resolve: (data: any[]) => void) {
+    const parentPath = node.level === 0 ? '' : node.data.path
+    try {
+      const res = node.level === 0
+        ? await FileGitService.getSyncFilter(repoId.value)
+        : await FileGitService.getSyncFilterChildren(repoId.value, parentPath)
+      if (node.level === 0 && res.success && (res as any).filter) {
+        syncDecision.value = (res as any).filter
+        syncDirty.value = false
+      }
+      const children = (res as any).children || []
+      resolve(children.map((c: any) => ({
+        label: c.name,
+        path: c.path,
+        isLeaf: !c.is_dir,
+        kind: c.kind,
+        synced: c.synced,
+        checked: c.checked,
+      })))
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load sync tree')
+      resolve([])
+    }
+  }
+
+  // Toggle a node's sync decision. Setting checked → add to checked_prefixes
+  // and drop any override; unchecking → add an unchecked_override.
+  function toggleSyncNode(path: string, checked: boolean) {
+    const dec = syncDecision.value
+    const strip = (arr: string[]) => arr.filter((p) => p !== path)
+    if (checked) {
+      dec.checked_prefixes = [...new Set([...strip(dec.checked_prefixes), path])]
+      dec.unchecked_overrides = strip(dec.unchecked_overrides)
+    } else {
+      dec.unchecked_overrides = [...new Set([...strip(dec.unchecked_overrides), path])]
+      dec.checked_prefixes = strip(dec.checked_prefixes)
+    }
+    syncDirty.value = true
+  }
+
+  async function saveSyncFilter() {
+    try {
+      const res = await FileGitService.updateSyncFilter(repoId.value, syncDecision.value)
+      if (res.success) {
+        syncDirty.value = false
+        ElMessage.success(res.message || 'Sync filter saved (applies on next push/pull)')
+      } else {
+        ElMessage.error(res.error || 'Failed to save sync filter')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to save sync filter')
+    }
+  }
+
   // ------------------------------------------------------------------
   // Derived
   // ------------------------------------------------------------------
@@ -89,7 +169,7 @@ export function useFileGitRepoDetail() {
   async function loadAll() {
     isLoading.value = true
     try {
-      await Promise.all([loadStatus(), loadConfig()])
+      await Promise.all([loadStatus(), loadConfig(), loadRootPrefix()])
     } finally {
       isLoading.value = false
     }
@@ -122,6 +202,17 @@ export function useFileGitRepoDetail() {
       }
     } catch (e: any) {
       ElMessage.error(e.response?.data?.error || e.message || 'Failed to load config')
+    }
+  }
+
+  async function loadRootPrefix() {
+    try {
+      const res = await FileGitService.getSettings()
+      if (res.success && res.settings) {
+        rootPrefix.value = res.settings.baidu_cloud?.root_prefix || ''
+      }
+    } catch {
+      // Non-fatal: the preview just omits the root prefix.
     }
   }
 
@@ -317,6 +408,13 @@ export function useFileGitRepoDetail() {
     repo,
     queue,
     config,
+    rootPrefix,
+    finalRemotePath,
+    syncDecision,
+    syncDirty,
+    loadSyncChildren,
+    toggleSyncNode,
+    saveSyncFilter,
     isLoading,
     isBusy,
     isLocked,

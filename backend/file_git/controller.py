@@ -17,6 +17,7 @@ import os
 import platform
 import subprocess
 from flask import request
+from flask import Response
 from flask_restx import Namespace, Resource
 
 from extensions import restx_api
@@ -36,7 +37,9 @@ from .command import (
 )
 from .repository_manager import RepositoryManager
 from .service import QueueService
+from .service import sync_filter_service as SyncFilterService
 from .settings_manager import SettingsManager
+from . import baidu_oauth
 
 ns = Namespace("")
 
@@ -487,6 +490,104 @@ class SettingsResource(Resource):
                 "settings": SettingsManager.update_settings(data),
                 "message": "Settings updated successfully",
             })
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/baidu/auth-url')
+class BaiduAuthUrlResource(Resource):
+    def get(self):
+        try:
+            return _ok({"url": baidu_oauth.build_auth_url()})
+        except Exception as exc:
+            return _err(str(exc), 400)
+
+
+@ns.route('/file-git/baidu/callback')
+class BaiduCallbackResource(Resource):
+    def get(self):
+        # Baidu redirects here with ?code=... after the user authorizes.
+        code = request.args.get('code', '')
+        if not code:
+            return _err("Missing code", 400)
+        try:
+            baidu_oauth.exchange_code(code)
+            body = (
+                "<html><body style='font-family:sans-serif;padding:40px'>"
+                "<h2>✓ Baidu connected</h2>"
+                "<p>You can close this window and return to File-Git.</p>"
+                "<script>"
+                "try{window.parent&&window.parent.postMessage("
+                "{type:'baidu-oauth',status:'ok'},'*');}catch(e){}"
+                "try{if(window.opener)window.opener.postMessage("
+                "{type:'baidu-oauth',status:'ok'},'*');}catch(e){}"
+                "setTimeout(function(){try{window.close();}catch(e){}},800);"
+                "</script>"
+                "</body></html>")
+            return Response(body, mimetype='text/html')
+        except Exception as exc:
+            body = (
+                f"<html><body style='font-family:sans-serif;padding:40px'>"
+                f"<h2>Connection failed</h2><pre>{exc}</pre>"
+                f"<script>try{{window.parent&&window.parent.postMessage("
+                f"{{type:'baidu-oauth',status:'error'}},'*');}}catch(e){{}}</script>"
+                f"</body></html>")
+            return Response(body, mimetype='text/html', status=500)
+
+
+@ns.route('/file-git/baidu/status')
+class BaiduStatusResource(Resource):
+    def get(self):
+        try:
+            return _ok(baidu_oauth.get_status())
+        except Exception as exc:
+            return _err(str(exc))
+
+
+def _repo_root_or_none(repo_id: str):
+    repo = RepositoryManager.get_repo_by_id(repo_id)
+    return repo['local_path'] if repo else None
+
+
+@ns.route('/file-git/repos/<string:repo_id>/sync-filter')
+class SyncFilterResource(Resource):
+    def get(self, repo_id):
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            SyncFilterService.refresh_defaults(root)
+            return _ok({
+                "filter": SyncFilterService.load(root),
+                "children": SyncFilterService.list_children(root, ""),
+            })
+        except Exception as exc:
+            return _err(str(exc))
+
+    def put(self, repo_id):
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            data = request.get_json() or {}
+            filt = SyncFilterService.load(root)
+            filt["checked_prefixes"] = data.get("checked_prefixes", filt["checked_prefixes"])
+            filt["unchecked_overrides"] = data.get("unchecked_overrides", filt["unchecked_overrides"])
+            SyncFilterService.save(root, filt)
+            return _ok({"filter": filt, "message": "Sync filter saved (applies on next push/pull)"})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/sync-filter/children')
+class SyncFilterChildrenResource(Resource):
+    def get(self, repo_id):
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            parent = request.args.get('path', '')
+            return _ok({"children": SyncFilterService.list_children(root, parent)})
         except Exception as exc:
             return _err(str(exc))
 

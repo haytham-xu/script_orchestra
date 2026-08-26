@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..service import IndexService, LoggerService, QueueService
+from ..service import sync_filter_service as SyncFilterService
 from ..service.action_executor import ActionExecutor  # noqa: F401 (docs)
 from ..service.queue_service import ActionType, LockError
 from ..repository_manager import RepositoryManager
@@ -68,9 +69,17 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
         )
         diff = IndexService.diff(local_index, cloud_index)
 
+        # Sync filter: only act on folders the user has checked. Unchecked
+        # subtrees are invisible to push — crucially, a local file missing
+        # under an unchecked subtree never becomes a REMOTE_DELETE, so the
+        # remote archive is never trimmed by local absence.
+        filt = SyncFilterService.load(ctx.repo_root)
+
         # Step 5: enqueue
         state = QueueService.load(ctx.repo_root)
         for entry in diff.added + diff.modified:
+            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+                continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
                 "middle_path": entry["middle_path"],
@@ -79,6 +88,8 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
                 "action": ActionType.UPLOAD.value,
             })
         for entry in diff.deleted:
+            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+                continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
                 "middle_path": entry["middle_path"],

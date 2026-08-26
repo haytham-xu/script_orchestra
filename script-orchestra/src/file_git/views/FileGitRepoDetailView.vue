@@ -192,6 +192,9 @@
           </el-form-item>
           <el-form-item label="Remote path (cloud folder)">
             <el-input v-model="editRemotePath" placeholder="/backup/photos" spellcheck="false" />
+            <p class="fg-hint" v-if="finalRemotePath">
+              Final cloud path: <code>{{ finalRemotePath }}</code>
+            </p>
           </el-form-item>
           <el-form-item v-if="config.mode === 'ENCRYPTED'" label="Password">
             <el-input
@@ -212,6 +215,44 @@
         <div class="fg-actions">
           <el-button type="primary" @click="saveConfig" :loading="isBusy">Save Config</el-button>
           <el-button @click="loadConfig">Discard</el-button>
+        </div>
+      </section>
+
+      <section class="fg-card">
+        <h2>Sync Filter</h2>
+        <p class="fg-hint">
+          Choose which folders participate in push/pull. Changes apply on the
+          next push/pull, not immediately. Unchecking a folder moves its local
+          files to the buffer (remote copy is kept). Refresh the remote view
+          with <b>Rebuild Cloud Index</b> above.
+        </p>
+        <el-tree
+          :key="repoId"
+          lazy
+          :load="loadSyncChildren"
+          :props="{ label: 'label', isLeaf: 'isLeaf' }"
+          node-key="path"
+          show-checkbox
+          :check-strictly="false"
+          @check-change="(data: any, checked: boolean) => toggleSyncNode(data.path, checked)">
+          <template #default="{ data }">
+            <span class="fg-sync-node" :class="{ 'fg-sync-danger': !data.checked && data.kind === 'local-only' }">
+              <span>{{ data.label }}</span>
+              <el-tag
+                size="small"
+                :type="data.kind === 'both' ? 'success' : data.kind === 'local-only' ? 'info' : 'warning'">
+                {{ data.kind === 'both' ? 'backed up' : data.kind === 'local-only' ? 'local only' : 'remote only' }}
+              </el-tag>
+              <span v-if="!data.checked && data.kind === 'local-only'" class="fg-sync-warn">
+                not backed up — sync will refuse
+              </span>
+            </span>
+          </template>
+        </el-tree>
+        <div class="fg-actions">
+          <el-button type="primary" :disabled="!syncDirty" @click="saveSyncFilter">
+            Save Sync Filter
+          </el-button>
         </div>
       </section>
 
@@ -238,6 +279,8 @@ const {
   canDiff, canRebuildLocal, canRebuildCloud, canCleanup,
   diffAdded, diffModified, diffDeleted, diffMessage,
   editPassword, editRemotePath, editHookDays, manualSubpath,
+  finalRemotePath,
+  repoId, syncDirty, loadSyncChildren, toggleSyncNode, saveSyncFilter,
   loadAll, loadConfig,
   push, pull, resume,
   manualUpload, postManualUpload,
@@ -357,6 +400,18 @@ function formatSize(n: number) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.fg-sync-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fg-sync-danger {
+  color: #c0392b;
+}
+.fg-sync-warn {
+  font-size: 11px;
+  color: #c0392b;
 }
 .fg-diff-summary {
   margin-top: 12px;

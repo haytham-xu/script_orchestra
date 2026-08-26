@@ -88,6 +88,28 @@ class SettingsManager:
         return settings.get('baidu_cloud', {})
 
     @staticmethod
+    def update_baidu_credentials(patch: Dict) -> Dict:
+        """Merge a partial patch into the baidu_cloud block and persist.
+
+        Used by the OAuth flow to write access_token / refresh_token /
+        expires_in / token_acquired_at without touching other settings.
+        """
+        current = SettingsManager._load_settings()
+        current.setdefault('baidu_cloud', {}).update(patch)
+        SettingsManager._save_settings(current)
+        return current['baidu_cloud']
+
+    @staticmethod
+    def get_baidu_root_prefix() -> str:
+        """Restricted Baidu apps can only read/write under /apps/<app>.
+
+        The prefix is stored in baidu_cloud.root_prefix; defaults to
+        /apps/sync-assistant (the user's existing app directory).
+        """
+        creds = SettingsManager.get_baidu_credentials()
+        return creds.get('root_prefix') or '/apps/sync-assistant'
+
+    @staticmethod
     def is_mock_enabled() -> bool:
         """Check if mock Baidu Cloud is enabled"""
         settings = SettingsManager._load_settings()

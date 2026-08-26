@@ -17,14 +17,21 @@ Flow (symmetric to push):
 from __future__ import annotations
 
 import io
+import os
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 
 from ..repository_manager import RepositoryManager
 from ..service import IndexService, LoggerService, QueueService
+from ..service import sync_filter_service as SyncFilterService
 from ..service.queue_service import ActionType, LockError
 from ._consume import ConsumeCounters, ProgressFn, consume_queue
 from .context import RepoContext, build_context
+
+
+class UnsyncedNoBackupError(Exception):
+    """A file was un-checked but has no remote backup — refuse to move it."""
 
 
 @dataclass
@@ -51,6 +58,11 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
     try:
         RepositoryManager.update_status(ctx.repo_id, "syncing")
 
+        # Step 0: apply sync-filter un-checks — move now-excluded local files
+        # to the unsynced buffer (never delete). Refuses to move a file that
+        # has no remote backup (that would leave only the buffer copy).
+        _apply_unchecks(ctx, progress)
+
         # Step 3: download & decrypt cloud_index blob
         if progress:
             progress("cloud_index", 0, 0, "fetching cloud_index")
@@ -74,8 +86,15 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
         # not local" → needs DOWNLOAD.
         diff = IndexService.diff(cloud_index, local_index)
 
+        # Sync filter: only pull folders the user has checked.
+        filt = SyncFilterService.load(ctx.repo_root)
+
         state = QueueService.load(ctx.repo_root)
         for entry in diff.added + diff.modified:
+            # Only download files under checked subtrees; never pull back
+            # folders the user chose to keep remote-only.
+            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+                continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
                 "middle_path": entry["middle_path"],
@@ -84,7 +103,11 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
                 "action": ActionType.DOWNLOAD.value,
             })
         for entry in diff.deleted:
-            # deleted from cloud POV = in local but not in cloud → trash local
+            # In local but not cloud. Only trash it when the path is still
+            # synced (i.e. cloud-authoritative deletion). Un-checked local
+            # files are handled by the move-to-buffer step below, not here.
+            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+                continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
                 "middle_path": entry["middle_path"],
@@ -125,6 +148,19 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
             action_folder=action_folder,
         )
 
+    except UnsyncedNoBackupError as exc:
+        # Safety refusal: don't leave the repo locked.
+        QueueService.release(ctx.repo_root)
+        RepositoryManager.update_status(ctx.repo_id, "ready")
+        LoggerService.log_error(
+            ctx.repo_root, action_folder, "PULL", "-", f"refused: {exc}"
+        )
+        return PullResult(
+            ok=False,
+            message=str(exc),
+            action_folder=action_folder,
+        )
+
     except Exception as exc:
         RepositoryManager.update_status(ctx.repo_id, "error")
         LoggerService.log_error(
@@ -140,6 +176,45 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
 # ----------------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------------
+
+def _apply_unchecks(ctx: RepoContext, progress: Optional[ProgressFn]) -> None:
+    """Move local files that are no longer synced into the unsynced buffer.
+
+    Runs before scanning, so the fresh local_index reflects the moves.
+    Refuses (raises UnsyncedNoBackupError) if a file has no remote backup —
+    moving it would leave only the buffer copy, defeating the point.
+    """
+    # First scan the current local index so the filter sees real files.
+    local_index = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
+    IndexService.save_local_index(ctx.repo_root, local_index)
+
+    to_move = SyncFilterService.unsynced_local_files(ctx.repo_root)
+    if not to_move:
+        return
+
+    no_backup = [m["middle_path"] for m in to_move if not m["has_remote_backup"]]
+    if no_backup:
+        preview = ", ".join(no_backup[:5])
+        more = "" if len(no_backup) <= 5 else f" (+{len(no_backup) - 5} more)"
+        raise UnsyncedNoBackupError(
+            f"Refusing to move {len(no_backup)} un-checked file(s) with no remote "
+            f"backup: {preview}{more}. Push them first, or re-check the folder."
+        )
+
+    buffer_root = os.path.join(ctx.repo_root, ".fgit", "buffer", "_unsynced")
+    moved = 0
+    for m in to_move:
+        mp = m["middle_path"]
+        src = os.path.join(ctx.repo_root, *mp.split("/"))
+        if not os.path.exists(src):
+            continue
+        dst = os.path.join(buffer_root, *mp.split("/"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+        moved += 1
+    if progress:
+        progress("unsync", moved, len(to_move), f"moved {moved} unsynced file(s) to buffer")
+
 
 def _key_for(entry: dict) -> str:
     import hashlib

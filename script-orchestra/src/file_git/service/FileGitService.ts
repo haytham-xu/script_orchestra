@@ -197,6 +197,17 @@ export interface SettingsResponse {
   error?: string
 }
 
+export type SyncFilterKind = 'both' | 'local-only' | 'remote-only'
+
+export interface SyncFilterChild {
+  name: string
+  path: string          // middle_path relative to remote_path
+  is_dir: boolean
+  kind: SyncFilterKind
+  synced: boolean       // remote has it (backed up)
+  checked: boolean      // current sync decision
+}
+
 // ---------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------
@@ -373,6 +384,59 @@ export class FileGitService {
       patch,
       jsonHeaders,
     )
+    return data
+  }
+
+  // ---- Baidu OAuth --------------------------------------------------
+
+  static async getBaiduAuthUrl(): Promise<{ success: boolean; url?: string; error?: string }> {
+    const { data } = await axios.get(BACKEND_BASE_URL + '/file-git/baidu/auth-url')
+    return data
+  }
+
+  static async getBaiduStatus(): Promise<{
+    success: boolean
+    connected?: boolean
+    baidu_name?: string
+    expires_at?: number
+    error?: string
+  }> {
+    const { data } = await axios.get(BACKEND_BASE_URL + '/file-git/baidu/status')
+    return data
+  }
+
+  // ---- Sync filter (selective sync) ---------------------------------
+
+  static async getSyncFilter(repoId: string): Promise<{
+    success: boolean
+    filter?: { checked_prefixes: string[]; unchecked_overrides: string[] }
+    children?: SyncFilterChild[]
+    error?: string
+  }> {
+    const { data } = await axios.get(
+      `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter`)
+    return data
+  }
+
+  static async getSyncFilterChildren(repoId: string, path: string): Promise<{
+    success: boolean
+    children?: SyncFilterChild[]
+    error?: string
+  }> {
+    const { data } = await axios.get(
+      `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter/children`,
+      { params: { path } })
+    return data
+  }
+
+  static async updateSyncFilter(
+    repoId: string,
+    decision: { checked_prefixes: string[]; unchecked_overrides: string[] },
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const { data } = await axios.put(
+      `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter`,
+      decision,
+      jsonHeaders)
     return data
   }
 }
