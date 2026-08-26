@@ -7,7 +7,7 @@ All user settings are managed through manga_viewer_settings.json
 from . import settings_manager
 
 # API Configuration
-HOST_URL = 'http://127.0.0.1:5001'
+HOST_URL = 'http://127.0.0.1:50001'
 
 # File type extensions
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp')

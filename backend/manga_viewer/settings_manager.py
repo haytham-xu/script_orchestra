@@ -21,13 +21,23 @@ class SettingsManager:
             self._save_settings(self._get_default_settings())
 
     def _get_default_settings(self) -> dict:
-        """Get default settings structure with empty values."""
+        """Get default settings structure with empty values.
+
+        paths is intentionally minimal: manga viewer is a reading +
+        light-classification tool. The scan source is derived from the
+        category main×sub folder combinations, and the index lives under
+        root_path (see get_index_path_derived).
+        """
         return {
             "random": {
                 "count": 10,
                 "enabled": True
             },
             "categories": {
+                # each entry: {"key": str, "name": str, "path": str}
+                #   key  = shown in UI + used as the category label
+                #   name = currently unused, kept for future use
+                #   path = on-disk folder name under root_path
                 "main": [],
                 "sub": []
             },
@@ -40,12 +50,8 @@ class SettingsManager:
             },
             "paths": {
                 "root_path": "",
-                "index_path": "",
-                "scan_folders": [],
-                "ignore_scan_folders": [],
-                "category_paths": "",
                 "delete_paths": "",
-                "import_path": ""
+                "ignore_scan_folders": []
             }
         }
 
@@ -101,6 +107,37 @@ class SettingsManager:
                 self._deep_merge(base[key], value)
             else:
                 base[key] = value
+
+    # ---- category helpers --------------------------------------------
+
+    @staticmethod
+    def normalize_category(c: dict) -> dict:
+        """Normalize a category entry to {key, name, path}.
+
+        Tolerates legacy fields: id→key, target_folder→path, label→name.
+        """
+        if not isinstance(c, dict):
+            return {"key": "", "name": "", "path": ""}
+        key = c.get("key") or c.get("id") or ""
+        name = c.get("name") if c.get("name") is not None else c.get("label", "")
+        path = c.get("path") if c.get("path") is not None else c.get("target_folder", "")
+        return {"key": key, "name": name or "", "path": path or ""}
+
+    def get_categories(self) -> dict:
+        """Return categories with every entry normalized to {key, name, path}."""
+        cats = self._read_from_file().get("categories", {})
+        return {
+            "main": [self.normalize_category(c) for c in cats.get("main", [])],
+            "sub": [self.normalize_category(c) for c in cats.get("sub", [])],
+        }
+
+    def get_index_path_derived(self) -> str:
+        """Index dir derived from root_path: <root>/.manga_index (dot-prefixed
+        so it is never mistaken for a manga folder)."""
+        root = self.get_setting("paths.root_path", "")
+        if not root:
+            return ""
+        return os.path.join(root, ".manga_index")
 
 
 # Global settings manager instance

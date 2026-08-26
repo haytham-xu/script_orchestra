@@ -5,9 +5,13 @@
     <div class="header-bar">
       <div class="search-area">
         <div class="nav-buttons">
+          <!-- DEPRECATED: standalone Random page hidden for now (kept, not removed).
           <el-button type="primary" size="small" @click="goToRandom">🎲 Random</el-button>
+          -->
           <el-button type="success" size="small" @click="goToBatch">🛠️ Batch</el-button>
+          <!-- DEPRECATED: Import page hidden for now (kept, not removed).
           <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>
+          -->
           <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
           <el-button type="warning" size="small" @click="handleRefreshIndex" :loading="refreshLoading">🔄 Refresh</el-button>
         </div>
@@ -19,9 +23,8 @@
         </div>
       </div>
       <div class="header-right">
-        <el-switch v-model="sizeSortEnabled" inactive-text="size" active-text="" />
-        <el-switch v-model="showUninitializedOnly" inactive-text="all" active-text="" />
-        <el-switch v-model="nameSortEnabled" inactive-text="name" active-text="" />
+        <el-switch v-model="showFavoritesOnly" inactive-text="★ fav" active-text="" />
+        <el-button size="small" title="Reshuffle random order" @click="reshuffle">🎲 Random</el-button>
         <el-button class="apply-button" type="primary" @click="applyChanges">
           Apply
           <span v-if="store.deleteIdSet.size > 0" style="margin-left: 5px;">
@@ -42,10 +45,26 @@
               <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
                 @blur="commitEdit('name', f)" />
             </div>
-            <div v-else class="name-cell" :title="f.name" @click="startEdit(f)">{{ f.name }}</div>
+            <div v-else class="name-cell" :title="f.name">{{ f.name }}</div>
 
-            <!-- Delete Icon - Right of Name -->
+            <!-- Action icons - Right of Name -->
             <div class="delete-icon-wrapper">
+              <el-button
+                :icon="EditPen"
+                circle
+                size="small"
+                type="default"
+                @click.stop="startEdit(f)"
+                title="Edit name"
+              />
+              <el-button
+                :icon="f.favorite ? StarFilled : Star"
+                circle
+                size="small"
+                :type="f.favorite ? 'warning' : 'default'"
+                @click.stop="toggleFavorite(f)"
+                :title="f.favorite ? 'Unfavorite' : 'Favorite'"
+              />
               <el-button
                 :icon="Folder"
                 circle
@@ -76,8 +95,7 @@
           </div>
 
           <div class="tags-row">
-            <!-- path /size / number -->
-            <div class="tags-group"><span class="label">Path:</span> <span class="label">{{ f.path }}</span></div>
+            <!-- size / number -->
             <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024/ 1024) }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
 
@@ -85,66 +103,29 @@
             <div class="tags-group">
               <span class="label">Mosaic:</span>
               <el-radio-group v-model="f.tags.mosaic" @change="commitEdit('mosaic', f)">
-                <el-radio size="small" label="true">true</el-radio>
-                <el-radio size="small" label="false">false</el-radio>
+                <el-radio size="small" label="None">None</el-radio>
+                <el-radio size="small" label="Light">Light</el-radio>
+                <el-radio size="small" label="Heavy">Heavy</el-radio>
               </el-radio-group>
             </div>
 
-            <!-- category_main -->
+            <!-- category_main (options from settings.categories.main) -->
             <div class="tags-group">
               <span class="label">Category Main:</span>
               <el-radio-group v-model="f.tags.category_main" @change="commitEdit('category_main', f)">
-                <el-radio size="small" label="bou">bou</el-radio>
-                <el-radio size="small" label="arch">arch</el-radio>
+                <el-radio v-for="c in mainCategories" :key="c.key" size="small" :label="c.key">{{ c.key }}</el-radio>
               </el-radio-group>
             </div>
 
-            <!-- category_sub -->
+            <!-- category_sub (options from settings.categories.sub) -->
             <div class="tags-group">
               <span class="label">Category Sub:</span>
               <el-radio-group v-model="f.tags.category_sub" @change="commitEdit('category_sub', f)">
-                <el-radio size="small" label="hf">hf</el-radio>
-                <el-radio size="small" label="ntr">ntr</el-radio>
-                <el-radio size="small" label="3d">3d</el-radio>
-                <el-radio size="small" label="hm">hm</el-radio>
-                <el-radio size="small" label="q">q</el-radio>
-                <el-radio size="small" label="m">m</el-radio>
-                <el-radio size="small" label="ll">ll</el-radio>
-                <el-radio size="small" label="lo">lo</el-radio>
-                <el-radio size="small" label="xz">xz</el-radio>
-                <el-radio size="small" label="zr">zr</el-radio>
-                <el-radio size="small" label="sp">sp</el-radio>
-                <el-radio size="small" label="tr">tr</el-radio>
+                <el-radio v-for="c in subCategories" :key="c.key" size="small" :label="c.key">{{ c.key }}</el-radio>
               </el-radio-group>
             </div>
 
-            <!-- 动态标签组: auth / name(tags.name) / custom / others -->
-            <div class="tags-group">
-              <span class="label">Auth:</span>
-              <el-tag type="primary" v-for="(t, i) in f.tags.auth" :key="f.id + 'auth' + i" closable
-                @close="removeTag(f, 'auth', i)">{{ t
-                }}</el-tag>
-
-              <el-input v-if="isTagInputVisible(f, 'auth')" :ref="setTagInputRef(f.id, 'auth')"
-                v-model="tagInputValues[f.id].auth" size="small" class="tag-input"
-                @keyup.enter="handleTagInputConfirm(f, 'auth')" @blur="handleTagInputConfirm(f, 'auth')" />
-              <span v-else class="tag placeholder" @click="showTagInput(f, 'auth')">+</span>
-            </div>
-
-            <!-- Name -->
-            <div class="tags-group">
-              <span class="label">Name:</span>
-              <el-tag type="success" v-for="(t, i) in f.tags.name" :key="f.id + 'nt' + i" closable
-                @close="removeTag(f, 'name', i)">{{
-                  t
-                }}</el-tag>
-              <el-input v-if="isTagInputVisible(f, 'name')" :ref="setTagInputRef(f.id, 'name')"
-                v-model="tagInputValues[f.id].name" size="small" class="tag-input"
-                @keyup.enter="handleTagInputConfirm(f, 'name')" @blur="handleTagInputConfirm(f, 'name')" />
-              <span v-else class="tag placeholder" @click="showTagInput(f, 'name')">+</span>
-            </div>
-
-            <!-- Custom -->
+            <!-- Custom (auth / name / others tag groups removed — unused) -->
             <div class="tags-group">
               <span class="label">Custom:</span>
               <el-tag type="warning" v-for="(t, i) in f.tags.custom" :key="f.id + 'custom' + i" closable
@@ -153,17 +134,6 @@
                 v-model="tagInputValues[f.id].custom" size="small" class="tag-input"
                 @keyup.enter="handleTagInputConfirm(f, 'custom')" @blur="handleTagInputConfirm(f, 'custom')" />
               <span v-else class="tag placeholder" @click="showTagInput(f, 'custom')">+</span>
-            </div>
-
-            <!-- Others -->
-            <div class="tags-group">
-              <span class="label">Others:</span>
-              <el-tag v-for="(t, i) in f.tags.others" :key="f.id + 'others' + i" type="danger" closable
-                @close="removeTag(f, 'others', i)">{{ t }}</el-tag>
-              <el-input v-if="isTagInputVisible(f, 'others')" :ref="setTagInputRef(f.id, 'others')"
-                v-model="tagInputValues[f.id].others" size="small" class="tag-input"
-                @keyup.enter="handleTagInputConfirm(f, 'others')" @blur="handleTagInputConfirm(f, 'others')" />
-              <span v-else class="tag placeholder" @click="showTagInput(f, 'others')">+</span>
             </div>
           </div>
         </div>

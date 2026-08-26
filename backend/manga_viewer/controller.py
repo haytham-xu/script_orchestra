@@ -42,8 +42,11 @@ class FileResource(Resource):
         if os.path.isabs(rel_url_path) or (":" in first_seg):
             return "Forbidden", 403
         safe_path = os.path.normpath(os.path.join(root_abs, rel_url_path.replace("/", os.sep)))
-        root_with_sep = root_abs + os.sep
-        if not (safe_path == root_abs or safe_path.startswith(root_with_sep)):
+        # Case-insensitive containment check so a drive-letter/casing drift on
+        # Windows doesn't cause a false 403 (Windows filesystems are case-insensitive).
+        safe_cmp = os.path.normcase(safe_path)
+        root_cmp = os.path.normcase(root_abs)
+        if not (safe_cmp == root_cmp or safe_cmp.startswith(root_cmp + os.sep)):
             return "Forbidden", 403
         if not os.path.isfile(safe_path):
             return "Not Found", 404
@@ -85,8 +88,10 @@ class FolderUpdateResource(Resource):
         if not isinstance(folder_models, dict):
             return {"error": "invalid payload"}, 400
 
-        # Get category folder mapping from settings
-        main_map = settings_manager.get_setting('category_folder_mapping', {})
+        # Category key → on-disk folder name, from the category config.
+        cats = settings_manager.get_categories()
+        main_path_map = {c["key"]: (c.get("path") or c["key"]) for c in cats.get("main", [])}
+        sub_path_map = {c["key"]: (c.get("path") or c["key"]) for c in cats.get("sub", [])}
         invalid_chars = set('<>:"/\\|?*')
 
         for folder_id, incoming in folder_models.items():
@@ -96,6 +101,10 @@ class FolderUpdateResource(Resource):
 
             new_tags = (incoming.get("tags") or {})
             new_name = (incoming.get("name") or old_folder.name or "").strip()
+
+            # Favorite is a top-level folder flag, not a tag.
+            if "favorite" in incoming:
+                old_folder.favorite = bool(incoming["favorite"])
 
             if any(ch in invalid_chars for ch in new_name):
                 new_name = old_folder.name
@@ -150,13 +159,15 @@ class FolderUpdateResource(Resource):
                         del Repository.manga_index.folders[folder_id]
                     continue
                 else:
-                    base_root = settings_manager.get_setting('paths.category_paths', '')
-                    if base_root:
+                    # Destination follows the category config: Root/main.path/sub.path.
+                    # (The classification tree lives under root_path so the moved
+                    # folder is picked up again on the next refresh.)
+                    base_root = settings_manager.get_setting('paths.root_path', '')
+                    if base_root and cat_main_new and cat_sub_new:
                         base_root_abs = os.path.abspath(base_root)
-                        main_folder_name = main_map.get(cat_main_new, cat_main_new)
-                        main_folder_path = os.path.join(base_root_abs, main_folder_name)
-                        sub_folder_name = f"{cat_main_new}_{cat_sub_new}" if cat_sub_new else cat_main_new
-                        target_sub_path = os.path.join(main_folder_path, sub_folder_name)
+                        main_folder = main_path_map.get(cat_main_new, cat_main_new)
+                        sub_folder = sub_path_map.get(cat_sub_new, cat_sub_new)
+                        target_sub_path = os.path.join(base_root_abs, main_folder, sub_folder)
                         os.makedirs(target_sub_path, exist_ok=True)
                         new_abs_path = os.path.join(target_sub_path, os.path.basename(old_folder.path))
                         if os.path.normcase(os.path.abspath(old_folder.path)) != os.path.normcase(os.path.abspath(new_abs_path)):
@@ -321,6 +332,9 @@ class RefreshIndexResource(Resource):
             return {"error": f"Failed to refresh index: {str(e)}"}, 500
 
 
+# DEPRECATED: Import feature. manga_classifier + duplicate_finder handle intake
+# and dedup now; the Import UI is hidden. Endpoints kept (not removed) so any
+# direct caller still works, but they are no longer part of the active flow.
 @api.route("/manga-viewer/import/scan")
 class ImportScanResource(Resource):
     def post(self):
@@ -448,6 +462,7 @@ class ImportScanResource(Resource):
             return {"error": f"Failed to scan path: {str(e)}"}, 500
 
 
+# DEPRECATED (import feature — see note above).
 @api.route("/manga-viewer/import/move")
 class ImportMoveResource(Resource):
     def post(self):
@@ -604,6 +619,7 @@ class ImportMoveResource(Resource):
             return {"error": f"Failed to import folder: {str(e)}"}, 500
 
 
+# DEPRECATED (import feature — see note above).
 @api.route("/manga-viewer/import/delete")
 class ImportDeleteResource(Resource):
     def post(self):

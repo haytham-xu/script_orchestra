@@ -11,7 +11,8 @@ class Folder:
                  size=0,
                  number=0,
                  initialized=False,
-                 tags=None):
+                 tags=None,
+                 favorite=False):
         self.id: str = id_
         self.name: str = name
         self.path: str = path
@@ -20,6 +21,7 @@ class Folder:
         self.number: int = number
         self.initialized: bool = initialized
         self.tags: Tag = tags or Tag()
+        self.favorite: bool = favorite
 
     def to_dict(self):
         return {
@@ -31,6 +33,7 @@ class Folder:
             "number": self.number,
             "initialized": self.initialized,
             "tags": self.tags.to_dict(),
+            "favorite": self.favorite,
         }
 
     @staticmethod
@@ -44,4 +47,5 @@ class Folder:
             d.get("number", 0),
             d.get("initialized", False),
             Tag.from_dict(d.get("tags", {})),
+            d.get("favorite", False),
         )

@@ -1,13 +1,23 @@
+/**
+ * @deprecated Manga Viewer Import page.
+ *
+ * Hidden from the UI (the entry button in MangaViewerView is commented out and
+ * the route is marked deprecated). Kept intact for now — do not delete without
+ * confirmation.
+ */
 import { defineComponent, ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
+import { BACKEND_BASE_URL } from '@/basic/Constants'
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+
+const MANGA_VIEWER_BASE_URL = `${BACKEND_BASE_URL}/manga-viewer`
 
 export default defineComponent({
   name: 'MangaImportView',
@@ -71,7 +81,7 @@ export default defineComponent({
       if (!currentFolder.value || !currentFolder.value.files) return []
       // Convert file paths to full URLs
       return currentFolder.value.files.map((file: string) =>
-        `http://localhost:5001/manga-viewer/file/${encodeURIComponent(file)}`
+        `${MANGA_VIEWER_BASE_URL}/file/${encodeURIComponent(file)}`
       )
     })
 
@@ -120,7 +130,7 @@ export default defineComponent({
       const result: { url: string; type: 'image' | 'pdf' | 'video'; pdfPages?: string[] }[] = []
 
       for (const file of files) {
-        const url = `http://localhost:5001/manga-viewer/file/${encodeURIComponent(file)}`
+        const url = `${MANGA_VIEWER_BASE_URL}/file/${encodeURIComponent(file)}`
 
         if (isImage(file)) {
           result.push({ url, type: 'image' })
@@ -154,7 +164,7 @@ export default defineComponent({
           const files = newFolder.files || []
           for (const file of files) {
             if (isPdf(file)) {
-              const url = `http://localhost:5001/manga-viewer/file/${encodeURIComponent(file)}`
+              const url = `${MANGA_VIEWER_BASE_URL}/file/${encodeURIComponent(file)}`
               // Render PDFs asynchronously without blocking
               renderPdfPages(url).catch(err => console.error('Failed to render PDF:', err))
             }
@@ -172,7 +182,7 @@ export default defineComponent({
 
       scanning.value = true
       try {
-        const res = await axios.post('http://localhost:5001/manga-viewer/import/scan', {
+        const res = await axios.post(`${MANGA_VIEWER_BASE_URL}/import/scan`, {
           path: scanPath.value
         })
         folders.value = res.data.folders
@@ -299,7 +309,7 @@ export default defineComponent({
           }
         })
 
-        const response = await axios.post('http://localhost:5001/manga-viewer/import/move', importData)
+        const response = await axios.post(`${MANGA_VIEWER_BASE_URL}/import/move`, importData)
 
         // Log success
         console.log('✅ [Import] Success:', {
@@ -368,7 +378,7 @@ export default defineComponent({
           files: currentFolder.value.number
         })
 
-        const response = await axios.post('http://localhost:5001/manga-viewer/import/delete', {
+        const response = await axios.post(`${MANGA_VIEWER_BASE_URL}/import/delete`, {
           sourcePath: currentFolder.value.path
         })
 
@@ -424,7 +434,7 @@ export default defineComponent({
       }
 
       try {
-        await axios.post('http://localhost:5001/manga-viewer/open-folder', {
+        await axios.post(`${MANGA_VIEWER_BASE_URL}/open-folder`, {
           folderPath: currentFolder.value.path
         })
         ElMessage.success('Folder opened in file manager')
@@ -694,7 +704,7 @@ export default defineComponent({
       middleFolder.value = folder
 
       try {
-        const res = await axios.get('http://localhost:5001/manga-viewer/files-url-list', {
+        const res = await axios.get(`${MANGA_VIEWER_BASE_URL}/files-url-list`, {
           params: { folderId: folder.id }
         })
         middleFiles.value = res.data
@@ -763,7 +773,7 @@ export default defineComponent({
         })
 
         // Call backend delete API (same as main viewer delete)
-        await axios.post('http://localhost:5001/manga-viewer/delete', {
+        await axios.post(`${MANGA_VIEWER_BASE_URL}/delete`, {
           folderIds: [folder.id]
         })
 
@@ -794,7 +804,7 @@ export default defineComponent({
       }
 
       try {
-        await axios.post('http://localhost:5001/manga-viewer/open-folder', {
+        await axios.post(`${MANGA_VIEWER_BASE_URL}/open-folder`, {
           folderId: folder.id
         })
         ElMessage.success('Folder opened in file manager')
@@ -812,7 +822,7 @@ export default defineComponent({
 
       // Load settings (import path and categories)
       try {
-        const res = await axios.get('http://localhost:5001/manga-viewer/settings')
+        const res = await axios.get(`${MANGA_VIEWER_BASE_URL}/settings`)
         if (res.data) {
           // Load categories
           if (res.data.categories) {

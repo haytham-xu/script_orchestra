@@ -17,6 +17,7 @@ export interface FolderModel {
   initialized: boolean
   files: string[]
   tags: TagData
+  favorite?: boolean
 }
 
 export interface MetadataModel {
@@ -37,9 +38,9 @@ export interface UpdateFolderPayload {
 
 // Settings Models
 export interface CategoryOption {
-  id: string
-  label: string
-  target_folder?: string
+  key: string       // shown in UI + used as the category label
+  name?: string     // currently unused, kept for future use
+  path?: string     // on-disk folder name under root_path
 }
 
 export interface RandomSettings {
@@ -60,11 +61,8 @@ export interface DisplaySettings {
 
 export interface PathsSettings {
   root_path: string
-  index_path: string
-  scan_folders: string[]
-  ignore_scan_folders: string[]
-  category_paths: string
   delete_paths: string
+  ignore_scan_folders: string[]
 }
 
 export interface MangaViewerSettings {

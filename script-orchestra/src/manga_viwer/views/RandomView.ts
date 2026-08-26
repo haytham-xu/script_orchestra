@@ -1,3 +1,10 @@
+/**
+ * @deprecated Standalone Manga Viewer Random page.
+ *
+ * Hidden from the UI (the entry button in MangaViewerView is commented out and
+ * the route is marked deprecated). Superseded by the home page's random-sort
+ * switch. Kept intact for now — do not delete without confirmation.
+ */
 import { defineComponent, ref, onMounted, onBeforeUnmount, computed, watch, reactive, nextTick, toRefs } from 'vue'
 import { useMangaIndexStore } from '@/manga_viwer/service/Store'
 import { useRouter } from 'vue-router'

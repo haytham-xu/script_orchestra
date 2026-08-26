@@ -9,7 +9,8 @@
     </div>
 
     <div class="settings-content" v-if="settings">
-      <!-- Random Settings -->
+      <!-- DEPRECATED: Random Settings — the standalone Random page is hidden,
+           so its count/enable config is hidden too. Kept (commented) not removed.
       <el-card class="settings-card">
         <template #header>
           <div class="card-header">
@@ -26,6 +27,7 @@
           </el-form-item>
         </el-form>
       </el-card>
+      -->
 
       <!-- Category Settings -->
       <el-card class="settings-card">
@@ -37,9 +39,9 @@
 
         <h4>Main Categories</h4>
         <div v-for="(cat, index) in settings.categories.main" :key="'main-' + index" class="category-item">
-          <el-input v-model="cat.id" placeholder="ID" style="width: 100px;" />
-          <el-input v-model="cat.label" placeholder="Label" style="width: 150px;" />
-          <el-input v-model="cat.target_folder" placeholder="Target Folder" style="flex: 1;" />
+          <el-input v-model="cat.key" placeholder="Key (label)" style="width: 120px;" />
+          <el-input v-model="cat.name" placeholder="Name" style="width: 140px;" />
+          <el-input v-model="cat.path" placeholder="Folder name (path)" style="flex: 1;" />
           <el-button type="danger" size="small" @click="removeMainCategory(index)">Remove</el-button>
         </div>
         <el-button type="primary" size="small" @click="addMainCategory">+ Add Main Category</el-button>
@@ -48,8 +50,9 @@
 
         <h4>Sub Categories</h4>
         <div v-for="(cat, index) in settings.categories.sub" :key="'sub-' + index" class="category-item">
-          <el-input v-model="cat.id" placeholder="ID" style="width: 100px;" />
-          <el-input v-model="cat.label" placeholder="Label" style="flex: 1;" />
+          <el-input v-model="cat.key" placeholder="Key (label)" style="width: 120px;" />
+          <el-input v-model="cat.name" placeholder="Name" style="width: 140px;" />
+          <el-input v-model="cat.path" placeholder="Folder name (path)" style="flex: 1;" />
           <el-button type="danger" size="small" @click="removeSubCategory(index)">Remove</el-button>
         </div>
         <el-button type="primary" size="small" @click="addSubCategory">+ Add Sub Category</el-button>
@@ -108,34 +111,11 @@
         <el-form label-width="200px">
           <el-form-item label="Root Path">
             <el-input v-model="settings.paths.root_path" placeholder="/path/to/root" />
-            <span class="form-hint">Base path for all manga files</span>
-          </el-form-item>
-          <el-form-item label="Index Path">
-            <el-input v-model="settings.paths.index_path" placeholder="/path/to/index" />
-            <span class="form-hint">Directory to store manga_index.json</span>
-          </el-form-item>
-          <el-form-item label="Category Paths">
-            <el-input v-model="settings.paths.category_paths" placeholder="/path/to/categories" />
-            <span class="form-hint">Target directory for categorized folders</span>
+            <span class="form-hint">Base path for all manga. Manga is discovered under Root/&lt;main&gt;/&lt;sub&gt;/ from the Category config below. The index lives in Root/.manga_index/.</span>
           </el-form-item>
           <el-form-item label="Delete Paths">
             <el-input v-model="settings.paths.delete_paths" placeholder="/path/to/deleted" />
-            <span class="form-hint">Directory for deleted folders</span>
-          </el-form-item>
-          <el-form-item label="Import Path">
-            <el-input v-model="settings.paths.import_path" placeholder="/path/to/import" />
-            <span class="form-hint">Default path for importing new manga folders</span>
-          </el-form-item>
-
-          <el-form-item label="Scan Folders">
-            <div class="array-input-group">
-              <div v-for="(folder, index) in settings.paths.scan_folders" :key="'scan-' + index" class="array-item">
-                <el-input v-model="settings.paths.scan_folders[index]" placeholder="/path/to/scan" />
-                <el-button type="danger" size="small" @click="removeScanFolder(index)">Remove</el-button>
-              </div>
-              <el-button type="primary" size="small" @click="addScanFolder">+ Add Scan Folder</el-button>
-            </div>
-            <span class="form-hint">Folders to scan for manga content</span>
+            <span class="form-hint">Directory for deleted folders (soft delete)</span>
           </el-form-item>
 
           <el-form-item label="Ignore Scan Folders">
@@ -146,7 +126,7 @@
               </div>
               <el-button type="primary" size="small" @click="addIgnoreScanFolder">+ Add Ignore Folder</el-button>
             </div>
-            <span class="form-hint">Folders to exclude from scanning</span>
+            <span class="form-hint">Category-combination folders to exclude from scanning</span>
           </el-form-item>
         </el-form>
       </el-card>

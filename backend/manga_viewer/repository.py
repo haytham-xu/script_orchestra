@@ -15,16 +15,43 @@ class Repository:
 
     @staticmethod
     def get_index_path():
-        """Get index path from settings."""
-        index_path = settings_manager.get_setting('paths.index_path', '')
-        if not index_path:
-            raise ValueError("Index path not configured in settings")
-        return os.path.join(index_path, "manga_index.json")
+        """Index file path, derived from root_path: <root>/.manga_index/manga_index.json."""
+        index_dir = settings_manager.get_index_path_derived()
+        if not index_dir:
+            raise ValueError("Root path not configured in settings")
+        return os.path.join(index_dir, "manga_index.json")
 
     @staticmethod
-    def get_scan_paths():
-        """Get scan paths from settings."""
-        return settings_manager.get_setting('paths.scan_folders', [])
+    def get_scan_targets():
+        """Derive the scan source from category main×sub combinations.
+
+        For every (main, sub) pair, the target dir is
+        ``<root>/<main.path>/<sub.path>``. Only existing directories are
+        returned (missing combinations are silently skipped), and any dir in
+        ignore_scan_folders is excluded.
+
+        Returns a list of (dir_path, main_key, sub_key).
+        """
+        root = Repository.get_root_path()
+        if not root:
+            return []
+        cats = settings_manager.get_categories()
+        ignore = {os.path.normcase(os.path.abspath(p))
+                  for p in Repository.get_ignore_scan_paths() if p}
+        targets = []
+        for m in cats.get("main", []):
+            if not m.get("path"):
+                continue
+            for s in cats.get("sub", []):
+                if not s.get("path"):
+                    continue
+                combo = os.path.join(root, m["path"], s["path"])
+                if not os.path.isdir(combo):
+                    continue  # silently skip missing combos
+                if os.path.normcase(os.path.abspath(combo)) in ignore:
+                    continue
+                targets.append((combo, m["key"], s["key"]))
+        return targets
 
     @staticmethod
     def get_ignore_scan_paths():
@@ -138,25 +165,34 @@ class Repository:
             for folder_id, folder_instance in Repository.manga_index.folders.items()
         }
 
+        # Scan source is derived from category main×sub combinations. Each
+        # combo dir's direct children are manga folders, and their category
+        # is known from the combo itself (no inference needed).
+        # existing: list of (manga_path, main_key, sub_key)
+        existing = []
         existing_paths = []
-        for to_scan_path in Repository.get_scan_paths():
-            if not to_scan_path or not os.path.isdir(to_scan_path):
-                continue
-            for a_name in os.listdir(to_scan_path):
-                a_folder_path = os.path.join(to_scan_path, a_name)
-                if (
-                    os.path.isdir(a_folder_path)
-                    and a_folder_path not in Repository.get_ignore_scan_paths()
-                ):
+        # Normalize ignore entries the same way we normalize scanned paths, so
+        # the comparison is case-insensitive and separator/abspath-consistent
+        # (Windows filesystems are case-insensitive; users may enter forward
+        # slashes or relative paths).
+        ignore = {os.path.normcase(os.path.abspath(p))
+                  for p in Repository.get_ignore_scan_paths() if p}
+        for combo_dir, main_key, sub_key in Repository.get_scan_targets():
+            for a_name in os.listdir(combo_dir):
+                a_folder_path = os.path.join(combo_dir, a_name)
+                if (os.path.isdir(a_folder_path)
+                        and os.path.normcase(os.path.abspath(a_folder_path)) not in ignore):
+                    existing.append((a_folder_path, main_key, sub_key))
                     existing_paths.append(a_folder_path)
 
         for folder_id, folder_instance in list(Repository.manga_index.folders.items()):
             if folder_instance.path not in existing_paths:
                 del Repository.manga_index.folders[folder_id]
 
-        for a_folder_path in existing_paths:
-            print("checking: ", a_folder_path)
+        for a_folder_path, main_key, sub_key in existing:
             if a_folder_path in path_id_map:
+                # Existing folder: refresh metrics only, never overwrite tags
+                # (protects user's manual classification / labels).
                 folder_id = path_id_map[a_folder_path]
                 folder_instance = Repository.manga_index.folders[folder_id]
                 size, number = Repository.get_size_number(a_folder_path)
@@ -164,6 +200,7 @@ class Repository:
                 folder_instance.number = number
                 folder_instance.file_list = Repository.get_files_url_list(a_folder_path)
             else:
+                # New folder: category is inferred from the combo dir it lives in.
                 size, number = Repository.get_size_number(a_folder_path)
                 folder_id = str(uuid.uuid4())
                 new_folder = Folder(
@@ -173,8 +210,8 @@ class Repository:
                     file_list=Repository.get_files_url_list(a_folder_path),
                     size=size,
                     number=number,
-                    initialized=False,
-                    tags=Tag(),
+                    initialized=bool(main_key or sub_key),
+                    tags=Tag(category_main=main_key, category_sub=sub_key),
                 )
                 Repository.manga_index.folders[folder_id] = new_folder
                 path_id_map[a_folder_path] = folder_id

@@ -44,9 +44,9 @@ export default defineComponent({
     function addMainCategory() {
       if (!settings.value) return
       settings.value.categories.main.push({
-        id: '',
-        label: '',
-        target_folder: ''
+        key: '',
+        name: '',
+        path: ''
       })
     }
 
@@ -58,24 +58,15 @@ export default defineComponent({
     function addSubCategory() {
       if (!settings.value) return
       settings.value.categories.sub.push({
-        id: '',
-        label: ''
+        key: '',
+        name: '',
+        path: ''
       })
     }
 
     function removeSubCategory(index: number) {
       if (!settings.value) return
       settings.value.categories.sub.splice(index, 1)
-    }
-
-    function addScanFolder() {
-      if (!settings.value) return
-      settings.value.paths.scan_folders.push('')
-    }
-
-    function removeScanFolder(index: number) {
-      if (!settings.value) return
-      settings.value.paths.scan_folders.splice(index, 1)
     }
 
     function addIgnoreScanFolder() {
@@ -100,8 +91,6 @@ export default defineComponent({
       removeMainCategory,
       addSubCategory,
       removeSubCategory,
-      addScanFolder,
-      removeScanFolder,
       addIgnoreScanFolder,
       removeIgnoreScanFolder,
     }
