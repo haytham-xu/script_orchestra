@@ -13,7 +13,7 @@ const getSocketURL = () => {
   const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
     ? 'localhost'
     : hostname
-  return `${protocol}//${backendHost}:5001`
+  return `${protocol}//${backendHost}:50001`
 }
 
 const SOCKET_URL = getSocketURL()

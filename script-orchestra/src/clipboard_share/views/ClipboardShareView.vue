@@ -109,7 +109,7 @@
         <p><strong>Current URL:</strong> {{ currentURL }}</p>
         <p><strong>Backend API:</strong> {{ backendURL }}</p>
         <p v-if="macIP !== 'YOUR_MAC_IP'">
-          <strong>Access from other devices:</strong> http://{{ macIP }}:5173/clipboard-share
+          <strong>Access from other devices:</strong> http://{{ macIP }}:5001/clipboard-share
         </p>
         <p class="info-hint">
           💡 Tip: Make sure both devices are on the same network. The backend API URL is automatically detected based on your current access URL.
@@ -266,7 +266,7 @@ async function detectMacIP() {
     const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
       ? 'localhost'
       : hostname
-    backendURL.value = `${protocol}//${backendHost}:5001`
+    backendURL.value = `${protocol}//${backendHost}:50001`
   } catch (error) {
     console.error('Failed to detect IP:', error)
   }

@@ -8,7 +8,7 @@ const getBaseURL = () => {
   const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
     ? 'localhost'
     : hostname
-  return `${protocol}//${backendHost}:5001/caffeinate/caffeinate`
+  return `${protocol}//${backendHost}:50001/caffeinate/caffeinate`
 }
 
 const BASE_URL = getBaseURL()

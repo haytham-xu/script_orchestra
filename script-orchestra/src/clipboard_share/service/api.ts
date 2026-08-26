@@ -5,7 +5,7 @@
  */
 
 // Dynamically determine the API base URL
-// If accessing from Windows, use the Mac's IP (e.g., http://192.168.1.100:5001)
+// If accessing from Windows, use the Mac's IP (e.g., http://192.168.1.100:50001)
 // If accessing from Mac, use localhost
 const getBaseURL = () => {
   const protocol = window.location.protocol
@@ -15,7 +15,7 @@ const getBaseURL = () => {
   const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
     ? 'localhost'
     : hostname
-  return `${protocol}//${backendHost}:5001/clipboard-share/clipboard`
+  return `${protocol}//${backendHost}:50001/clipboard-share/clipboard`
 }
 
 const BASE_URL = getBaseURL()
