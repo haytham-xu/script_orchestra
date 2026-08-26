@@ -22,9 +22,18 @@ backend/manga_classifier/settings.json
 backend/file_git/mock_cloud_storage/
 .playwright-mcp/
 
+# Browser Agent runtime storage (settings + SQLite download queue)
+backend/browser_agent/settings.json
+backend/browser_agent/*.db
+
+# Assistant runtime storage
+backend/assistant/*.db
+backend/assistant/media/
+
 # Internal design docs, not tracked
 backend/file_git/REQUIREMENTS.md
 backend/file_git/USAGE.md
+backend/file_git/BAIDU_TESTING.md
 
 # Roadmap user data
 backend/roadmap/tasks.json
