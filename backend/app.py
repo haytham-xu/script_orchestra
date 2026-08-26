@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_cors import CORS
 from extensions import restx_api
@@ -26,6 +28,16 @@ from clipboard_share.blueprint import blueprint as clipboard_share_blueprint
 # Import caffeinate tool
 from caffeinate.blueprint import blueprint as caffeinate_blueprint
 
+# Import assistant tool
+from assistant.blueprint import blueprint as assistant_blueprint
+
+# Import browser_agent tool
+from browser_agent.blueprint import blueprint as browser_agent_blueprint
+from browser_agent import repository as browser_agent_repo
+from browser_agent import dispatcher as browser_agent_dispatcher
+from browser_agent import websocket_service as ba_websocket
+from browser_agent.service import get_service as get_browser_agent_service
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
@@ -43,6 +55,10 @@ from clipboard_share import websocket_service as cs_websocket
 from video_duplicate_finder import websocket_service as v_df_websocket
 from caffeinate import websocket_service as cf_websocket
 from caffeinate.service import get_service as get_caffeinate_service
+
+# Wake-word listener (assistant sub-module)
+from assistant.wake import websocket_service as wake_ws
+from assistant.wake.service import get_service as get_wake_service
 
 # Import Cypress support API for E2E testing
 from cypress_support.api import cypress_api
@@ -76,6 +92,12 @@ def create_app() -> Flask:
     # Register caffeinate blueprint
     app.register_blueprint(caffeinate_blueprint)
 
+    # Register assistant blueprint
+    app.register_blueprint(assistant_blueprint)
+
+    # Register browser_agent blueprint
+    app.register_blueprint(browser_agent_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -102,6 +124,18 @@ def create_app() -> Flask:
         cf_websocket.init_socketio(socketio)
         cf_websocket.register_socketio_events()
         get_caffeinate_service().register_broadcaster(cf_websocket.broadcast_log_entry)
+
+        wake_ws.init_socketio(socketio)
+        wake_ws.register_socketio_events()
+        get_wake_service().register_broadcaster(wake_ws.broadcast_wake_event)
+
+        ba_websocket.init_socketio(socketio)
+        ba_websocket.register_socketio_events()
+        get_browser_agent_service().register_broadcaster(ba_websocket.broadcast_progress)
+
+    # Initialize browser_agent DB and start its background download dispatcher.
+    browser_agent_repo.init_db()
+    browser_agent_dispatcher.start_background_loop()
 
     return app, socketio
 
@@ -130,14 +164,17 @@ if __name__ == "__main__":
     check_cypress_snapshots()
 
     app, socketio = create_app()
-    # Use port 5001 to avoid conflict with macOS AirPlay (port 5000)
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', '50001'))
+
+    # Use a dedicated backend port to keep frontend/backend ports separated.
     # Bind to 0.0.0.0 to allow access from other devices on LAN
 
     if socketio:
         # Run with SocketIO if available
-        print("[App] Starting with WebSocket support on 0.0.0.0:5001")
-        socketio.run(app, debug=True, host='0.0.0.0', port=5001, allow_unsafe_werkzeug=True)
+        print(f"[App] Starting with WebSocket support on {host}:{port}")
+        socketio.run(app, debug=True, host=host, port=port, allow_unsafe_werkzeug=True)
     else:
         # Fallback to regular Flask if SocketIO not available
-        print("[App] Starting without WebSocket on 0.0.0.0:5001 (install flask-socketio to enable)")
-        app.run(debug=True, host='0.0.0.0', port=5001)
+        print(f"[App] Starting without WebSocket on {host}:{port} (install flask-socketio to enable)")
+        app.run(debug=True, host=host, port=port)

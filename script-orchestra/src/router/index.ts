@@ -19,6 +19,9 @@ import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
 import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
+import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
+import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
+import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
@@ -74,6 +77,8 @@ const router = createRouter({
       component: MangaViewerView
     },
     {
+      // DEPRECATED: standalone Random page — hidden from the UI (entry button
+      // commented out). Route kept so the page still works if reached directly.
       path: '/manga-viewer/random',
       name: 'manga-viewer-random',
       component: MangaViewerRandomView
@@ -89,6 +94,8 @@ const router = createRouter({
       component: MangaViewerBatchView
     },
     {
+      // DEPRECATED: Import page — hidden from the UI (entry button commented
+      // out). Route kept so the page still works if reached directly.
       path: '/manga-viewer/import',
       name: 'manga-viewer-import',
       component: MangaImportView
@@ -127,6 +134,21 @@ const router = createRouter({
       path: '/caffeinate',
       name: 'caffeinate',
       component: CaffeinateView
+    },
+    {
+      path: '/browser-agent/settings',
+      name: 'browser-agent-settings',
+      component: BrowserAgentSettingsView
+    },
+    {
+      path: '/browser-agent',
+      name: 'browser-agent',
+      component: BrowserAgentView
+    },
+    {
+      path: '/assistant',
+      name: 'assistant',
+      component: AssistantView
     },
     {
       path: '/file-git',

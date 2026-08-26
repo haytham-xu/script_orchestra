@@ -40,6 +40,14 @@
       <template #header>Caffeinate</template>
       <!-- <p>Here is content</p> -->
     </el-card>
+    <el-card @click="goTo('/browser-agent')">
+      <template #header>Browser Agent</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
+    <el-card @click="goTo('/assistant')">
+      <template #header>Assistant</template>
+      <!-- <p>Here is content</p> -->
+    </el-card>
     <el-card @click="goTo('/file-git')">
       <template #header>File-Git</template>
       <!-- <p>Here is content</p> -->

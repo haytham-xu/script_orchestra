@@ -1,5 +1,5 @@
-// Backend API Base URL (port 5001 to avoid macOS AirPlay on 5000)
-export const BACKEND_BASE_URL = 'http://127.0.0.1:5001'
+// Backend API Base URL
+export const BACKEND_BASE_URL = 'http://127.0.0.1:50001'
 
 export const MANGA_CLASSIFIER_ENDPOINT_CONFIG = '/manga-classifier/config'
 export const MANGA_CLASSIFIER_ENDPOINT_FOLDER = '/manga-classifier/folder'
@@ -23,3 +23,5 @@ export const FILE_GIT_ENDPOINT_REPOS = '/file-git/repos'
 export const FILE_GIT_ENDPOINT_SETTINGS = '/file-git/settings'
 
 export const ROADMAP_ENDPOINT_TASKS = '/roadmap/tasks'
+
+export const BROWSER_AGENT_ENDPOINT = '/browser-agent'
