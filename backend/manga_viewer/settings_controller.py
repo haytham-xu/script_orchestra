@@ -8,31 +8,39 @@ api = Namespace("")
 
 
 def _validate_categories(updates: dict):
-    """If categories are being set and root_path is known, every non-empty
-    category path must exist on disk:
-      - main: <root>/<main.path> must be a directory
-      - sub:  <root>/<some main.path>/<sub.path> must exist under at least one main
+    """Validate category config on PUT:
+      - Every category must have a non-empty key AND a non-empty path
+        (path drives the on-disk folder; an empty path corrupts moves).
+      - If root_path is known, each path must exist on disk:
+          main: <root>/<main.path> ; sub: <root>/<some main.path>/<sub.path>
     Returns an error string, or None if valid.
     """
     if "categories" not in updates:
         return None
     merged = dict(settings_manager.get_settings())
     settings_manager._deep_merge(merged, updates)
-    root = merged.get("paths", {}).get("root_path", "")
-    if not root:
-        return None  # nothing to validate against
 
     cats = merged.get("categories", {})
     mains = [settings_manager.normalize_category(c) for c in cats.get("main", [])]
     subs = [settings_manager.normalize_category(c) for c in cats.get("sub", [])]
 
+    # Required fields (structural — checked regardless of root_path).
+    for label, items in (("main", mains), ("sub", subs)):
+        for c in items:
+            if not c["key"].strip():
+                return f"{label} category: key is required"
+            if not c["path"].strip():
+                return f"{label} category '{c['key']}': path is required"
+
+    root = merged.get("paths", {}).get("root_path", "")
+    if not root:
+        return None  # can't validate existence without a root
+
     main_paths = [m["path"] for m in mains if m["path"]]
     for m in mains:
-        if m["path"] and not os.path.isdir(os.path.join(root, m["path"])):
+        if not os.path.isdir(os.path.join(root, m["path"])):
             return f"main category '{m['key']}': directory not found at {os.path.join(root, m['path'])}"
     for s in subs:
-        if not s["path"]:
-            continue
         exists_under_any = any(
             os.path.isdir(os.path.join(root, mp, s["path"])) for mp in main_paths
         )

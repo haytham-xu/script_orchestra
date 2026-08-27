@@ -163,10 +163,13 @@ class FolderUpdateResource(Resource):
                     # (The classification tree lives under root_path so the moved
                     # folder is picked up again on the next refresh.)
                     base_root = settings_manager.get_setting('paths.root_path', '')
-                    if base_root and cat_main_new and cat_sub_new:
+                    main_folder = main_path_map.get(cat_main_new, cat_main_new)
+                    sub_folder = sub_path_map.get(cat_sub_new, cat_sub_new)
+                    # Defensive: never move with an empty path segment (would
+                    # collapse the main/sub level and corrupt the tree). Just
+                    # update tags in that case.
+                    if base_root and cat_main_new and cat_sub_new and main_folder and sub_folder:
                         base_root_abs = os.path.abspath(base_root)
-                        main_folder = main_path_map.get(cat_main_new, cat_main_new)
-                        sub_folder = sub_path_map.get(cat_sub_new, cat_sub_new)
                         target_sub_path = os.path.join(base_root_abs, main_folder, sub_folder)
                         os.makedirs(target_sub_path, exist_ok=True)
                         new_abs_path = os.path.join(target_sub_path, os.path.basename(old_folder.path))

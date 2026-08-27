@@ -281,6 +281,14 @@
   min-width: 0;
 }
 
+.edit-inline {
+  flex: 1;
+  min-width: 0;
+}
+.edit-inline :deep(.el-input) {
+  width: 100%;
+}
+
 .delete-icon-wrapper {
   flex-shrink: 0;
 }

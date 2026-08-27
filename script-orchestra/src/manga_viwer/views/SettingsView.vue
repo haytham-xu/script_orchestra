@@ -29,6 +29,36 @@
       </el-card>
       -->
 
+      <!-- Path Settings -->
+      <el-card class="settings-card">
+        <template #header>
+          <div class="card-header">
+            <span>📂 Path Settings</span>
+          </div>
+        </template>
+        <el-form label-width="200px">
+          <el-form-item label="Root Path">
+            <el-input v-model="settings.paths.root_path" placeholder="/path/to/root" />
+            <span class="form-hint">Base path for all manga. Manga is discovered under Root/&lt;main&gt;/&lt;sub&gt;/ from the Category config below. The index lives in Root/.manga_index/.</span>
+          </el-form-item>
+          <el-form-item label="Delete Paths">
+            <el-input v-model="settings.paths.delete_paths" placeholder="/path/to/deleted" />
+            <span class="form-hint">Directory for deleted folders (soft delete)</span>
+          </el-form-item>
+
+          <el-form-item label="Ignore Scan Folders">
+            <div class="array-input-group">
+              <div v-for="(folder, index) in settings.paths.ignore_scan_folders" :key="'ignore-' + index" class="array-item">
+                <el-input v-model="settings.paths.ignore_scan_folders[index]" placeholder="/path/to/ignore" />
+                <el-button type="danger" size="small" @click="removeIgnoreScanFolder(index)">Remove</el-button>
+              </div>
+              <el-button type="primary" size="small" @click="addIgnoreScanFolder">+ Add Ignore Folder</el-button>
+            </div>
+            <span class="form-hint">Category-combination folders to exclude from scanning</span>
+          </el-form-item>
+        </el-form>
+      </el-card>
+
       <!-- Category Settings -->
       <el-card class="settings-card">
         <template #header>
@@ -69,64 +99,6 @@
           <el-form-item label="Page Size">
             <el-input-number v-model="settings.display.page_size" :min="5" :max="100" />
             <span class="form-hint">Items per page</span>
-          </el-form-item>
-
-          <el-divider />
-          <h4 style="margin: 10px 0;">Manga Viewer Default Filters</h4>
-
-          <el-form-item label="Show Uninitialized Only">
-            <el-switch v-model="settings.display.show_uninitialized_only" />
-            <span class="form-hint">Show only folders without tags (uninitialized)</span>
-          </el-form-item>
-
-          <el-form-item label="Size Sort Enabled">
-            <el-switch v-model="settings.display.size_sort_enabled" />
-            <span class="form-hint">Sort folders by size (largest first)</span>
-          </el-form-item>
-
-          <el-form-item label="Name Sort Enabled">
-            <el-switch v-model="settings.display.name_sort_enabled" />
-            <span class="form-hint">Sort folders by name (alphabetical)</span>
-          </el-form-item>
-
-          <el-divider />
-
-          <el-form-item label="Default Sort">
-            <el-select v-model="settings.display.default_sort">
-              <el-option label="Name" value="name" />
-              <el-option label="Size" value="size" />
-              <el-option label="Date" value="date" />
-            </el-select>
-          </el-form-item>
-        </el-form>
-      </el-card>
-
-      <!-- Path Settings -->
-      <el-card class="settings-card">
-        <template #header>
-          <div class="card-header">
-            <span>📂 Path Settings</span>
-          </div>
-        </template>
-        <el-form label-width="200px">
-          <el-form-item label="Root Path">
-            <el-input v-model="settings.paths.root_path" placeholder="/path/to/root" />
-            <span class="form-hint">Base path for all manga. Manga is discovered under Root/&lt;main&gt;/&lt;sub&gt;/ from the Category config below. The index lives in Root/.manga_index/.</span>
-          </el-form-item>
-          <el-form-item label="Delete Paths">
-            <el-input v-model="settings.paths.delete_paths" placeholder="/path/to/deleted" />
-            <span class="form-hint">Directory for deleted folders (soft delete)</span>
-          </el-form-item>
-
-          <el-form-item label="Ignore Scan Folders">
-            <div class="array-input-group">
-              <div v-for="(folder, index) in settings.paths.ignore_scan_folders" :key="'ignore-' + index" class="array-item">
-                <el-input v-model="settings.paths.ignore_scan_folders[index]" placeholder="/path/to/ignore" />
-                <el-button type="danger" size="small" @click="removeIgnoreScanFolder(index)">Remove</el-button>
-              </div>
-              <el-button type="primary" size="small" @click="addIgnoreScanFolder">+ Add Ignore Folder</el-button>
-            </div>
-            <span class="form-hint">Category-combination folders to exclude from scanning</span>
           </el-form-item>
         </el-form>
       </el-card>
