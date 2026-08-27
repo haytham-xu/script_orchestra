@@ -57,8 +57,19 @@ wsproto==1.3.2
 # file-git tool — AES-256-GCM encryption (pulls in cffi as a dependency)
 cryptography==49.0.0
 
+# HTTP client — used by browser_agent (downloads) and file-git Baidu backend
+requests==2.34.2
+
 # assistant tool — Claude API client (pin to poc03's version for parity)
 anthropic==0.42.0
+
+# assistant/knowledge — PDF parsing + semantic search
+# (sentence-transformers pulls in torch — a large, multi-GB dependency)
+pypdf==6.16.2
+sentence-transformers==5.7.0
+
+# assistant/wake — wake-word detection
+openwakeword==0.6.0
 
 # assistant/voice — local ASR + optional TTS
 faster-whisper==1.1.1
