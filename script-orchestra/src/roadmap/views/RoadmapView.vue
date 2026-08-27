@@ -594,7 +594,8 @@
 
 .main-content {
   flex: 1;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -606,7 +607,11 @@
   gap: 20px;
   height: 100%;
   align-items: flex-start;
-  width: 100%;
+  /* Fixed content width: narrow viewport scrolls horizontally, wide viewport
+     centers the board with side margins. */
+  width: 2010px;
+  margin: 0 auto;
+  flex-shrink: 0;
 }
 
 /* Main Area */
