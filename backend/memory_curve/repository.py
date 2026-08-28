@@ -8,30 +8,34 @@ from . import settings_manager
 
 TABLE = "card"
 
+_CREATE_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {TABLE} (
+        id INTEGER PRIMARY KEY,
+        front TEXT NOT NULL,
+        back TEXT DEFAULT '',
+        deck TEXT DEFAULT '',
+        created_at TEXT,
+        updated_at TEXT,
+        interval REAL DEFAULT 0,
+        ease REAL DEFAULT 2.5,
+        reps INTEGER DEFAULT 0,
+        due_date TEXT,
+        last_reviewed TEXT,
+        suspended INTEGER DEFAULT 0
+    )
+"""
+
 
 def _conn():
-    return sqlite3.connect(settings_manager.get_db_path())
+    # Self-healing: ensure the table exists on every connection, so a deleted
+    # or freshly-created db file recovers without a server restart.
+    conn = sqlite3.connect(settings_manager.get_db_path())
+    conn.execute(_CREATE_SQL)
+    return conn
 
 
 def init_db() -> None:
     conn = _conn()
-    cur = conn.cursor()
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {TABLE} (
-            id INTEGER PRIMARY KEY,
-            front TEXT NOT NULL,
-            back TEXT DEFAULT '',
-            deck TEXT DEFAULT '',
-            created_at TEXT,
-            updated_at TEXT,
-            interval REAL DEFAULT 0,
-            ease REAL DEFAULT 2.5,
-            reps INTEGER DEFAULT 0,
-            due_date TEXT,
-            last_reviewed TEXT,
-            suspended INTEGER DEFAULT 0
-        )
-    """)
     conn.commit()
     conn.close()
 
