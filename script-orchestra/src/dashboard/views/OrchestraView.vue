@@ -38,6 +38,7 @@ const tools = [
   { key: 'browser-agent',          name: 'Browser Agent',          path: '/browser-agent' },
   { key: 'assistant',              name: 'Assistant',              path: '/assistant' },
   { key: 'file-git',               name: 'File-Git',               path: '/file-git' },
+  { key: 'memory-curve',           name: 'Memory Curve',           path: '/memory-curve' },
 ]
 </script>
 

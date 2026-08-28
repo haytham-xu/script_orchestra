@@ -123,4 +123,14 @@ export const toolIcons: Record<string, string> = {
       <path d="M28 34a6 6 0 019-5m-1 9a6 6 0 01-9-5" stroke="#334155" stroke-width="2.5" fill="none" stroke-linecap="round"/>
       <path d="M37 28v-3h-3M27 40v3h3" stroke="#334155" stroke-width="2.5" fill="none" stroke-linecap="round"/>
     </svg>`,
+
+  // Memory Curve — flashcard + rising memory curve
+  'memory-curve': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#e11d48"/>
+      <rect x="14" y="16" width="28" height="20" rx="3" fill="#fff"/>
+      <path d="M19 23h18M19 29h12" stroke="#e11d48" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M16 48c6 0 6-8 12-8s6 5 10 5 8-13 12-13" stroke="#fecdd3" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <circle cx="50" cy="32" r="3" fill="#fff"/>
+    </svg>`,
 }

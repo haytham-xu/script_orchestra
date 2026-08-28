@@ -25,3 +25,5 @@ export const FILE_GIT_ENDPOINT_SETTINGS = '/file-git/settings'
 export const ROADMAP_ENDPOINT_TASKS = '/roadmap/tasks'
 
 export const BROWSER_AGENT_ENDPOINT = '/browser-agent'
+
+export const MEMORY_CURVE_ENDPOINT = '/memory-curve'

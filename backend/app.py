@@ -38,6 +38,10 @@ from browser_agent import dispatcher as browser_agent_dispatcher
 from browser_agent import websocket_service as ba_websocket
 from browser_agent.service import get_service as get_browser_agent_service
 
+# Import memory_curve tool
+from memory_curve.blueprint import blueprint as memory_curve_blueprint
+from memory_curve import repository as memory_curve_repo
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
@@ -98,6 +102,9 @@ def create_app() -> Flask:
     # Register browser_agent blueprint
     app.register_blueprint(browser_agent_blueprint)
 
+    # Register memory_curve blueprint
+    app.register_blueprint(memory_curve_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -136,6 +143,9 @@ def create_app() -> Flask:
     # Initialize browser_agent DB and start its background download dispatcher.
     browser_agent_repo.init_db()
     browser_agent_dispatcher.start_background_loop()
+
+    # Initialize memory_curve DB.
+    memory_curve_repo.init_db()
 
     return app, socketio
 

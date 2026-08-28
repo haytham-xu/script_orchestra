@@ -21,6 +21,7 @@ import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
 import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
 import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
+import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
 import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
@@ -144,6 +145,11 @@ const router = createRouter({
       path: '/browser-agent',
       name: 'browser-agent',
       component: BrowserAgentView
+    },
+    {
+      path: '/memory-curve',
+      name: 'memory-curve',
+      component: MemoryCurveView
     },
     {
       path: '/assistant',
