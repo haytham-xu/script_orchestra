@@ -59,3 +59,7 @@ backend/caffeinate/caffeinate.log*
 # Memory Curve runtime storage
 backend/memory_curve/settings.json
 backend/memory_curve/*.db
+
+# Knowledge Vault runtime storage
+backend/knowledge_vault/settings.json
+backend/knowledge_vault/*.db

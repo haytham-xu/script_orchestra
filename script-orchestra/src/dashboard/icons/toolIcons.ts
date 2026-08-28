@@ -133,4 +133,16 @@ export const toolIcons: Record<string, string> = {
       <path d="M16 48c6 0 6-8 12-8s6 5 10 5 8-13 12-13" stroke="#fecdd3" stroke-width="3" fill="none" stroke-linecap="round"/>
       <circle cx="50" cy="32" r="3" fill="#fff"/>
     </svg>`,
+
+  // Knowledge Vault — connected knowledge-graph nodes
+  'knowledge-vault': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0d9488"/>
+      <path d="M22 22l20 6M22 22l6 20M42 28l-14 14" stroke="#99f6e4" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="22" cy="22" r="6" fill="#fff"/>
+      <circle cx="44" cy="29" r="5" fill="#fff"/>
+      <circle cx="29" cy="43" r="5" fill="#fff"/>
+      <circle cx="47" cy="46" r="4" fill="#ccfbf1"/>
+      <path d="M29 43l18 3" stroke="#99f6e4" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>`,
 }

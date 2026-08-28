@@ -27,3 +27,5 @@ export const ROADMAP_ENDPOINT_TASKS = '/roadmap/tasks'
 export const BROWSER_AGENT_ENDPOINT = '/browser-agent'
 
 export const MEMORY_CURVE_ENDPOINT = '/memory-curve'
+
+export const KNOWLEDGE_VAULT_ENDPOINT = '/knowledge-vault'

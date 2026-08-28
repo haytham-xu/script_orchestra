@@ -22,6 +22,7 @@ import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
 import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
 import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
 import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
+import KnowledgeVaultView from '@/knowledge_vault/views/KnowledgeVaultView.vue'
 import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
@@ -150,6 +151,11 @@ const router = createRouter({
       path: '/memory-curve',
       name: 'memory-curve',
       component: MemoryCurveView
+    },
+    {
+      path: '/knowledge-vault',
+      name: 'knowledge-vault',
+      component: KnowledgeVaultView
     },
     {
       path: '/assistant',

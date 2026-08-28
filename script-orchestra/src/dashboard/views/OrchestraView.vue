@@ -39,6 +39,7 @@ const tools = [
   { key: 'assistant',              name: 'Assistant',              path: '/assistant' },
   { key: 'file-git',               name: 'File-Git',               path: '/file-git' },
   { key: 'memory-curve',           name: 'Memory Curve',           path: '/memory-curve' },
+  { key: 'knowledge-vault',        name: 'Knowledge Vault',        path: '/knowledge-vault' },
 ]
 </script>
 

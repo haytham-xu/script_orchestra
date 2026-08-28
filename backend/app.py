@@ -42,6 +42,10 @@ from browser_agent.service import get_service as get_browser_agent_service
 from memory_curve.blueprint import blueprint as memory_curve_blueprint
 from memory_curve import repository as memory_curve_repo
 
+# Import knowledge_vault tool
+from knowledge_vault.blueprint import blueprint as knowledge_vault_blueprint
+from knowledge_vault import repository as knowledge_vault_repo
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
@@ -105,6 +109,9 @@ def create_app() -> Flask:
     # Register memory_curve blueprint
     app.register_blueprint(memory_curve_blueprint)
 
+    # Register knowledge_vault blueprint
+    app.register_blueprint(knowledge_vault_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -146,6 +153,9 @@ def create_app() -> Flask:
 
     # Initialize memory_curve DB.
     memory_curve_repo.init_db()
+
+    # Initialize knowledge_vault DB.
+    knowledge_vault_repo.init_db()
 
     return app, socketio
 
