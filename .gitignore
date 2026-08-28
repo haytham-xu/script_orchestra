@@ -52,3 +52,6 @@ cypress_test_data
 
 # Cypress Chinese documentation (not tracked)
 **/cypress_test_case_chinese_gitignore.md
+
+# Caffeinate diagnostic log
+backend/caffeinate/caffeinate.log*
