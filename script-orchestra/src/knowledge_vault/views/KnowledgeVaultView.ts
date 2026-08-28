@@ -1,5 +1,5 @@
 import { defineComponent, ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '../service/KnowledgeVaultService'
 import type { RawFragment, KnowledgeVaultSettings, BuildStatus } from '../service/Model'
 
@@ -12,21 +12,33 @@ export default defineComponent({
     })
 
     // ---- capture ----
-    const draft = ref({ content: '', note: '', kind: '' })
+    // kind is no longer entered by the user — the AI infers it at build time.
+    const draft = ref({ content: '', note: '' })
     const fragments = ref<RawFragment[]>([])
+    const saving = ref(false)
     async function loadFragments() { fragments.value = await api.getFragments() }
     async function addFragment() {
       if (!draft.value.content.trim()) { ElMessage.warning('Content is required'); return }
+      if (saving.value) return   // guard against double-submit
+      saving.value = true
       try {
-        await api.addFragment(draft.value.content, draft.value.note, draft.value.kind)
-        draft.value = { content: '', note: '', kind: '' }
+        await api.addFragment(draft.value.content, draft.value.note)
+        draft.value = { content: '', note: '' }
         ElMessage.success('Saved')
         await loadFragments()
-      } catch (e: any) { ElMessage.error(e.message || 'Save failed') }
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Save failed')
+      } finally { saving.value = false }
     }
-    async function archive(f: RawFragment) {
-      try { await api.archiveFragment(f.id); await loadFragments() }
-      catch (e: any) { ElMessage.error(e.message || 'Archive failed') }
+    async function removeFragment(f: RawFragment) {
+      try {
+        await ElMessageBox.confirm('Permanently delete this fragment?', 'Confirm', { type: 'warning' })
+        await api.deleteFragment(f.id)  // hard delete (user-initiated)
+        ElMessage.success('Deleted')
+        await loadFragments()
+      } catch (e: any) {
+        if (e !== 'cancel') ElMessage.error(e.message || 'Delete failed')
+      }
     }
 
     // ---- search ----
@@ -83,7 +95,7 @@ export default defineComponent({
 
     return {
       activeTab, settings,
-      draft, fragments, addFragment, archive, loadFragments,
+      draft, fragments, saving, addFragment, removeFragment, loadFragments,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, stale, buildStatus, building, loadNetwork, rebuild,
       toggleAutoBuild,

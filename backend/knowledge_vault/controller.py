@@ -57,11 +57,11 @@ class FragmentResource(Resource):
         return {"fragment": frag.to_dict()}, 200
 
     def delete(self, fid):
-        # Soft-archive only — the raw layer is append-only, never hard-deleted.
+        # Hard delete (user-initiated). The AI never deletes; only the user can.
         if repository.get_fragment(fid) is None:
             return {"error": "fragment not found"}, 404
-        repository.archive_fragment(fid)
-        return {"message": "archived"}, 200
+        repository.delete_fragment(fid)
+        return {"message": "deleted"}, 200
 
 
 @ns.route("/query")

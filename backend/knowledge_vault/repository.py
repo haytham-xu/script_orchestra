@@ -106,6 +106,16 @@ def archive_fragment(fid) -> None:
     conn.close()
 
 
+def delete_fragment(fid) -> None:
+    """Hard-delete a fragment and its vector (user-initiated only; the AI never
+    deletes)."""
+    conn = _conn()
+    conn.execute("DELETE FROM raw_fragment WHERE id = ?", (fid,))
+    conn.execute("DELETE FROM fragment_vector WHERE fragment_id = ?", (fid,))
+    conn.commit()
+    conn.close()
+
+
 def touch_fragment(fid) -> None:
     conn = _conn()
     conn.execute("UPDATE raw_fragment SET last_accessed = ? WHERE id = ?",

@@ -129,16 +129,29 @@ def _make_node(member_ids, frag_by_id, use_ai) -> KnowledgeNode:
     primary = members[0]
     title = (primary.note or primary.content)[:80]
     summary = primary.content
-    kind = primary.kind
-    if use_ai and len(members) > 1:
-        # Let AI title/summarize a merged (deduped) node.
-        merged = _ai_merge_title(members)
-        if merged:
-            title = merged.get("title", title)[:120]
-            summary = merged.get("summary", summary)
+    # kind is inferred (users no longer type it): heuristic first, AI refines.
+    kind = primary.kind or _guess_kind(primary.content)
+    if use_ai:
+        info = _ai_classify(members)
+        if info:
+            title = (info.get("title") or title)[:120]
+            summary = info.get("summary") or summary
+            if info.get("kind"):
+                kind = info["kind"]
     return KnowledgeNode(None, title=title, summary=summary, kind=kind,
                          fragment_ids=json.dumps(member_ids), freshness="fresh",
                          updated_at=datetime.now().isoformat())
+
+
+def _guess_kind(content: str) -> str:
+    c = (content or "").strip().lower()
+    if c.startswith("http://") or c.startswith("https://"):
+        return "url"
+    if c.startswith(("kubectl", "az ", "aws ", "docker", "git ", "npm ", "pip ", "curl ", "ssh ")):
+        return "command"
+    if "\n" in c or c.startswith(("#!/", "def ", "function ", "import ")):
+        return "script"
+    return "note"
 
 
 def _ai_is_duplicate(a, b) -> bool:
@@ -170,14 +183,16 @@ def _ai_relation(a, b) -> str:
     return rel if rel in ("same-topic", "prereq", "alternative", "related") else "related"
 
 
-def _ai_merge_title(members) -> dict:
+def _ai_classify(members) -> dict:
     lines = "\n".join(f"- {m.content} | {m.note}" for m in members)
+    plural = "these fragments (they were judged duplicates)" if len(members) > 1 else "this fragment"
     prompt = (
-        "These fragments were judged duplicates. Give a concise merged title and "
-        "summary. JSON {\"title\": \"...\", \"summary\": \"...\"}.\n\n" + lines
+        f"Classify and summarize {plural}. Return JSON "
+        "{\"title\": \"...\", \"summary\": \"...\", \"kind\": \"url|command|script|link|doc|note\"}.\n\n"
+        + lines
     )
     try:
         return ai_client.ask_json(prompt, max_tokens=256) or {}
     except Exception as exc:
-        print(f"[knowledge_vault] AI merge-title failed: {exc}")
+        print(f"[knowledge_vault] AI classify failed: {exc}")
         return {}

@@ -16,18 +16,16 @@
           <el-input v-model="draft.content" type="textarea" :rows="2"
             placeholder="Paste a URL / command / snippet…" />
           <el-input v-model="draft.note" placeholder="Note — what is this?" style="margin-top:8px" />
-          <div style="margin-top:8px; display:flex; gap:8px;">
-            <el-input v-model="draft.kind" placeholder="kind (url/command/script…)" style="width:220px" />
-            <el-button type="primary" @click="addFragment">Save</el-button>
+          <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
+            <el-button type="primary" :loading="saving" @click="addFragment">Save</el-button>
           </div>
 
           <el-table :data="fragments" size="small" style="width:100%; margin-top:16px;">
             <el-table-column prop="content" label="Content" show-overflow-tooltip />
             <el-table-column prop="note" label="Note" show-overflow-tooltip />
-            <el-table-column prop="kind" label="Kind" width="100" />
-            <el-table-column label="" width="80">
+            <el-table-column label="" width="90">
               <template #default="{ row }">
-                <el-button size="small" @click="archive(row)">Archive</el-button>
+                <el-button size="small" type="danger" @click="removeFragment(row)">Delete</el-button>
               </template>
             </el-table-column>
           </el-table>

@@ -12,7 +12,7 @@ export async function getFragments(): Promise<RawFragment[]> {
 export async function addFragment(content: string, note = '', kind = '', raw_text = ''): Promise<RawFragment> {
   return (await postRequest(`${B}/fragments`, {}, { content, note, kind, raw_text }) as { fragment: RawFragment }).fragment
 }
-export async function archiveFragment(id: number) {
+export async function deleteFragment(id: number) {
   return deleteRequest(`${B}/fragments/${id}`)
 }
 export async function search(q: string, topK = 10): Promise<RawFragment[]> {
