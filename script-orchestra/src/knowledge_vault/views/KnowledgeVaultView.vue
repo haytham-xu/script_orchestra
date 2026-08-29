@@ -16,18 +16,11 @@
       <el-tab-pane label="Capture" name="capture">
         <div class="kv-capture">
           <div class="kv-cap-head">
-            <span class="kv-cap-title">Add a fragment</span>
-            <el-button size="small" @click="openBatch">Batch import (AI)</el-button>
-          </div>
-          <el-input v-model="draft.content" type="textarea" :rows="2"
-            placeholder="Paste a URL / command / snippet…" />
-          <el-input v-model="draft.note" placeholder="Note — what is this?" style="margin-top:8px" />
-          <div class="kv-cap-row">
-            <el-select v-model="draft.label_ids" multiple collapse-tags placeholder="Labels (optional)"
-              style="flex:1" size="default">
-              <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
-            </el-select>
-            <el-button type="primary" :loading="saving" @click="addFragment">Save</el-button>
+            <span class="kv-cap-title">Fragments</span>
+            <div style="display:flex; gap:8px;">
+              <el-button type="primary" @click="openAdd">Add fragment</el-button>
+              <el-button @click="openBatch">Batch import (AI)</el-button>
+            </div>
           </div>
 
           <div class="kv-list">
@@ -146,6 +139,21 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- Add fragment dialog -->
+    <el-dialog v-model="addDialog" title="Add a fragment" width="520px">
+      <el-input v-model="draft.content" type="textarea" :rows="3"
+        placeholder="Paste a URL / command / snippet…" />
+      <el-input v-model="draft.note" placeholder="Note — what is this?" style="margin-top:8px" />
+      <el-select v-model="draft.label_ids" multiple collapse-tags placeholder="Labels (optional)"
+        style="width:100%; margin-top:8px">
+        <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="addDialog = false">Cancel</el-button>
+        <el-button type="primary" :loading="saving" @click="addFragment">Save</el-button>
+      </template>
+    </el-dialog>
+
     <!-- Edit fragment dialog -->
     <el-dialog v-model="editDialog" title="Edit fragment" width="520px">
       <el-input v-model="editing.content" type="textarea" :rows="3" placeholder="Content" />
@@ -200,6 +208,13 @@
               </div>
             </div>
           </div>
+          <div v-if="suggestedLabels.length" class="kv-suggested">
+            <span class="kv-hint">Suggested labels:</span>
+            <el-tag v-for="name in suggestedLabels" :key="name" size="small" type="info"
+              effect="plain" class="kv-suggest-tag" @click="applySuggestedLabel(name)">
+              + {{ name }}
+            </el-tag>
+          </div>
           <el-select v-model="batchLabelIds" multiple collapse-tags placeholder="Apply labels to all (optional)"
             style="width:100%; margin-top:8px">
             <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
@@ -223,11 +238,13 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
 .kv-topbar { display: flex; align-items: center; justify-content: space-between;
   padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fff; }
+.kv-topbar > * { max-width: 1240px; }
+.kv-topbar { padding-left: max(24px, calc((100% - 1240px) / 2)); padding-right: max(24px, calc((100% - 1240px) / 2)); }
 .kv-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .kv-auto { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #86868b; }
-.kv-tabs { padding: 0 24px; }
-.kv-capture, .kv-search { max-width: 900px; margin: 16px auto; }
-.kv-settings { max-width: 900px; margin: 16px auto; }
+.kv-tabs { padding: 0 24px; max-width: 1240px; margin: 0 auto; }
+.kv-capture, .kv-search { max-width: 1100px; margin: 16px auto; }
+.kv-settings { max-width: 1100px; margin: 16px auto; }
 .kv-network { max-width: 1200px; margin: 16px auto; }
 .kv-hint { font-size: 12px; color: #86868b; margin: 0; }
 
@@ -284,6 +301,8 @@
 .kv-typing { letter-spacing: 2px; color: #86868b; }
 .kv-chat-input { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .kv-draft { width: 460px; display: flex; flex-direction: column; overflow-y: auto; }
+.kv-suggested { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.kv-suggest-tag { cursor: pointer; }
 
 .kv-net-head { display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }

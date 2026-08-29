@@ -22,10 +22,10 @@ export async function deleteFragment(id: number) {
 export async function batchChat(
   messages: { role: 'user' | 'assistant'; content: string }[],
   currentFragments: AnalyzedFragment[],
-): Promise<{ reply: string; fragments: AnalyzedFragment[] }> {
+): Promise<{ reply: string; fragments: AnalyzedFragment[]; suggested_labels: string[] }> {
   return await postRequest(`${B}/fragments/batch-chat`, {}, {
     messages, current_fragments: currentFragments,
-  }) as { reply: string; fragments: AnalyzedFragment[] }
+  }) as { reply: string; fragments: AnalyzedFragment[]; suggested_labels: string[] }
 }
 export async function batchCommit(fragments: AnalyzedFragment[], labelIds: number[] = []): Promise<number> {
   return (await postRequest(`${B}/fragments/batch`, {}, { fragments, label_ids: labelIds }) as { count: number }).count

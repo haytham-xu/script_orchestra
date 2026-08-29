@@ -151,10 +151,13 @@ class BatchChatResource(Resource):
             "label), and kind (one of: url, command, script, note).\n\n"
             "Given the conversation and the current draft list, apply the user's "
             "latest request and regenerate the FULL updated draft. Do not invent "
-            "knowledge that never appeared in the conversation.\n\n"
+            "knowledge that never appeared in the conversation. Also suggest a few "
+            "(0–5) short lowercase labels/tags that would group this batch well "
+            "(e.g. kubernetes, azure, networking).\n\n"
             "Reply with STRICT JSON only:\n"
             '{"reply":"<one short sentence to the user about what you changed>",'
-            '"fragments":[{"content":"...","note":"...","kind":"..."}]}\n\n'
+            '"fragments":[{"content":"...","note":"...","kind":"..."}],'
+            '"suggested_labels":["...","..."]}\n\n'
             f"CURRENT DRAFT:\n{json.dumps(current, ensure_ascii=False)}\n\n"
             f"CONVERSATION:\n{convo}"
         )
@@ -164,9 +167,17 @@ class BatchChatResource(Resource):
             return {"error": f"AI chat failed: {exc}"}, 502
         if not isinstance(parsed, dict):
             return {"error": "AI did not return a valid response"}, 502
+        labels = parsed.get("suggested_labels")
+        suggested = []
+        if isinstance(labels, list):
+            for l in labels[:8]:
+                name = str(l).strip().lower()
+                if name and name not in suggested:
+                    suggested.append(name)
         return {
             "reply": str(parsed.get("reply", "")).strip(),
             "fragments": _sanitize_fragments(parsed.get("fragments")),
+            "suggested_labels": suggested,
         }, 200
 
 

@@ -22,6 +22,10 @@ _status = {"running": False, "phase": "idle", "nodes": 0, "edges": 0, "last_run"
 import os as _os
 _AI_BUDGET = int(_os.environ.get("KV_AI_BUDGET", "30"))
 _AI_DEDUP = _os.environ.get("KV_AI_DEDUP", "0") == "1"   # AI dedup off by default (slow, low value)
+# Token-cost guards for the classify phase: batch N nodes per AI call, and cap
+# each item's text length so long fragments can't blow up the prompt.
+_CLASSIFY_BATCH = int(_os.environ.get("KV_CLASSIFY_BATCH", "20"))
+_ITEM_TEXT_MAX = int(_os.environ.get("KV_ITEM_TEXT_MAX", "400"))
 
 
 def get_status() -> dict:
@@ -210,39 +214,45 @@ def _ai_relation(a, b) -> str:
 
 
 def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
-    """Enrich all node titles/summaries/kinds in a SINGLE batched AI call.
+    """Enrich node titles/summaries/kinds via batched AI calls.
 
-    rep_of_node: {node_id: (group_rep, [member_frag_ids])}. Falls back silently
-    to the heuristic values already stored if the AI call fails.
+    To keep token cost bounded (and avoid context overflow when the vault is
+    large or fragments are long), we chunk nodes into batches and hard-truncate
+    each item's text. Falls back silently to the heuristic values already stored
+    if a call fails. rep_of_node: {node_id: (group_rep, [member_frag_ids])}.
     """
-    items = []
+    all_items = []
     for node_id, (_r, member_ids) in rep_of_node.items():
         members = [frag_by_id[m] for m in member_ids if m in frag_by_id]
         joined = " ; ".join(f"{m.content} ({m.note})" if m.note else m.content for m in members)
-        items.append({"id": node_id, "text": joined[:500]})
-    prompt = (
-        "For each knowledge item below, produce a concise title, a one-line "
-        "summary, and a kind (one of: url, command, script, note). Return STRICT "
-        'JSON: {"nodes":[{"id":<id>,"title":"...","summary":"...","kind":"..."}]}.'
-        "\n\nITEMS:\n" + json.dumps(items, ensure_ascii=False)
-    )
-    try:
-        res = ai_client.ask_json(prompt, max_tokens=4096, timeout=90) or {}
-    except Exception as exc:
-        print(f"[knowledge_vault] batch classify failed, keeping heuristics: {exc}")
-        return
-    for n in (res.get("nodes") or []):
+        all_items.append({"id": node_id, "text": joined[:_ITEM_TEXT_MAX]})
+
+    for start in range(0, len(all_items), _CLASSIFY_BATCH):
+        batch = all_items[start:start + _CLASSIFY_BATCH]
+        _status["phase"] = f"classify {start + 1}-{start + len(batch)}/{len(all_items)}"
+        prompt = (
+            "For each knowledge item below, produce a concise title, a one-line "
+            "summary, and a kind (one of: url, command, script, note). Return STRICT "
+            'JSON: {"nodes":[{"id":<id>,"title":"...","summary":"...","kind":"..."}]}.'
+            "\n\nITEMS:\n" + json.dumps(batch, ensure_ascii=False)
+        )
         try:
-            nid = int(n.get("id"))
-        except (TypeError, ValueError):
+            res = ai_client.ask_json(prompt, max_tokens=4096, timeout=90) or {}
+        except Exception as exc:
+            print(f"[knowledge_vault] batch classify failed, keeping heuristics: {exc}")
             continue
-        if nid not in rep_of_node:
-            continue
-        title = str(n.get("title") or "").strip()[:120]
-        summary = str(n.get("summary") or "").strip()
-        kind = str(n.get("kind") or "").strip()
-        if title or summary or kind:
-            repository.update_node_meta(nid, title or "(untitled)", summary, kind or "note")
+        for n in (res.get("nodes") or []):
+            try:
+                nid = int(n.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if nid not in rep_of_node:
+                continue
+            title = str(n.get("title") or "").strip()[:120]
+            summary = str(n.get("summary") or "").strip()
+            kind = str(n.get("kind") or "").strip()
+            if title or summary or kind:
+                repository.update_node_meta(nid, title or "(untitled)", summary, kind or "note")
 
 
 def _ai_classify(members) -> dict:

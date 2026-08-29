@@ -54,6 +54,11 @@ export default defineComponent({
     const FRESH_TYPE: Record<string, string> = { fresh: 'success', aging: 'warning', stale: 'danger' }
 
     async function loadFragments() { fragments.value = await api.getFragments() }
+    const addDialog = ref(false)
+    function openAdd() {
+      draft.value = { content: '', note: '', label_ids: [] }
+      addDialog.value = true
+    }
     async function addFragment() {
       if (!draft.value.content.trim()) { ElMessage.warning('Content is required'); return }
       if (saving.value) return   // guard against double-submit
@@ -61,6 +66,7 @@ export default defineComponent({
       try {
         await api.addFragment(draft.value.content, draft.value.note, draft.value.label_ids)
         draft.value = { content: '', note: '', label_ids: [] }
+        addDialog.value = false
         ElMessage.success('Saved')
         await loadFragments()
       } catch (e: any) {
@@ -105,8 +111,10 @@ export default defineComponent({
     const batchLabelIds = ref<number[]>([])
     const messages = ref<ChatMessage[]>([])       // full conversation (sent every turn)
     const analyzed = ref<AnalyzedFragment[]>([])   // current draft, kept in sync with AI
+    const suggestedLabels = ref<string[]>([])      // AI-suggested label names for this batch
     function openBatch() {
-      chatInput.value = ''; messages.value = []; analyzed.value = []; batchLabelIds.value = []
+      chatInput.value = ''; messages.value = []; analyzed.value = []
+      batchLabelIds.value = []; suggestedLabels.value = []
       batchDialog.value = true
     }
     async function sendChat() {
@@ -121,9 +129,21 @@ export default defineComponent({
         messages.value.push({ role: 'assistant', content: r.reply || '(updated draft)' })
         // AI returns the FULL regenerated draft; keep prior selection where possible.
         analyzed.value = r.fragments.map((f) => ({ ...f, _keep: true }))
+        // Only surface suggestions that aren't already an existing label.
+        const existing = new Set(labels.value.map((l) => l.name.toLowerCase()))
+        suggestedLabels.value = (r.suggested_labels || []).filter((n) => !existing.has(n.toLowerCase()))
       } catch (e: any) {
         messages.value.push({ role: 'assistant', content: 'Error: ' + (e.response?.data?.error || e.message || 'chat failed') })
       } finally { chatLoading.value = false }
+    }
+    // Click a suggested label → create it (if new) and apply to the batch.
+    async function applySuggestedLabel(name: string) {
+      try {
+        const created = await api.createLabel(name)
+        await loadLabels()
+        if (!batchLabelIds.value.includes(created.id)) batchLabelIds.value.push(created.id)
+        suggestedLabels.value = suggestedLabels.value.filter((n) => n !== name)
+      } catch (e: any) { ElMessage.error(e.message || 'Failed to add label') }
     }
     async function commitBatch() {
       const keep = analyzed.value.filter((f) => f._keep)
@@ -270,10 +290,12 @@ export default defineComponent({
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
+      addDialog, openAdd,
       fmtDate, FRESH_LABEL, FRESH_TYPE,
       editDialog, editing, openEdit, saveEdit,
       batchDialog, chatInput, chatLoading, batchCommitting, batchLabelIds,
       messages, analyzed, openBatch, sendChat, commitBatch,
+      suggestedLabels, applySuggestedLabel,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
       selected, graphEl, KIND_COLOR,
