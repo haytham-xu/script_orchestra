@@ -19,6 +19,9 @@ class FragmentsResource(Resource):
     def get(self):
         include_archived = request.args.get("archived") == "1"
         frags = repository.get_fragments(include_archived=include_archived)
+        stale_days = settings_manager.load_settings().get("stale_days", 90)
+        for f in frags:
+            f.freshness = lifecycle.freshness_for(f.kind, f.last_accessed, f.created_at, stale_days)
         return {"fragments": [f.to_dict() for f in frags]}, 200
 
     def post(self):

@@ -31,11 +31,23 @@
           <el-table :data="fragments" size="small" style="width:100%; margin-top:16px;">
             <el-table-column prop="content" label="Content" show-overflow-tooltip />
             <el-table-column prop="note" label="Note" show-overflow-tooltip />
-            <el-table-column label="Labels" width="200">
+            <el-table-column label="Labels" width="180">
               <template #default="{ row }">
                 <el-tag v-for="lid in row.label_ids" :key="lid" size="small"
                   :color="labelMap[lid]?.color" style="margin-right:4px; color:#fff; border:none;">
                   {{ labelMap[lid]?.name }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Added" width="110">
+              <template #default="{ row }">
+                <span class="kv-added">{{ fmtDate(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Status" width="140">
+              <template #default="{ row }">
+                <el-tag size="small" :type="FRESH_TYPE[row.freshness]">
+                  {{ FRESH_LABEL[row.freshness] || row.freshness }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -203,6 +215,7 @@
 .kv-label-add { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
 .kv-label-list { display: flex; flex-wrap: wrap; align-items: center; }
 .kv-analyzed { margin-top: 12px; }
+.kv-added { font-size: 12px; color: #86868b; }
 
 .kv-net-head { display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }

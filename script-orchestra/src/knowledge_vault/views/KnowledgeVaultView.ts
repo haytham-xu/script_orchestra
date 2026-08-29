@@ -43,6 +43,16 @@ export default defineComponent({
     const draft = ref<{ content: string; note: string; label_ids: number[] }>({ content: '', note: '', label_ids: [] })
     const fragments = ref<RawFragment[]>([])
     const saving = ref(false)
+
+    // date/status display helpers (freshness is computed server-side)
+    function fmtDate(iso: string): string {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      return isNaN(d.getTime()) ? '—' : d.toLocaleDateString()
+    }
+    const FRESH_LABEL: Record<string, string> = { fresh: 'Fresh', aging: 'Aging', stale: 'May be outdated' }
+    const FRESH_TYPE: Record<string, string> = { fresh: 'success', aging: 'warning', stale: 'danger' }
+
     async function loadFragments() { fragments.value = await api.getFragments() }
     async function addFragment() {
       if (!draft.value.content.trim()) { ElMessage.warning('Content is required'); return }
@@ -240,6 +250,7 @@ export default defineComponent({
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
+      fmtDate, FRESH_LABEL, FRESH_TYPE,
       editDialog, editing, openEdit, saveEdit,
       batchDialog, batchText, batchAnalyzing, batchCommitting, batchLabelIds, analyzed,
       openBatch, runAnalyze, commitBatch,

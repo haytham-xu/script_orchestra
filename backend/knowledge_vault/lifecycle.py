@@ -23,6 +23,25 @@ def _days_since(iso: str) -> int:
         return 10**6
 
 
+def freshness_for(kind: str, last_accessed: str, created_at: str,
+                  stale_days: int = None) -> str:
+    """Freshness of a single item from its kind + recency. Pure, no AI/network.
+
+    fresh  → recently used / new
+    aging  → untouched for a kind-specific while
+    stale  → untouched past stale_days (likely outdated; urls age fastest)
+    """
+    if stale_days is None:
+        stale_days = settings_manager.load_settings().get("stale_days", 90)
+    recency = _days_since(last_accessed or created_at)
+    aging_at = _AGING_DAYS.get(kind or "", _DEFAULT_AGING)
+    if recency >= stale_days:
+        return "stale"
+    if recency >= aging_at:
+        return "aging"
+    return "fresh"
+
+
 def recompute_freshness() -> dict:
     """Recompute freshness for every node. Returns counts by bucket."""
     settings = settings_manager.load_settings()

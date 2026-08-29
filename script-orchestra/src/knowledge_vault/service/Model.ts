@@ -8,6 +8,7 @@ export interface RawFragment {
   archived: number
   last_accessed: string | null
   label_ids: number[]
+  freshness: 'fresh' | 'aging' | 'stale'
   score?: number
 }
 
