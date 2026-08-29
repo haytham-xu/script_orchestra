@@ -156,32 +156,51 @@
       </template>
     </el-dialog>
 
-    <!-- Batch import dialog -->
-    <el-dialog v-model="batchDialog" title="Batch import (AI splits into fragments)" width="720px">
-      <el-input v-model="batchText" type="textarea" :rows="6"
-        placeholder="Paste a messy pile of knowledge — URLs, commands, notes, anything. AI will split it into individual fragments." />
-      <div class="kv-cap-row">
-        <el-select v-model="batchLabelIds" multiple collapse-tags placeholder="Apply labels to all (optional)"
-          style="flex:1">
-          <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
-        </el-select>
-        <el-button type="primary" :loading="batchAnalyzing" @click="runAnalyze">Analyze</el-button>
-      </div>
+    <!-- Batch import dialog — conversational: chat with AI, it regenerates the draft -->
+    <el-dialog v-model="batchDialog" title="Batch import — talk to AI to shape your fragments" width="960px" top="5vh">
+      <div class="kv-batch">
+        <!-- left: chat -->
+        <div class="kv-chat">
+          <div class="kv-chat-log">
+            <el-empty v-if="!messages.length"
+              description="Paste a messy pile of knowledge, then ask AI to split it — and keep refining by chatting."
+              :image-size="70" />
+            <div v-for="(m, i) in messages" :key="i" class="kv-msg" :class="m.role">
+              <div class="kv-bubble">{{ m.content }}</div>
+            </div>
+            <div v-if="chatLoading" class="kv-msg assistant"><div class="kv-bubble kv-typing">…</div></div>
+          </div>
+          <div class="kv-chat-input">
+            <el-input v-model="chatInput" type="textarea" :rows="2" resize="none"
+              placeholder="e.g. paste your notes, or “merge the last two”, “change note of the azure url”…"
+              @keyup.enter.exact.prevent="sendChat" />
+            <el-button type="primary" :loading="chatLoading" @click="sendChat">Send</el-button>
+          </div>
+        </div>
 
-      <div v-if="analyzed.length" class="kv-analyzed">
-        <p class="kv-hint">{{ analyzed.filter(a => a._keep).length }} of {{ analyzed.length }} selected. Uncheck any you don't want.</p>
-        <el-table :data="analyzed" size="small" max-height="320">
-          <el-table-column width="46">
-            <template #default="{ row }"><el-checkbox v-model="row._keep" /></template>
-          </el-table-column>
-          <el-table-column label="Content">
-            <template #default="{ row }"><el-input v-model="row.content" size="small" /></template>
-          </el-table-column>
-          <el-table-column label="Note" width="200">
-            <template #default="{ row }"><el-input v-model="row.note" size="small" /></template>
-          </el-table-column>
-          <el-table-column prop="kind" label="Kind" width="90" />
-        </el-table>
+        <!-- right: live draft -->
+        <div class="kv-draft">
+          <p class="kv-hint">
+            {{ analyzed.filter(a => a._keep).length }} of {{ analyzed.length }} selected — the draft updates as you chat.
+          </p>
+          <el-empty v-if="!analyzed.length" description="No draft yet" :image-size="60" />
+          <el-table v-else :data="analyzed" size="small" max-height="420">
+            <el-table-column width="42">
+              <template #default="{ row }"><el-checkbox v-model="row._keep" /></template>
+            </el-table-column>
+            <el-table-column label="Content">
+              <template #default="{ row }"><el-input v-model="row.content" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="Note" width="170">
+              <template #default="{ row }"><el-input v-model="row.note" size="small" /></template>
+            </el-table-column>
+            <el-table-column prop="kind" label="Kind" width="80" />
+          </el-table>
+          <el-select v-model="batchLabelIds" multiple collapse-tags placeholder="Apply labels to all (optional)"
+            style="width:100%; margin-top:8px">
+            <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
+          </el-select>
+        </div>
       </div>
 
       <template #footer>
@@ -216,6 +235,21 @@
 .kv-label-list { display: flex; flex-wrap: wrap; align-items: center; }
 .kv-analyzed { margin-top: 12px; }
 .kv-added { font-size: 12px; color: #86868b; }
+
+/* conversational batch import */
+.kv-batch { display: flex; gap: 16px; height: 62vh; }
+.kv-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.kv-chat-log { flex: 1; overflow-y: auto; padding: 8px; background: #f5f5f7;
+  border-radius: 10px; }
+.kv-msg { display: flex; margin: 6px 0; }
+.kv-msg.user { justify-content: flex-end; }
+.kv-bubble { max-width: 82%; padding: 8px 12px; border-radius: 12px; font-size: 13px;
+  white-space: pre-wrap; word-break: break-word; }
+.kv-msg.user .kv-bubble { background: #0a84ff; color: #fff; }
+.kv-msg.assistant .kv-bubble { background: #fff; color: #1d1d1f; border: 1px solid rgba(0,0,0,0.06); }
+.kv-typing { letter-spacing: 2px; color: #86868b; }
+.kv-chat-input { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+.kv-draft { width: 460px; display: flex; flex-direction: column; overflow-y: auto; }
 
 .kv-net-head { display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }

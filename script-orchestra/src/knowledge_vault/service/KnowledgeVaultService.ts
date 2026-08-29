@@ -19,8 +19,13 @@ export async function updateFragment(id: number, patch: { content?: string; note
 export async function deleteFragment(id: number) {
   return deleteRequest(`${B}/fragments/${id}`)
 }
-export async function batchAnalyze(rawText: string): Promise<AnalyzedFragment[]> {
-  return (await postRequest(`${B}/fragments/batch-analyze`, {}, { raw_text: rawText }) as { fragments: AnalyzedFragment[] }).fragments
+export async function batchChat(
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  currentFragments: AnalyzedFragment[],
+): Promise<{ reply: string; fragments: AnalyzedFragment[] }> {
+  return await postRequest(`${B}/fragments/batch-chat`, {}, {
+    messages, current_fragments: currentFragments,
+  }) as { reply: string; fragments: AnalyzedFragment[] }
 }
 export async function batchCommit(fragments: AnalyzedFragment[], labelIds: number[] = []): Promise<number> {
   return (await postRequest(`${B}/fragments/batch`, {}, { fragments, label_ids: labelIds }) as { count: number }).count

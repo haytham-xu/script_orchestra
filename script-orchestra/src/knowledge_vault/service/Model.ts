@@ -25,6 +25,11 @@ export interface AnalyzedFragment {
   _keep?: boolean   // client-side selection in the preview
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface KnowledgeNode {
   id: number
   title: string

@@ -3,7 +3,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Network } from 'vis-network/standalone'
 import * as api from '../service/KnowledgeVaultService'
 import type {
-  RawFragment, KnowledgeNode, KnowledgeVaultSettings, BuildStatus, Label, AnalyzedFragment,
+  RawFragment, KnowledgeNode, KnowledgeVaultSettings, BuildStatus, Label, AnalyzedFragment, ChatMessage,
 } from '../service/Model'
 
 export default defineComponent({
@@ -97,27 +97,33 @@ export default defineComponent({
       } catch (e: any) { ElMessage.error(e.response?.data?.error || e.message || 'Update failed') }
     }
 
-    // ---- batch import (AI splits a messy blob → preview → commit) ----
+    // ---- batch import (conversational: chat with AI, it regenerates the draft) ----
     const batchDialog = ref(false)
-    const batchText = ref('')
-    const batchAnalyzing = ref(false)
+    const chatInput = ref('')
+    const chatLoading = ref(false)
     const batchCommitting = ref(false)
     const batchLabelIds = ref<number[]>([])
-    const analyzed = ref<AnalyzedFragment[]>([])
+    const messages = ref<ChatMessage[]>([])       // full conversation (sent every turn)
+    const analyzed = ref<AnalyzedFragment[]>([])   // current draft, kept in sync with AI
     function openBatch() {
-      batchText.value = ''; analyzed.value = []; batchLabelIds.value = []
+      chatInput.value = ''; messages.value = []; analyzed.value = []; batchLabelIds.value = []
       batchDialog.value = true
     }
-    async function runAnalyze() {
-      if (!batchText.value.trim()) { ElMessage.warning('Paste some text first'); return }
-      batchAnalyzing.value = true
+    async function sendChat() {
+      const text = chatInput.value.trim()
+      if (!text) return
+      if (chatLoading.value) return
+      messages.value.push({ role: 'user', content: text })
+      chatInput.value = ''
+      chatLoading.value = true
       try {
-        const list = await api.batchAnalyze(batchText.value)
-        analyzed.value = list.map((f) => ({ ...f, _keep: true }))
-        if (!list.length) ElMessage.info('AI found no distinct items')
+        const r = await api.batchChat(messages.value, analyzed.value)
+        messages.value.push({ role: 'assistant', content: r.reply || '(updated draft)' })
+        // AI returns the FULL regenerated draft; keep prior selection where possible.
+        analyzed.value = r.fragments.map((f) => ({ ...f, _keep: true }))
       } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Analyze failed')
-      } finally { batchAnalyzing.value = false }
+        messages.value.push({ role: 'assistant', content: 'Error: ' + (e.response?.data?.error || e.message || 'chat failed') })
+      } finally { chatLoading.value = false }
     }
     async function commitBatch() {
       const keep = analyzed.value.filter((f) => f._keep)
@@ -252,8 +258,8 @@ export default defineComponent({
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
       fmtDate, FRESH_LABEL, FRESH_TYPE,
       editDialog, editing, openEdit, saveEdit,
-      batchDialog, batchText, batchAnalyzing, batchCommitting, batchLabelIds, analyzed,
-      openBatch, runAnalyze, commitBatch,
+      batchDialog, chatInput, chatLoading, batchCommitting, batchLabelIds,
+      messages, analyzed, openBatch, sendChat, commitBatch,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, edges, stale, buildStatus, building, loadNetwork, rebuild,
       selected, graphEl, KIND_COLOR,

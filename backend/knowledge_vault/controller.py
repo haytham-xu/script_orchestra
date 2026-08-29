@@ -10,6 +10,7 @@ from . import repository, settings_manager, query_service
 from . import builder, lifecycle, ai_client, backup
 from .entity import RawFragment
 import threading
+import json
 
 ns = Namespace("")
 
@@ -108,33 +109,10 @@ def _safe_index(fid, text):
         print(f"[knowledge_vault] re-index failed: {exc}")
 
 
-@ns.route("/fragments/batch-analyze")
-class BatchAnalyzeResource(Resource):
-    def post(self):
-        """Let Claude split a messy blob into structured fragments. Returns a
-        PREVIEW list — nothing is written until /fragments/batch is called."""
-        data = request.json or {}
-        blob = (data.get("raw_text") or "").strip()
-        if not blob:
-            return {"error": "raw_text is required"}, 400
-        prompt = (
-            "You are organizing scattered technical knowledge into discrete "
-            "fragments. Split the text below into individual knowledge items. "
-            "For each item return: content (the core knowledge — a URL, command, "
-            "snippet, or fact), note (a short human label of what it is), and kind "
-            "(one of: url, command, script, note). Return STRICT JSON: "
-            '{"fragments":[{"content":"...","note":"...","kind":"..."}]}. '
-            "Do not invent items that aren't in the text.\n\nTEXT:\n" + blob
-        )
-        try:
-            parsed = ai_client.ask_json(prompt, max_tokens=2048) or {}
-        except Exception as exc:
-            return {"error": f"AI analyze failed: {exc}"}, 502
-        frags = parsed.get("fragments") if isinstance(parsed, dict) else None
-        if not isinstance(frags, list):
-            return {"error": "AI did not return a valid fragment list"}, 502
-        # Sanitize: keep only well-formed rows.
-        clean = []
+def _sanitize_fragments(frags) -> list:
+    """Keep only well-formed {content, note, kind} rows."""
+    clean = []
+    if isinstance(frags, list):
         for f in frags:
             if isinstance(f, dict) and (f.get("content") or "").strip():
                 clean.append({
@@ -142,7 +120,54 @@ class BatchAnalyzeResource(Resource):
                     "note": str(f.get("note", "")).strip(),
                     "kind": str(f.get("kind", "")).strip(),
                 })
-        return {"fragments": clean}, 200
+    return clean
+
+
+@ns.route("/fragments/batch-chat")
+class BatchChatResource(Resource):
+    def post(self):
+        """Conversational batch import (stateless). The client sends the full
+        conversation plus the current draft; Claude replies AND regenerates the
+        draft. Nothing is written until /fragments/batch is called.
+
+        Body: {"messages":[{"role":"user"|"assistant","content":"..."}],
+               "current_fragments":[{content,note,kind}]}
+        Returns: {"reply":"...", "fragments":[{content,note,kind}]}
+        """
+        data = request.json or {}
+        messages = data.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return {"error": "messages (non-empty list) is required"}, 400
+        current = _sanitize_fragments(data.get("current_fragments"))
+
+        convo = "\n".join(
+            f"{'User' if m.get('role') == 'user' else 'Assistant'}: {m.get('content','')}"
+            for m in messages if isinstance(m, dict)
+        )
+        prompt = (
+            "You help organize scattered technical knowledge into discrete "
+            "fragments through conversation. Each fragment has: content (the core "
+            "knowledge — a URL, command, snippet, or fact), note (a short human "
+            "label), and kind (one of: url, command, script, note).\n\n"
+            "Given the conversation and the current draft list, apply the user's "
+            "latest request and regenerate the FULL updated draft. Do not invent "
+            "knowledge that never appeared in the conversation.\n\n"
+            "Reply with STRICT JSON only:\n"
+            '{"reply":"<one short sentence to the user about what you changed>",'
+            '"fragments":[{"content":"...","note":"...","kind":"..."}]}\n\n'
+            f"CURRENT DRAFT:\n{json.dumps(current, ensure_ascii=False)}\n\n"
+            f"CONVERSATION:\n{convo}"
+        )
+        try:
+            parsed = ai_client.ask_json(prompt, max_tokens=4096) or {}
+        except Exception as exc:
+            return {"error": f"AI chat failed: {exc}"}, 502
+        if not isinstance(parsed, dict):
+            return {"error": "AI did not return a valid response"}, 502
+        return {
+            "reply": str(parsed.get("reply", "")).strip(),
+            "fragments": _sanitize_fragments(parsed.get("fragments")),
+        }, 200
 
 
 @ns.route("/fragments/batch")
