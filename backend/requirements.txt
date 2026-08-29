@@ -63,8 +63,9 @@ requests==2.34.2
 # assistant tool — Claude API client (pin to poc03's version for parity)
 anthropic==0.42.0
 
-# knowledge_vault — Claude via the logged-in Claude CLI (no API key needed)
-claude-agent-sdk==0.1.12
+# knowledge_vault calls Claude via the `claude` CLI in one-shot --print mode
+# (no pip dep, no API key). Prerequisite: the Claude CLI must be installed and
+# logged in on the host; see https://docs.claude.com/claude-code
 
 # assistant/knowledge — PDF parsing + semantic search
 # (sentence-transformers pulls in torch — a large, multi-GB dependency)
