@@ -28,36 +28,30 @@
             <el-button type="primary" :loading="saving" @click="addFragment">Save</el-button>
           </div>
 
-          <el-table :data="fragments" size="small" style="width:100%; margin-top:16px;">
-            <el-table-column prop="content" label="Content" show-overflow-tooltip />
-            <el-table-column prop="note" label="Note" show-overflow-tooltip />
-            <el-table-column label="Labels" width="180">
-              <template #default="{ row }">
-                <el-tag v-for="lid in row.label_ids" :key="lid" size="small"
-                  :color="labelMap[lid]?.color" style="margin-right:4px; color:#fff; border:none;">
-                  {{ labelMap[lid]?.name }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Added" width="110">
-              <template #default="{ row }">
-                <span class="kv-added">{{ fmtDate(row.created_at) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Status" width="140">
-              <template #default="{ row }">
-                <el-tag size="small" :type="FRESH_TYPE[row.freshness]">
-                  {{ FRESH_LABEL[row.freshness] || row.freshness }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="" width="150">
-              <template #default="{ row }">
-                <el-button size="small" @click="openEdit(row)">Edit</el-button>
-                <el-button size="small" type="danger" @click="removeFragment(row)">Delete</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <div class="kv-list">
+            <el-empty v-if="!fragments.length" description="No fragments yet" :image-size="70" />
+            <div v-for="row in fragments" :key="row.id" class="kv-frag">
+              <div class="kv-frag-main">
+                <div class="kv-frag-content" :title="row.content">{{ row.content }}</div>
+                <div v-if="row.note" class="kv-frag-note">{{ row.note }}</div>
+                <div class="kv-frag-meta">
+                  <el-tag v-if="row.kind" size="small" effect="plain" class="kv-kind">{{ row.kind }}</el-tag>
+                  <el-tag v-for="lid in row.label_ids" :key="lid" size="small"
+                    :color="labelMap[lid]?.color" class="kv-lbl">{{ labelMap[lid]?.name }}</el-tag>
+                  <span class="kv-dot">·</span>
+                  <span class="kv-added">{{ fmtDate(row.created_at) }}</span>
+                  <span class="kv-dot">·</span>
+                  <el-tag size="small" :type="FRESH_TYPE[row.freshness]" effect="light">
+                    {{ FRESH_LABEL[row.freshness] || row.freshness }}
+                  </el-tag>
+                </div>
+              </div>
+              <div class="kv-frag-actions">
+                <el-button size="small" text @click="openEdit(row)">Edit</el-button>
+                <el-button size="small" text type="danger" @click="removeFragment(row)">Delete</el-button>
+              </div>
+            </div>
+          </div>
         </div>
       </el-tab-pane>
 
@@ -73,11 +67,19 @@
           <el-card v-if="aiAnswer" class="kv-ai" style="margin-top:12px;">
             <div style="white-space:pre-wrap">{{ aiAnswer }}</div>
           </el-card>
-          <el-table :data="results" size="small" style="width:100%; margin-top:12px;">
-            <el-table-column prop="content" label="Content" show-overflow-tooltip />
-            <el-table-column prop="note" label="Note" show-overflow-tooltip />
-            <el-table-column prop="score" label="Score" width="90" />
-          </el-table>
+          <div class="kv-list" style="margin-top:12px;">
+            <el-empty v-if="!results.length" description="No results" :image-size="60" />
+            <div v-for="row in results" :key="row.id" class="kv-frag">
+              <div class="kv-frag-main">
+                <div class="kv-frag-content" :title="row.content">{{ row.content }}</div>
+                <div v-if="row.note" class="kv-frag-note">{{ row.note }}</div>
+                <div class="kv-frag-meta">
+                  <el-tag v-if="row.kind" size="small" effect="plain" class="kv-kind">{{ row.kind }}</el-tag>
+                  <span v-if="row.score != null" class="kv-score">match {{ Number(row.score).toFixed(2) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </el-tab-pane>
 
@@ -184,18 +186,18 @@
             {{ analyzed.filter(a => a._keep).length }} of {{ analyzed.length }} selected — the draft updates as you chat.
           </p>
           <el-empty v-if="!analyzed.length" description="No draft yet" :image-size="60" />
-          <el-table v-else :data="analyzed" size="small" max-height="420">
-            <el-table-column width="42">
-              <template #default="{ row }"><el-checkbox v-model="row._keep" /></template>
-            </el-table-column>
-            <el-table-column label="Content">
-              <template #default="{ row }"><el-input v-model="row.content" size="small" /></template>
-            </el-table-column>
-            <el-table-column label="Note" width="170">
-              <template #default="{ row }"><el-input v-model="row.note" size="small" /></template>
-            </el-table-column>
-            <el-table-column prop="kind" label="Kind" width="80" />
-          </el-table>
+          <div v-else class="kv-draft-list">
+            <div v-for="(row, i) in analyzed" :key="i" class="kv-draft-item" :class="{ off: !row._keep }">
+              <el-checkbox v-model="row._keep" class="kv-draft-check" />
+              <div class="kv-draft-fields">
+                <el-input v-model="row.content" size="small" placeholder="Content" />
+                <div class="kv-draft-sub">
+                  <el-input v-model="row.note" size="small" placeholder="Note" />
+                  <el-tag v-if="row.kind" size="small" effect="plain" class="kv-kind">{{ row.kind }}</el-tag>
+                </div>
+              </div>
+            </div>
+          </div>
           <el-select v-model="batchLabelIds" multiple collapse-tags placeholder="Apply labels to all (optional)"
             style="width:100%; margin-top:8px">
             <el-option v-for="l in labels" :key="l.id" :label="l.name" :value="l.id" />
@@ -235,6 +237,36 @@
 .kv-label-list { display: flex; flex-wrap: wrap; align-items: center; }
 .kv-analyzed { margin-top: 12px; }
 .kv-added { font-size: 12px; color: #86868b; }
+
+/* fragment cards (Capture + Search lists) */
+.kv-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.kv-frag { display: flex; align-items: flex-start; gap: 12px; background: #fff;
+  border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; padding: 12px 14px;
+  transition: box-shadow .15s, border-color .15s; }
+.kv-frag:hover { border-color: rgba(10,132,255,0.35); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+.kv-frag-main { flex: 1; min-width: 0; }
+.kv-frag-content { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; color: #1d1d1f; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.kv-frag-note { font-size: 13px; color: #3a3a3c; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-frag-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.kv-frag-meta .kv-added { font-size: 12px; }
+.kv-kind { text-transform: capitalize; }
+.kv-lbl { color: #fff !important; border: none !important; }
+.kv-dot { color: #d2d2d7; }
+.kv-score { font-size: 12px; color: #86868b; }
+.kv-frag-actions { flex-shrink: 0; opacity: 0; transition: opacity .15s; }
+.kv-frag:hover .kv-frag-actions { opacity: 1; }
+
+/* batch draft cards */
+.kv-draft-list { display: flex; flex-direction: column; gap: 8px; }
+.kv-draft-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px;
+  background: #fff; border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; }
+.kv-draft-item.off { opacity: 0.45; }
+.kv-draft-check { margin-top: 4px; }
+.kv-draft-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.kv-draft-sub { display: flex; gap: 6px; align-items: center; }
 
 /* conversational batch import */
 .kv-batch { display: flex; gap: 16px; height: 62vh; }
