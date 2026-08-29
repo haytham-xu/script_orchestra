@@ -227,15 +227,29 @@ export default defineComponent({
       }
     }
 
+    const buildPhase = ref('')
     async function rebuild() {
       building.value = true
+      buildPhase.value = 'starting'
       try {
-        buildStatus.value = await api.build(true)
-        ElMessage.success(`Built ${buildStatus.value.nodes} nodes, ${buildStatus.value.edges} edges`)
+        await api.build(true)   // returns immediately (202); build runs in background
+        // Poll status until the build finishes.
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 1500))
+          const s = await api.getBuildStatus()
+          buildStatus.value = s
+          buildPhase.value = s.phase
+          if (!s.running) break
+        }
+        if (buildStatus.value?.phase?.startsWith('error')) {
+          ElMessage.error('Build failed: ' + buildStatus.value.phase)
+        } else {
+          ElMessage.success(`Built ${buildStatus.value?.nodes ?? 0} nodes, ${buildStatus.value?.edges ?? 0} edges`)
+        }
         await loadNetwork()
       } catch (e: any) {
         ElMessage.error(e.response?.data?.error || e.message || 'Build failed')
-      } finally { building.value = false }
+      } finally { building.value = false; buildPhase.value = '' }
     }
 
     // ---- settings ----
@@ -261,7 +275,7 @@ export default defineComponent({
       batchDialog, chatInput, chatLoading, batchCommitting, batchLabelIds,
       messages, analyzed, openBatch, sendChat, commitBatch,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
-      nodes, edges, stale, buildStatus, building, loadNetwork, rebuild,
+      nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
       selected, graphEl, KIND_COLOR,
       toggleAutoBuild,
     }

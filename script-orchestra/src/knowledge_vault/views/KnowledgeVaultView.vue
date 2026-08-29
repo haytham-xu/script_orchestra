@@ -5,7 +5,9 @@
       <div class="kv-auto">
         <span>Auto-build</span>
         <el-switch :model-value="settings.auto_build" @change="(v: any) => toggleAutoBuild(v)" />
-        <el-button size="small" :loading="building" @click="rebuild">Rebuild network</el-button>
+        <el-button size="small" :loading="building" @click="rebuild">
+          {{ building ? (buildPhase ? 'Building — ' + buildPhase : 'Building…') : 'Rebuild network' }}
+        </el-button>
       </div>
     </header>
 

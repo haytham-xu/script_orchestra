@@ -29,29 +29,33 @@ def _run_query(prompt: str, timeout: int = 120) -> str:
     """Run a one-shot prompt through the Claude CLI and return its text output."""
     env = dict(os.environ)
     env.setdefault("ANTHROPIC_BASE_URL", _DEFAULT_BASE_URL)
-    proc = subprocess.run(
-        [_cli_path(), "--print", "--model", MODEL, prompt],
-        capture_output=True, text=True, timeout=timeout, env=env,
-        stdin=subprocess.DEVNULL,   # never block waiting on a tty
-    )
+    try:
+        proc = subprocess.run(
+            [_cli_path(), "--print", "--model", MODEL, prompt],
+            capture_output=True, text=True, timeout=timeout, env=env,
+            stdin=subprocess.DEVNULL,   # never block waiting on a tty
+        )
+    except subprocess.TimeoutExpired:
+        # subprocess.run already terminated the child on timeout.
+        raise RuntimeError(f"claude CLI timed out after {timeout}s")
     if proc.returncode != 0:
         raise RuntimeError(
             f"claude CLI exited {proc.returncode}: {(proc.stderr or proc.stdout or '').strip()[:400]}")
     return (proc.stdout or "").strip()
 
 
-def ask_text(prompt: str, max_tokens: int = 1024) -> str:
+def ask_text(prompt: str, max_tokens: int = 1024, timeout: int = 120) -> str:
     # max_tokens kept for signature compatibility; the CLI manages limits.
-    return _run_query(prompt)
+    return _run_query(prompt, timeout=timeout)
 
 
-def ask_json(prompt: str, max_tokens: int = 1024) -> Optional[dict]:
+def ask_json(prompt: str, max_tokens: int = 1024, timeout: int = 120) -> Optional[dict]:
     """Send a prompt expecting a JSON object back. Returns parsed dict or None.
 
     The CLI's --print output may wrap JSON in ```fences``` or add prose, so we
     extract the first balanced {...} block rather than trusting exact framing.
     """
-    text = _run_query(prompt)
+    text = _run_query(prompt, timeout=timeout)
     obj = _extract_json_object(text)
     if obj is not None:
         return obj

@@ -263,11 +263,19 @@ class BuildResource(Resource):
     def post(self):
         data = request.json or {}
         use_ai = data.get("use_ai", True)
-        try:
-            status = builder.rebuild(use_ai=bool(use_ai))
-        except Exception as exc:
-            return {"error": f"build failed: {exc}"}, 500
-        return status, 200
+        # Don't start a second build on top of a running one.
+        if builder.get_status().get("running"):
+            return builder.get_status(), 202
+        # Run in the background and return immediately; the client polls
+        # /build/status. A synchronous build can take minutes, which would spin
+        # the UI button the whole time.
+        def _run():
+            try:
+                builder.rebuild(use_ai=bool(use_ai))
+            except Exception as exc:
+                print(f"[knowledge_vault] build failed: {exc}")
+        threading.Thread(target=_run, daemon=True).start()
+        return builder.get_status(), 202
 
 
 @ns.route("/build/status")

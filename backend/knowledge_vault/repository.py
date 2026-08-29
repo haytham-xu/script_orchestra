@@ -247,6 +247,14 @@ def set_node_freshness(node_id: int, freshness: str) -> None:
     conn.close()
 
 
+def update_node_meta(node_id: int, title: str, summary: str, kind: str) -> None:
+    conn = _conn()
+    conn.execute("UPDATE node SET title = ?, summary = ?, kind = ? WHERE id = ?",
+                 (title, summary, kind, node_id))
+    conn.commit()
+    conn.close()
+
+
 # ---- labels (user-managed tags; a fragment may have many) --------------
 
 def get_labels() -> List[dict]:

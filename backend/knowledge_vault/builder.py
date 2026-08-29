@@ -16,6 +16,13 @@ from .vector_store import get_store
 
 _status = {"running": False, "phase": "idle", "nodes": 0, "edges": 0, "last_run": None}
 
+# Cap AI calls per build so it can't run away: each call is a serial CLI spawn
+# (seconds), so dozens of them turn a build into minutes. Beyond the budget we
+# fall back to vector-only heuristics. Tune via KV_AI_BUDGET.
+import os as _os
+_AI_BUDGET = int(_os.environ.get("KV_AI_BUDGET", "30"))
+_AI_DEDUP = _os.environ.get("KV_AI_DEDUP", "0") == "1"   # AI dedup off by default (slow, low value)
+
 
 def get_status() -> dict:
     return dict(_status)
@@ -25,9 +32,12 @@ def rebuild(use_ai: bool = True) -> dict:
     """Full rebuild of the knowledge network from raw fragments.
 
     use_ai=False → build nodes 1:1 from fragments + vector-similarity edges only
-    (no token cost). use_ai=True → Claude refines dedup grouping + relation labels.
+    (no token cost). use_ai=True → Claude refines dedup grouping + node titles,
+    up to a bounded number of calls (_AI_BUDGET) so the build stays responsive.
     """
     _status.update(running=True, phase="embedding", nodes=0, edges=0)
+    # Mutable budget shared by the AI helpers this run.
+    ai_budget = [_AI_BUDGET if use_ai else 0]
     try:
         frags = [f for f in repository.get_fragments() if not f.archived]
         # (Re)embed everything so vectors match current raw content.
@@ -65,23 +75,36 @@ def rebuild(use_ai: bool = True) -> dict:
                 if rep(cand_id) == rep(f.id):
                     continue
                 is_dup = sim >= 0.97  # near-identical → auto group
-                if not is_dup and use_ai:
+                # AI dedup on the fuzzy 0.80–0.97 band is the lowest-value AI
+                # use (vector already auto-groups the near-identical) and it's
+                # what made builds crawl. Off by default; opt in via env.
+                if not is_dup and _AI_DEDUP and ai_budget[0] > 0:
+                    ai_budget[0] -= 1
                     is_dup = _ai_is_duplicate(f, frag_by_id[cand_id])
                 if is_dup:
                     group_of[rep(cand_id)] = rep(f.id)
 
         # Materialize nodes from groups.
         _status["phase"] = "nodes"
+        # Build every node with the fast heuristic first (instant), so nodes
+        # exist immediately. AI enrichment (better titles/summaries) happens in
+        # ONE batched call below — not one CLI spawn per node, which was the
+        # slow part that made the build appear to hang.
         node_id_by_group = {}
+        rep_of_node = {}
         for f in frags:
             r = rep(f.id)
-            group_id = node_id_by_group.get(r)
-            if group_id is None:
+            if r not in node_id_by_group:
                 members = [g for g in frag_ids if rep(g) == r]
-                node = _make_node(members, frag_by_id, use_ai)
+                node = _make_node(members, frag_by_id, use_ai=False)
                 node = repository.insert_node(node)
                 node_id_by_group[r] = node.id
+                rep_of_node[node.id] = (r, members)
         _status["nodes"] = len(node_id_by_group)
+
+        if use_ai and node_id_by_group:
+            _status["phase"] = "classify"
+            _ai_enrich_nodes(rep_of_node, frag_by_id)
 
         # ---- edges: relate nodes by fragment similarity --------------
         _status["phase"] = "edges"
@@ -107,9 +130,12 @@ def rebuild(use_ai: bool = True) -> dict:
                     if pair in seen_pairs:
                         continue
                     seen_pairs.add(pair)
-                    relation = "related"
-                    if use_ai and sim < 0.85:
-                        relation = _ai_relation(frag_by_id[f.id], frag_by_id[cand_id]) or "related"
+                    # Relation label from similarity — cheap and instant. We do
+                    # NOT call the AI per edge here: with N nodes that is dozens
+                    # of serial CLI calls, each seconds long, which made the
+                    # build crawl (and appear to hang). The edge itself carries
+                    # the signal; the label is a nicety.
+                    relation = "same-topic" if sim >= 0.75 else "related"
                     repository.insert_edge(Edge(None, src_node, tgt_node, relation, round(sim, 3)))
                     edge_count += 1
         _status["edges"] = edge_count
@@ -161,7 +187,7 @@ def _ai_is_duplicate(a, b) -> bool:
         f"A: {a.content} | note: {a.note}\nB: {b.content} | note: {b.note}"
     )
     try:
-        res = ai_client.ask_json(prompt, max_tokens=64)
+        res = ai_client.ask_json(prompt, max_tokens=64, timeout=25)
     except Exception as exc:
         print(f"[knowledge_vault] AI dedup failed, falling back to vector: {exc}")
         return False
@@ -183,6 +209,42 @@ def _ai_relation(a, b) -> str:
     return rel if rel in ("same-topic", "prereq", "alternative", "related") else "related"
 
 
+def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
+    """Enrich all node titles/summaries/kinds in a SINGLE batched AI call.
+
+    rep_of_node: {node_id: (group_rep, [member_frag_ids])}. Falls back silently
+    to the heuristic values already stored if the AI call fails.
+    """
+    items = []
+    for node_id, (_r, member_ids) in rep_of_node.items():
+        members = [frag_by_id[m] for m in member_ids if m in frag_by_id]
+        joined = " ; ".join(f"{m.content} ({m.note})" if m.note else m.content for m in members)
+        items.append({"id": node_id, "text": joined[:500]})
+    prompt = (
+        "For each knowledge item below, produce a concise title, a one-line "
+        "summary, and a kind (one of: url, command, script, note). Return STRICT "
+        'JSON: {"nodes":[{"id":<id>,"title":"...","summary":"...","kind":"..."}]}.'
+        "\n\nITEMS:\n" + json.dumps(items, ensure_ascii=False)
+    )
+    try:
+        res = ai_client.ask_json(prompt, max_tokens=4096, timeout=90) or {}
+    except Exception as exc:
+        print(f"[knowledge_vault] batch classify failed, keeping heuristics: {exc}")
+        return
+    for n in (res.get("nodes") or []):
+        try:
+            nid = int(n.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if nid not in rep_of_node:
+            continue
+        title = str(n.get("title") or "").strip()[:120]
+        summary = str(n.get("summary") or "").strip()
+        kind = str(n.get("kind") or "").strip()
+        if title or summary or kind:
+            repository.update_node_meta(nid, title or "(untitled)", summary, kind or "note")
+
+
 def _ai_classify(members) -> dict:
     lines = "\n".join(f"- {m.content} | {m.note}" for m in members)
     plural = "these fragments (they were judged duplicates)" if len(members) > 1 else "this fragment"
@@ -192,7 +254,7 @@ def _ai_classify(members) -> dict:
         + lines
     )
     try:
-        return ai_client.ask_json(prompt, max_tokens=256) or {}
+        return ai_client.ask_json(prompt, max_tokens=256, timeout=25) or {}
     except Exception as exc:
         print(f"[knowledge_vault] AI classify failed: {exc}")
         return {}
