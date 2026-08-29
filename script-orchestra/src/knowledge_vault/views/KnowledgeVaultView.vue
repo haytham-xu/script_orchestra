@@ -55,27 +55,39 @@
       <!-- Network -->
       <el-tab-pane label="Network" name="network">
         <div class="kv-network">
-          <p v-if="buildStatus" class="kv-hint">
-            Last build: {{ buildStatus.nodes }} nodes, {{ buildStatus.edges }} edges
-          </p>
-          <h3>Nodes</h3>
-          <el-table :data="nodes" size="small" style="width:100%;">
-            <el-table-column prop="title" label="Title" show-overflow-tooltip />
-            <el-table-column prop="kind" label="Kind" width="100" />
-            <el-table-column prop="freshness" label="Freshness" width="110">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.freshness === 'stale' ? 'danger' : row.freshness === 'aging' ? 'warning' : 'success'">
-                  {{ row.freshness }}
-                </el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
-          <h3 style="margin-top:16px;">Needs review (stale)</h3>
-          <el-empty v-if="!stale.length" description="Nothing stale" :image-size="60" />
-          <el-table v-else :data="stale" size="small" style="width:100%;">
-            <el-table-column prop="title" label="Title" show-overflow-tooltip />
-            <el-table-column prop="kind" label="Kind" width="100" />
-          </el-table>
+          <div class="kv-net-head">
+            <p v-if="buildStatus" class="kv-hint">
+              Last build: {{ buildStatus.nodes }} nodes, {{ buildStatus.edges }} edges
+            </p>
+            <div class="kv-legend">
+              <span><i class="dot" style="background:#0a84ff"></i>url</span>
+              <span><i class="dot" style="background:#30d158"></i>command</span>
+              <span><i class="dot" style="background:#ff9f0a"></i>script</span>
+              <span><i class="dot" style="background:#bf5af2"></i>note</span>
+              <span class="sep">|</span>
+              <span><i class="ring" style="border-color:#34c759"></i>fresh</span>
+              <span><i class="ring" style="border-color:#ff9f0a"></i>aging</span>
+              <span><i class="ring" style="border-color:#ff3b30"></i>stale</span>
+            </div>
+          </div>
+
+          <el-empty v-if="!nodes.length"
+            description="No knowledge network yet — capture some fragments, then click “Rebuild network”."
+            :image-size="80" />
+
+          <div v-show="nodes.length" class="kv-graph-wrap">
+            <div ref="graphEl" class="kv-graph"></div>
+            <el-card v-if="selected" class="kv-detail" shadow="never">
+              <h4>{{ selected.title }}</h4>
+              <el-tag size="small">{{ selected.kind }}</el-tag>
+              <el-tag size="small" style="margin-left:6px"
+                :type="selected.freshness === 'stale' ? 'danger' : selected.freshness === 'aging' ? 'warning' : 'success'">
+                {{ selected.freshness }}
+              </el-tag>
+              <p class="kv-detail-summary">{{ selected.summary || '—' }}</p>
+              <p class="kv-detail-meta">{{ selected.fragment_ids?.length || 0 }} source fragment(s)</p>
+            </el-card>
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -92,6 +104,25 @@
 .kv-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .kv-auto { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #86868b; }
 .kv-tabs { padding: 0 24px; }
-.kv-capture, .kv-search, .kv-network { max-width: 900px; margin: 16px auto; }
-.kv-hint { font-size: 12px; color: #86868b; }
+.kv-capture, .kv-search { max-width: 900px; margin: 16px auto; }
+.kv-network { max-width: 1200px; margin: 16px auto; }
+.kv-hint { font-size: 12px; color: #86868b; margin: 0; }
+
+.kv-net-head { display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.kv-legend { display: flex; align-items: center; gap: 12px; font-size: 12px; color: #86868b; }
+.kv-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-right: 4px; vertical-align: middle; }
+.kv-legend .ring { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid; margin-right: 4px; vertical-align: middle; }
+.kv-legend .sep { color: #d2d2d7; }
+
+.kv-graph-wrap { position: relative; }
+.kv-graph { width: 100%; height: 560px; background: #fff; border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.06); }
+.kv-detail { position: absolute; top: 12px; right: 12px; width: 260px;
+  background: rgba(255,255,255,0.96); backdrop-filter: blur(6px); }
+.kv-detail h4 { margin: 0 0 8px; font-size: 15px; }
+.kv-detail-summary { font-size: 13px; color: #3a3a3c; margin: 10px 0 4px; white-space: pre-wrap; }
+.kv-detail-meta { font-size: 12px; color: #86868b; margin: 0; }
 </style>
