@@ -1,20 +1,46 @@
-import { defineComponent, ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
+import { defineComponent, ref, onMounted, nextTick, onBeforeUnmount, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Network } from 'vis-network/standalone'
 import * as api from '../service/KnowledgeVaultService'
-import type { RawFragment, KnowledgeNode, KnowledgeVaultSettings, BuildStatus } from '../service/Model'
+import type {
+  RawFragment, KnowledgeNode, KnowledgeVaultSettings, BuildStatus, Label, AnalyzedFragment,
+} from '../service/Model'
 
 export default defineComponent({
   name: 'KnowledgeVaultView',
   setup() {
-    const activeTab = ref<'capture' | 'search' | 'network'>('capture')
+    const activeTab = ref<'capture' | 'search' | 'network' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
       auto_build: false, embed_model: '<embed-model>', relate_top_k: 5, stale_days: 90,
     })
 
+    // ---- labels (user-managed tags, shared across tabs) ----
+    const labels = ref<Label[]>([])
+    const labelMap = computed<Record<number, Label>>(() =>
+      Object.fromEntries(labels.value.map((l) => [l.id, l])))
+    async function loadLabels() { labels.value = await api.getLabels() }
+    const newLabel = ref({ name: '', color: '#0a84ff' })
+    async function addLabel() {
+      const name = newLabel.value.name.trim()
+      if (!name) { ElMessage.warning('Label name is required'); return }
+      try {
+        await api.createLabel(name, newLabel.value.color)
+        newLabel.value = { name: '', color: '#0a84ff' }
+        await loadLabels()
+      } catch (e: any) { ElMessage.error(e.message || 'Failed') }
+    }
+    async function removeLabel(l: Label) {
+      try {
+        await ElMessageBox.confirm(`Delete label “${l.name}”? It will be removed from all fragments.`, 'Confirm', { type: 'warning' })
+        await api.deleteLabel(l.id)
+        await loadLabels()
+        await loadFragments()
+      } catch (e: any) { if (e !== 'cancel') ElMessage.error(e.message || 'Failed') }
+    }
+
     // ---- capture ----
     // kind is no longer entered by the user — the AI infers it at build time.
-    const draft = ref({ content: '', note: '' })
+    const draft = ref<{ content: string; note: string; label_ids: number[] }>({ content: '', note: '', label_ids: [] })
     const fragments = ref<RawFragment[]>([])
     const saving = ref(false)
     async function loadFragments() { fragments.value = await api.getFragments() }
@@ -23,8 +49,8 @@ export default defineComponent({
       if (saving.value) return   // guard against double-submit
       saving.value = true
       try {
-        await api.addFragment(draft.value.content, draft.value.note)
-        draft.value = { content: '', note: '' }
+        await api.addFragment(draft.value.content, draft.value.note, draft.value.label_ids)
+        draft.value = { content: '', note: '', label_ids: [] }
         ElMessage.success('Saved')
         await loadFragments()
       } catch (e: any) {
@@ -40,6 +66,61 @@ export default defineComponent({
       } catch (e: any) {
         if (e !== 'cancel') ElMessage.error(e.message || 'Delete failed')
       }
+    }
+
+    // ---- edit fragment ----
+    const editDialog = ref(false)
+    const editing = ref<{ id: number; content: string; note: string; label_ids: number[] }>(
+      { id: 0, content: '', note: '', label_ids: [] })
+    function openEdit(f: RawFragment) {
+      editing.value = { id: f.id, content: f.content, note: f.note, label_ids: [...(f.label_ids || [])] }
+      editDialog.value = true
+    }
+    async function saveEdit() {
+      try {
+        await api.updateFragment(editing.value.id, {
+          content: editing.value.content, note: editing.value.note, label_ids: editing.value.label_ids,
+        })
+        editDialog.value = false
+        ElMessage.success('Updated')
+        await loadFragments()
+      } catch (e: any) { ElMessage.error(e.response?.data?.error || e.message || 'Update failed') }
+    }
+
+    // ---- batch import (AI splits a messy blob → preview → commit) ----
+    const batchDialog = ref(false)
+    const batchText = ref('')
+    const batchAnalyzing = ref(false)
+    const batchCommitting = ref(false)
+    const batchLabelIds = ref<number[]>([])
+    const analyzed = ref<AnalyzedFragment[]>([])
+    function openBatch() {
+      batchText.value = ''; analyzed.value = []; batchLabelIds.value = []
+      batchDialog.value = true
+    }
+    async function runAnalyze() {
+      if (!batchText.value.trim()) { ElMessage.warning('Paste some text first'); return }
+      batchAnalyzing.value = true
+      try {
+        const list = await api.batchAnalyze(batchText.value)
+        analyzed.value = list.map((f) => ({ ...f, _keep: true }))
+        if (!list.length) ElMessage.info('AI found no distinct items')
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Analyze failed')
+      } finally { batchAnalyzing.value = false }
+    }
+    async function commitBatch() {
+      const keep = analyzed.value.filter((f) => f._keep)
+      if (!keep.length) { ElMessage.warning('Nothing selected'); return }
+      batchCommitting.value = true
+      try {
+        const n = await api.batchCommit(keep, batchLabelIds.value)
+        ElMessage.success(`Imported ${n} fragment(s)`)
+        batchDialog.value = false
+        await loadFragments()
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Import failed')
+      } finally { batchCommitting.value = false }
     }
 
     // ---- search ----
@@ -149,6 +230,7 @@ export default defineComponent({
 
     onMounted(async () => {
       try { settings.value = await api.getSettings() } catch { /* defaults */ }
+      await loadLabels()
       await loadFragments()
     })
 
@@ -156,7 +238,11 @@ export default defineComponent({
 
     return {
       activeTab, settings,
+      labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
+      editDialog, editing, openEdit, saveEdit,
+      batchDialog, batchText, batchAnalyzing, batchCommitting, batchLabelIds, analyzed,
+      openBatch, runAnalyze, commitBatch,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, edges, stale, buildStatus, building, loadNetwork, rebuild,
       selected, graphEl, KIND_COLOR,

@@ -35,6 +35,9 @@ class FragmentsResource(Resource):
             kind=(data.get("kind") or "").strip(),
         )
         repository.insert_fragment(frag)
+        if isinstance(data.get("label_ids"), list):
+            frag.label_ids = [int(x) for x in data["label_ids"]]
+            repository.set_fragment_labels(frag.id, frag.label_ids)
         # Snapshot after every new fragment — the raw layer must never be lost.
         backup.snapshot()
         # Embed off the request path: the first call lazy-loads the
@@ -65,11 +68,133 @@ class FragmentResource(Resource):
         repository.touch_fragment(fid)
         return {"fragment": frag.to_dict()}, 200
 
+    def put(self, fid):
+        """Edit content/note and label assignments (user-initiated)."""
+        if repository.get_fragment(fid) is None:
+            return {"error": "fragment not found"}, 404
+        data = request.json or {}
+        content = data.get("content")
+        note = data.get("note")
+        repository.update_fragment(
+            fid,
+            content=content.strip() if isinstance(content, str) else None,
+            note=note.strip() if isinstance(note, str) else None,
+        )
+        if isinstance(data.get("label_ids"), list):
+            repository.set_fragment_labels(fid, [int(x) for x in data["label_ids"]])
+        backup.snapshot()
+        updated = repository.get_fragment(fid)
+        # Re-index vector off the request path (content/note may have changed).
+        threading.Thread(
+            target=lambda: _safe_index(fid, f"{updated.content}\n{updated.note}"),
+            daemon=True).start()
+        return {"fragment": updated.to_dict()}, 200
+
     def delete(self, fid):
         # Hard delete (user-initiated). The AI never deletes; only the user can.
         if repository.get_fragment(fid) is None:
             return {"error": "fragment not found"}, 404
         repository.delete_fragment(fid)
+        return {"message": "deleted"}, 200
+
+
+def _safe_index(fid, text):
+    try:
+        query_service.index_fragment(fid, text)
+    except Exception as exc:
+        print(f"[knowledge_vault] re-index failed: {exc}")
+
+
+@ns.route("/fragments/batch-analyze")
+class BatchAnalyzeResource(Resource):
+    def post(self):
+        """Let Claude split a messy blob into structured fragments. Returns a
+        PREVIEW list — nothing is written until /fragments/batch is called."""
+        data = request.json or {}
+        blob = (data.get("raw_text") or "").strip()
+        if not blob:
+            return {"error": "raw_text is required"}, 400
+        prompt = (
+            "You are organizing scattered technical knowledge into discrete "
+            "fragments. Split the text below into individual knowledge items. "
+            "For each item return: content (the core knowledge — a URL, command, "
+            "snippet, or fact), note (a short human label of what it is), and kind "
+            "(one of: url, command, script, note). Return STRICT JSON: "
+            '{"fragments":[{"content":"...","note":"...","kind":"..."}]}. '
+            "Do not invent items that aren't in the text.\n\nTEXT:\n" + blob
+        )
+        try:
+            parsed = ai_client.ask_json(prompt, max_tokens=2048) or {}
+        except Exception as exc:
+            return {"error": f"AI analyze failed: {exc}"}, 502
+        frags = parsed.get("fragments") if isinstance(parsed, dict) else None
+        if not isinstance(frags, list):
+            return {"error": "AI did not return a valid fragment list"}, 502
+        # Sanitize: keep only well-formed rows.
+        clean = []
+        for f in frags:
+            if isinstance(f, dict) and (f.get("content") or "").strip():
+                clean.append({
+                    "content": str(f.get("content", "")).strip(),
+                    "note": str(f.get("note", "")).strip(),
+                    "kind": str(f.get("kind", "")).strip(),
+                })
+        return {"fragments": clean}, 200
+
+
+@ns.route("/fragments/batch")
+class BatchCommitResource(Resource):
+    def post(self):
+        """Insert a confirmed list of fragments (from the batch-analyze preview)."""
+        data = request.json or {}
+        items = data.get("fragments")
+        if not isinstance(items, list) or not items:
+            return {"error": "fragments (non-empty list) is required"}, 400
+        label_ids = [int(x) for x in data.get("label_ids", []) if str(x).strip()]
+        created = []
+        for it in items:
+            content = (it.get("content") or "").strip()
+            if not content:
+                continue
+            frag = RawFragment.new_instance(
+                content=content,
+                note=(it.get("note") or "").strip(),
+                raw_text=content,
+                kind=(it.get("kind") or "").strip(),
+            )
+            repository.insert_fragment(frag)
+            if label_ids:
+                repository.set_fragment_labels(frag.id, label_ids)
+            created.append(frag)
+        backup.snapshot(tag="batch")
+        # Embed all newly-created fragments off the request path.
+        ids_texts = [(f.id, f"{f.content}\n{f.note}") for f in created]
+
+        def _index_all():
+            for fid, text in ids_texts:
+                _safe_index(fid, text)
+        threading.Thread(target=_index_all, daemon=True).start()
+        return {"created": [f.to_dict() for f in created], "count": len(created)}, 201
+
+
+@ns.route("/labels")
+class LabelsResource(Resource):
+    def get(self):
+        return {"labels": repository.get_labels()}, 200
+
+    def post(self):
+        data = request.json or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return {"error": "name is required"}, 400
+        color = (data.get("color") or "#8e8e93").strip()
+        return {"label": repository.create_label(name, color)}, 201
+
+
+@ns.route("/labels/<int:label_id>")
+class LabelResource(Resource):
+    def delete(self, label_id):
+        repository.delete_label(label_id)
         return {"message": "deleted"}, 200
 
 

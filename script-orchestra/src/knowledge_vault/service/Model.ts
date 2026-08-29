@@ -7,7 +7,21 @@ export interface RawFragment {
   created_at: string
   archived: number
   last_accessed: string | null
+  label_ids: number[]
   score?: number
+}
+
+export interface Label {
+  id: number
+  name: string
+  color: string
+}
+
+export interface AnalyzedFragment {
+  content: string
+  note: string
+  kind: string
+  _keep?: boolean   // client-side selection in the preview
 }
 
 export interface KnowledgeNode {

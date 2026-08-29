@@ -22,6 +22,7 @@ class RawFragment:
         self.created_at = created_at
         self.archived = archived      # 0/1 — soft "removed" (raw is never hard-deleted)
         self.last_accessed = last_accessed
+        self.label_ids = []           # user-managed tag ids (populated on load)
 
     @classmethod
     def new_instance(cls, content, note="", raw_text="", kind=""):
@@ -35,6 +36,7 @@ class RawFragment:
             "raw_text": self.raw_text, "kind": self.kind,
             "created_at": self.created_at, "archived": self.archived,
             "last_accessed": self.last_accessed,
+            "label_ids": self.label_ids,
         }
 
     @staticmethod

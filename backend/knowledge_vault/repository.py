@@ -43,6 +43,16 @@ _SCHEMA = [
         fragment_id INTEGER PRIMARY KEY,
         vector TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS label (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT DEFAULT '#8e8e93'
+    )""",
+    """CREATE TABLE IF NOT EXISTS fragment_label (
+        fragment_id INTEGER NOT NULL,
+        label_id INTEGER NOT NULL,
+        PRIMARY KEY (fragment_id, label_id)
+    )""",
 ]
 
 
@@ -86,8 +96,16 @@ def get_fragments(include_archived=False) -> List[RawFragment]:
     q += " ORDER BY id DESC"
     cur.execute(q)
     rows = cur.fetchall()
+    # Bulk-load label assignments so we don't N+1 query per fragment.
+    cur.execute("SELECT fragment_id, label_id FROM fragment_label")
+    label_map = {}
+    for frag_id, label_id in cur.fetchall():
+        label_map.setdefault(frag_id, []).append(label_id)
     conn.close()
-    return [RawFragment.from_row(r) for r in rows]
+    frags = [RawFragment.from_row(r) for r in rows]
+    for f in frags:
+        f.label_ids = label_map.get(f.id, [])
+    return frags
 
 
 def get_fragment(fid) -> Optional[RawFragment]:
@@ -95,8 +113,31 @@ def get_fragment(fid) -> Optional[RawFragment]:
     cur = conn.cursor()
     cur.execute(f"SELECT {_RF_COLS} FROM raw_fragment WHERE id = ?", (fid,))
     row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    cur.execute("SELECT label_id FROM fragment_label WHERE fragment_id = ?", (fid,))
+    label_ids = [r[0] for r in cur.fetchall()]
     conn.close()
-    return RawFragment.from_row(row) if row else None
+    f = RawFragment.from_row(row)
+    f.label_ids = label_ids
+    return f
+
+
+def update_fragment(fid, content=None, note=None) -> None:
+    """Edit the content/note of a fragment (user-initiated). The raw layer is
+    append-only w.r.t. the AI, but the user may correct their own entries."""
+    conn = _conn()
+    sets, params = [], []
+    if content is not None:
+        sets.append("content = ?"); params.append(content)
+    if note is not None:
+        sets.append("note = ?"); params.append(note)
+    if sets:
+        params.append(fid)
+        conn.execute(f"UPDATE raw_fragment SET {', '.join(sets)} WHERE id = ?", params)
+        conn.commit()
+    conn.close()
 
 
 def archive_fragment(fid) -> None:
@@ -202,5 +243,50 @@ def get_edges() -> List[Edge]:
 def set_node_freshness(node_id: int, freshness: str) -> None:
     conn = _conn()
     conn.execute("UPDATE node SET freshness = ? WHERE id = ?", (freshness, node_id))
+    conn.commit()
+    conn.close()
+
+
+# ---- labels (user-managed tags; a fragment may have many) --------------
+
+def get_labels() -> List[dict]:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, color FROM label ORDER BY name")
+    rows = cur.fetchall()
+    conn.close()
+    return [{"id": r[0], "name": r[1], "color": r[2]} for r in rows]
+
+
+def create_label(name: str, color: str = "#8e8e93") -> dict:
+    conn = _conn()
+    cur = conn.cursor()
+    # Idempotent: reuse an existing label of the same name.
+    cur.execute("SELECT id, name, color FROM label WHERE name = ?", (name,))
+    row = cur.fetchone()
+    if row:
+        conn.close()
+        return {"id": row[0], "name": row[1], "color": row[2]}
+    cur.execute("INSERT INTO label (name, color) VALUES (?, ?)", (name, color))
+    lid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return {"id": lid, "name": name, "color": color}
+
+
+def delete_label(label_id: int) -> None:
+    conn = _conn()
+    conn.execute("DELETE FROM label WHERE id = ?", (label_id,))
+    conn.execute("DELETE FROM fragment_label WHERE label_id = ?", (label_id,))
+    conn.commit()
+    conn.close()
+
+
+def set_fragment_labels(fragment_id: int, label_ids: List[int]) -> None:
+    conn = _conn()
+    conn.execute("DELETE FROM fragment_label WHERE fragment_id = ?", (fragment_id,))
+    for lid in label_ids:
+        conn.execute("INSERT OR IGNORE INTO fragment_label (fragment_id, label_id) VALUES (?, ?)",
+                     (fragment_id, lid))
     conn.commit()
     conn.close()
