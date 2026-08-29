@@ -7,7 +7,7 @@ from flask_restx import Namespace, Resource
 from flask import request
 
 from . import repository, settings_manager, query_service
-from . import builder, lifecycle, ai_client
+from . import builder, lifecycle, ai_client, backup
 from .entity import RawFragment
 import threading
 
@@ -35,15 +35,24 @@ class FragmentsResource(Resource):
             kind=(data.get("kind") or "").strip(),
         )
         repository.insert_fragment(frag)
-        # Index for vector search immediately (embedding is cheap & local).
-        try:
-            query_service.index_fragment(frag.id, f"{frag.content}\n{frag.note}")
-        except Exception as exc:
-            # Don't fail ingest if embedding hiccups; it can be re-indexed on build.
-            print(f"[knowledge_vault] embed on ingest failed: {exc}")
-        # Optional auto-build (default off): rebuild network in the background.
-        if settings_manager.load_settings().get("auto_build"):
-            threading.Thread(target=lambda: builder.rebuild(use_ai=True), daemon=True).start()
+        # Snapshot after every new fragment — the raw layer must never be lost.
+        backup.snapshot()
+        # Embed off the request path: the first call lazy-loads the
+        # sentence-transformers model (can take tens of seconds), which would
+        # otherwise block Save. Ingest must feel instant; the raw layer is
+        # already persisted, and build/query will re-index if this hasn't run.
+        def _post_ingest():
+            try:
+                query_service.index_fragment(frag.id, f"{frag.content}\n{frag.note}")
+            except Exception as exc:
+                print(f"[knowledge_vault] embed on ingest failed: {exc}")
+            if settings_manager.load_settings().get("auto_build"):
+                try:
+                    builder.rebuild(use_ai=True)
+                except Exception as exc:
+                    print(f"[knowledge_vault] auto-build failed: {exc}")
+
+        threading.Thread(target=_post_ingest, daemon=True).start()
         return {"fragment": frag.to_dict()}, 201
 
 
@@ -130,6 +139,19 @@ class EdgesResource(Resource):
 class StaleResource(Resource):
     def get(self):
         return {"stale": lifecycle.stale_nodes()}, 200
+
+
+@ns.route("/backups")
+class BackupsResource(Resource):
+    def get(self):
+        import os
+        return {"backups": [os.path.basename(b) for b in backup.list_backups()]}, 200
+
+    def post(self):
+        """Force a manual backup snapshot now."""
+        path = backup.snapshot(tag="manual")
+        import os
+        return {"backup": os.path.basename(path) if path else None}, 200
 
 
 @ns.route("/settings")
