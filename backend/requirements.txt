@@ -63,6 +63,9 @@ requests==2.34.2
 # assistant tool — Claude API client (pin to poc03's version for parity)
 anthropic==0.42.0
 
+# knowledge_vault — Claude via the logged-in Claude CLI (no API key needed)
+claude-agent-sdk==0.1.12
+
 # assistant/knowledge — PDF parsing + semantic search
 # (sentence-transformers pulls in torch — a large, multi-GB dependency)
 pypdf==6.16.2
