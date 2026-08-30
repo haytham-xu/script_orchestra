@@ -117,6 +117,8 @@
               style="max-width:240px" @keyup.enter="focusSearch">
               <template #append><el-button @click="focusSearch">Locate</el-button></template>
             </el-input>
+            <el-button v-if="settings.link_check_enabled" size="small" :loading="checkingLinks"
+              @click="checkLinks">Check links</el-button>
           </div>
 
           <el-empty v-if="!nodes.length"
@@ -184,6 +186,17 @@
               {{ l.name }}
             </el-tag>
             <el-empty v-if="!labels.length" description="No labels yet" :image-size="50" />
+          </div>
+
+          <h3 style="margin-top:24px">Link checking</h3>
+          <p class="kv-hint">
+            Probe your saved URLs over HTTP so dead links get flagged for review sooner.
+            <strong>This sends requests to those URLs' servers</strong> (they can see the request in their logs),
+            so it's off by default. When on, use “Check links” on the Network tab.
+          </p>
+          <div class="kv-link-toggle">
+            <el-switch :model-value="settings.link_check_enabled" @change="(v: any) => toggleLinkCheck(v)" />
+            <span>{{ settings.link_check_enabled ? 'Enabled' : 'Disabled' }}</span>
           </div>
         </div>
       </el-tab-pane>
@@ -389,6 +402,7 @@
 .kv-net-tools { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .kv-kind-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.kv-link-toggle { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #3a3a3c; }
 .kv-detail-frags { margin-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 8px; }
 .kv-detail-frag { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   border-radius: 6px; cursor: pointer; font-size: 12px; color: #3a3a3c; }

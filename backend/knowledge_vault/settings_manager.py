@@ -12,6 +12,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "embed_model": "<embed-model>",
     "relate_top_k": 5,            # candidates considered for auto-relate/dedup
     "stale_days": 90,             # a fragment unused this long → flagged for review
+    "link_check_enabled": False,  # opt-in: probe url fragments over HTTP (leaves the machine — off by default)
 }
 
 
@@ -61,6 +62,8 @@ def validate_and_normalize(patch: dict, current: dict) -> dict:
             merged["stale_days"] = max(1, min(int(patch["stale_days"]), 3650))
         except (TypeError, ValueError):
             raise ValueError("stale_days must be an integer")
+    if "link_check_enabled" in patch:
+        merged["link_check_enabled"] = bool(patch["link_check_enabled"])
     return merged
 
 

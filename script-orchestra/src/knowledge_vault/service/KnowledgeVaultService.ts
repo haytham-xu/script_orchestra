@@ -67,6 +67,15 @@ export async function markStaleReviewed(nodeId: number): Promise<KnowledgeNode[]
 export async function archiveStale(nodeId: number): Promise<KnowledgeNode[]> {
   return (await postRequest(`${B}/lifecycle/stale/${nodeId}/archive`, {}, {}) as { stale: KnowledgeNode[] }).stale
 }
+// URL liveness check (opt-in; makes outbound requests). Returns a summary + refreshed stale list.
+export interface CheckLinksResult {
+  checked: number; dead: number; flagged_nodes: number
+  results: { url: string; alive: boolean | null; status: number | null; reason: string }[]
+  stale: KnowledgeNode[]
+}
+export async function checkLinks(): Promise<CheckLinksResult> {
+  return await postRequest(`${B}/lifecycle/check-links`, {}, {}) as CheckLinksResult
+}
 export async function getSettings(): Promise<KnowledgeVaultSettings> {
   return (await getRequest<{ settings: KnowledgeVaultSettings }>(`${B}/settings`)).settings
 }

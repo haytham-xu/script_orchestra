@@ -12,6 +12,7 @@ export default defineComponent({
     const activeTab = ref<'capture' | 'search' | 'network' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
       auto_build: false, embed_model: '<embed-model>', relate_top_k: 5, stale_days: 90,
+      link_check_enabled: false,
     })
 
     // ---- labels (user-managed tags, shared across tabs) ----
@@ -236,8 +237,25 @@ export default defineComponent({
       } finally { staleActing.value = null }
     }
 
+    // ---- URL liveness check (C1; opt-in, user-triggered — makes outbound requests) ----
+    const checkingLinks = ref(false)
+    async function checkLinks() {
+      checkingLinks.value = true
+      try {
+        const r = await api.checkLinks()
+        stale.value = r.stale
+        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
+        if (r.dead > 0) {
+          ElMessage.warning(`Checked ${r.checked} link(s): ${r.dead} dead → ${r.flagged_nodes} node(s) flagged for review`)
+        } else {
+          ElMessage.success(`Checked ${r.checked} link(s): all reachable`)
+        }
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Link check failed')
+      } finally { checkingLinks.value = false }
+    }
+
     // ---- graph filter / search / navigation (C2) ----
-    // kinds present in the current network (for the filter chips).
     const graphKinds = computed<string[]>(() =>
       Array.from(new Set(nodes.value.map((n) => n.kind || 'note'))).sort())
     const kindFilter = ref<Set<string>>(new Set())   // empty = show all kinds
@@ -371,6 +389,10 @@ export default defineComponent({
       try { settings.value = await api.updateSettings({ auto_build: v }) }
       catch (e: any) { ElMessage.error(e.message || 'Failed') }
     }
+    async function toggleLinkCheck(v: boolean) {
+      try { settings.value = await api.updateSettings({ link_check_enabled: v }) }
+      catch (e: any) { ElMessage.error(e.message || 'Failed') }
+    }
 
     onMounted(async () => {
       try { settings.value = await api.getSettings() } catch { /* defaults */ }
@@ -393,11 +415,12 @@ export default defineComponent({
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
       staleActing, markReviewed, archiveStale,
+      checkingLinks, checkLinks,
       selected, graphEl, KIND_COLOR,
       graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
       graphLabels, labelFilter, toggleLabelFilter,
       visibleNodes, selectedFragments, goToFragment, highlightFragId,
-      toggleAutoBuild,
+      toggleAutoBuild, toggleLinkCheck,
     }
   },
 })

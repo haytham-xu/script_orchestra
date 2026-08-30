@@ -7,7 +7,7 @@ from flask_restx import Namespace, Resource
 from flask import request
 
 from . import repository, settings_manager, query_service
-from . import builder, lifecycle, ai_client, backup
+from . import builder, lifecycle, ai_client, backup, link_checker
 from .entity import RawFragment
 import threading
 import json
@@ -363,6 +363,49 @@ class StaleArchiveResource(Resource):
         backup.snapshot()
         lifecycle.recompute_freshness()
         return {"stale": lifecycle.stale_nodes()}, 200
+
+
+@ns.route("/lifecycle/check-links")
+class CheckLinksResource(Resource):
+    def post(self):
+        """Probe url-kind fragments over HTTP; flag nodes with dead links stale.
+
+        Opt-in (settings.link_check_enabled) and user-triggered only — this makes
+        outbound requests to the saved URLs' hosts. Dead links are a stronger
+        signal than time-decay, so we mark the owning node stale directly.
+        """
+        if not settings_manager.load_settings().get("link_check_enabled"):
+            return {"error": "Link checking is off. Enable it in Settings first."}, 403
+
+        frags = [f for f in repository.get_fragments() if (f.kind or "") == "url"]
+        # url -> fragment ids (a url may appear in more than one fragment)
+        frag_ids_by_url = {}
+        for f in frags:
+            frag_ids_by_url.setdefault(f.content.strip(), []).append(f.id)
+
+        results = link_checker.check_urls(list(frag_ids_by_url.keys()))
+        dead_frag_ids = set()
+        for r in results:
+            if r.get("alive") is False:   # alive is None = skipped/undetermined → ignore
+                dead_frag_ids.update(frag_ids_by_url.get(r["url"], []))
+
+        # Map dead fragments → their nodes, mark those nodes stale.
+        flagged = 0
+        if dead_frag_ids:
+            for n in repository.get_nodes():
+                if set(json.loads(n.fragment_ids or "[]")) & dead_frag_ids:
+                    repository.set_node_freshness(n.id, "stale")
+                    flagged += 1
+
+        checked = len(results)
+        dead = sum(1 for r in results if r.get("alive") is False)
+        return {
+            "checked": checked,
+            "dead": dead,
+            "flagged_nodes": flagged,
+            "results": results,
+            "stale": lifecycle.stale_nodes(),
+        }, 200
 
 
 @ns.route("/backups")
