@@ -7,7 +7,7 @@ from flask_restx import Namespace, Resource
 from flask import request
 
 from . import repository, settings_manager, query_service
-from . import builder, lifecycle, ai_client, backup, link_checker
+from . import builder, lifecycle, ai_client, backup, link_checker, dedup
 from .entity import RawFragment
 import threading
 import json
@@ -406,6 +406,71 @@ class CheckLinksResource(Resource):
             "results": results,
             "stale": lifecycle.stale_nodes(),
         }, 200
+
+
+@ns.route("/duplicates")
+class DuplicatesResource(Resource):
+    def get(self):
+        """Near-duplicate fragment pairs from stored vectors. Zero token cost.
+
+        Optional query params `high` / `fuzzy_low` override the similarity tiers.
+        """
+        def _f(name):
+            v = request.args.get(name)
+            try:
+                return float(v) if v is not None else None
+            except ValueError:
+                return None
+        return dedup.find_duplicate_pairs(high=_f("high"), fuzzy_low=_f("fuzzy_low")), 200
+
+
+@ns.route("/duplicates/ai-check")
+class DuplicatesAiCheckResource(Resource):
+    def post(self):
+        """Ask the AI to judge fuzzy-band pairs — the only token-spending step.
+
+        Body: {"pairs": [[a_id, b_id], ...]} (typically the current fuzzy pairs).
+        Returns {"duplicates": [[a_id, b_id], ...]} — the subset judged duplicates.
+        Batched + budget-capped (KV_AI_BUDGET) via builder._ai_dedup_batch.
+        """
+        data = request.json or {}
+        raw_pairs = data.get("pairs") or []
+        pairs = []
+        for p in raw_pairs:
+            try:
+                a, b = int(p[0]), int(p[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            pairs.append((a, b))
+        if not pairs:
+            return {"duplicates": []}, 200
+        frag_by_id = {f.id: f for f in repository.get_fragments()}
+        budget = [builder._AI_BUDGET]
+        dups = builder._ai_dedup_batch(pairs, frag_by_id, budget)
+        return {"duplicates": [list(p) for p in dups]}, 200
+
+
+@ns.route("/duplicates/resolve")
+class DuplicatesResolveResource(Resource):
+    def post(self):
+        """Resolve one duplicate pair: keep one fragment, archive the other.
+
+        Body: {"keep_id": int, "drop_id": int}. Archive is a soft-delete (raw is
+        never hard-deleted; recoverable). Returns the refreshed duplicate lists.
+        """
+        data = request.json or {}
+        try:
+            keep_id = int(data.get("keep_id"))
+            drop_id = int(data.get("drop_id"))
+        except (TypeError, ValueError):
+            return {"error": "keep_id and drop_id must be integers"}, 400
+        if keep_id == drop_id:
+            return {"error": "keep_id and drop_id must differ"}, 400
+        if repository.get_fragment(drop_id) is None:
+            return {"error": "drop fragment not found"}, 404
+        repository.archive_fragment(drop_id)
+        backup.snapshot()
+        return dedup.find_duplicate_pairs(), 200
 
 
 @ns.route("/backups")
