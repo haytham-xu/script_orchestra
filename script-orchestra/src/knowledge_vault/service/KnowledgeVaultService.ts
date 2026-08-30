@@ -76,6 +76,19 @@ export interface CheckLinksResult {
 export async function checkLinks(): Promise<CheckLinksResult> {
   return await postRequest(`${B}/lifecycle/check-links`, {}, {}) as CheckLinksResult
 }
+// Duplicate detection (on-demand). Vector pairs are zero-cost; ai-check spends tokens.
+export interface DupFrag { id: number; content: string; note: string; kind: string }
+export interface DupPair { a: DupFrag; b: DupFrag; sim: number }
+export interface DuplicatesResult { confident: DupPair[]; fuzzy: DupPair[] }
+export async function findDuplicates(): Promise<DuplicatesResult> {
+  return await getRequest<DuplicatesResult>(`${B}/duplicates`)
+}
+export async function aiCheckDuplicates(pairs: [number, number][]): Promise<[number, number][]> {
+  return (await postRequest(`${B}/duplicates/ai-check`, {}, { pairs }) as { duplicates: [number, number][] }).duplicates
+}
+export async function resolveDuplicate(keepId: number, dropId: number): Promise<DuplicatesResult> {
+  return await postRequest(`${B}/duplicates/resolve`, {}, { keep_id: keepId, drop_id: dropId }) as DuplicatesResult
+}
 export async function getSettings(): Promise<KnowledgeVaultSettings> {
   return (await getRequest<{ settings: KnowledgeVaultSettings }>(`${B}/settings`)).settings
 }

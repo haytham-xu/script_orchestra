@@ -3,6 +3,7 @@
     <header class="kv-topbar">
       <div class="kv-topbar-inner">
         <h1>Knowledge Vault</h1>
+        <!-- Network build controls hidden (the Network tab is retired for now). Kept for easy restore.
         <div class="kv-auto">
           <span>Auto-build</span>
           <el-switch :model-value="settings.auto_build" @change="(v: any) => toggleAutoBuild(v)" />
@@ -10,10 +11,11 @@
             {{ building ? (buildPhase ? 'Building — ' + buildPhase : 'Building…') : 'Rebuild network' }}
           </el-button>
         </div>
+        -->
       </div>
     </header>
 
-    <el-tabs v-model="activeTab" class="kv-tabs" @tab-change="activeTab === 'network' && loadNetwork()">
+    <el-tabs v-model="activeTab" class="kv-tabs" @tab-change="activeTab === 'duplicates' && loadDuplicates()">
       <!-- Capture -->
       <el-tab-pane label="Capture" name="capture">
         <div class="kv-capture">
@@ -81,91 +83,62 @@
         </div>
       </el-tab-pane>
 
-      <!-- Network -->
-      <el-tab-pane label="Network" name="network">
-        <div class="kv-network">
-          <div class="kv-net-head">
-            <p v-if="buildStatus" class="kv-hint">
-              Last build: {{ buildStatus.nodes }} nodes, {{ buildStatus.edges }} edges
-            </p>
-            <div class="kv-legend">
-              <span><i class="dot" style="background:#0a84ff"></i>url</span>
-              <span><i class="dot" style="background:#30d158"></i>command</span>
-              <span><i class="dot" style="background:#ff9f0a"></i>script</span>
-              <span><i class="dot" style="background:#bf5af2"></i>note</span>
-              <span class="sep">|</span>
-              <span><i class="ring" style="border-color:#34c759"></i>fresh</span>
-              <span><i class="ring" style="border-color:#ff9f0a"></i>aging</span>
-              <span><i class="ring" style="border-color:#ff3b30"></i>stale</span>
-            </div>
+      <!-- Duplicates (Network tab hidden; its code is retained in the .ts/service) -->
+      <el-tab-pane label="Duplicates" name="duplicates">
+        <div class="kv-dup">
+          <div class="kv-dup-head">
+            <el-button type="primary" :loading="dupLoading" @click="loadDuplicates">Find duplicates</el-button>
+            <el-button v-if="dupFuzzy.length" :loading="aiChecking" @click="aiCheckFuzzy">
+              Let AI judge {{ dupFuzzy.length }} fuzzy pair(s) · costs tokens
+            </el-button>
+            <span class="kv-hint">Compares your fragments by meaning (free, offline). AI check is optional and only for the fuzzy ones.</span>
           </div>
 
-          <!-- Filter by kind + search-to-focus a node (C2). -->
-          <div v-if="nodes.length" class="kv-net-tools">
-            <div class="kv-kind-filter">
-              <span class="kv-hint">Show:</span>
-              <el-check-tag v-for="k in graphKinds" :key="k" :checked="kindFilter.has(k)"
-                @change="toggleKind(k)">{{ k }}</el-check-tag>
-              <template v-if="graphLabels.length">
-                <span class="kv-hint" style="margin-left:8px">Labels:</span>
-                <el-check-tag v-for="l in graphLabels" :key="l.id" :checked="labelFilter.has(l.id)"
-                  @change="toggleLabelFilter(l.id)">{{ l.name }}</el-check-tag>
-              </template>
-              <span v-if="kindFilter.size || labelFilter.size" class="kv-hint">({{ visibleNodes.length }}/{{ nodes.length }})</span>
-            </div>
-            <el-input v-model="nodeSearch" placeholder="Find a node…" clearable size="small"
-              style="max-width:240px" @keyup.enter="focusSearch">
-              <template #append><el-button @click="focusSearch">Locate</el-button></template>
-            </el-input>
-            <el-button v-if="settings.link_check_enabled" size="small" :loading="checkingLinks"
-              @click="checkLinks">Check links</el-button>
-          </div>
+          <el-empty v-if="dupChecked && !dupConfident.length && !dupFuzzy.length"
+            description="No duplicates found." :image-size="70" />
+          <el-empty v-else-if="!dupChecked"
+            description="Click “Find duplicates” to scan for near-identical fragments." :image-size="70" />
 
-          <el-empty v-if="!nodes.length"
-            description="No knowledge network yet — capture some fragments, then click “Rebuild network”."
-            :image-size="80" />
-
-          <div v-show="nodes.length" class="kv-graph-wrap">
-            <div ref="graphEl" class="kv-graph"></div>
-            <el-card v-if="selected" class="kv-detail" shadow="never">
-              <h4>{{ selected.title }}</h4>
-              <el-tag size="small">{{ selected.kind }}</el-tag>
-              <el-tag size="small" style="margin-left:6px"
-                :type="selected.freshness === 'stale' ? 'danger' : selected.freshness === 'aging' ? 'warning' : 'success'">
-                {{ selected.freshness }}
-              </el-tag>
-              <p class="kv-detail-summary">{{ selected.summary || '—' }}</p>
-              <p class="kv-detail-meta">{{ selected.fragment_ids?.length || 0 }} source fragment(s)</p>
-              <div v-if="selectedFragments.length" class="kv-detail-frags">
-                <div v-for="f in selectedFragments" :key="f.id" class="kv-detail-frag"
-                  :title="f.content" @click="goToFragment(f)">
-                  <span class="kv-detail-frag-text">{{ f.note || f.content }}</span>
-                  <el-icon class="kv-detail-frag-go"><Right /></el-icon>
-                </div>
+          <!-- Confident duplicates -->
+          <template v-if="dupConfident.length">
+            <h4 class="kv-dup-section">Likely duplicates <el-tag type="danger" size="small" round>{{ dupConfident.length }}</el-tag></h4>
+            <div v-for="p in dupConfident" :key="pairKey(p)" class="kv-dup-pair">
+              <div class="kv-dup-side">
+                <div class="kv-dup-content" :title="p.a.content">{{ p.a.note || p.a.content }}</div>
+                <div class="kv-dup-sub">{{ p.a.content }}</div>
+                <el-button size="small" :loading="dupActing === pairKey(p)" @click="resolvePair(p, p.a, p.b)">Keep this</el-button>
               </div>
-            </el-card>
-          </div>
-
-          <!-- Needs review: nodes that have gone stale. Each: keep (still valid) or archive. -->
-          <div v-if="stale.length" class="kv-stale">
-            <div class="kv-stale-head">
-              <h4>Needs review <el-tag type="danger" size="small" round>{{ stale.length }}</el-tag></h4>
-              <span class="kv-hint">Untouched a long while — likely outdated. Keep it (marks as still valid) or archive it.</span>
-            </div>
-            <div v-for="s in stale" :key="s.id" class="kv-stale-row">
-              <div class="kv-stale-main">
-                <div class="kv-stale-title" :title="s.summary || s.title">{{ s.title }}</div>
-                <div class="kv-stale-meta">
-                  <el-tag v-if="s.kind" size="small" effect="plain">{{ s.kind }}</el-tag>
-                  <span>{{ s.fragment_ids?.length || 0 }} source fragment(s)</span>
-                </div>
-              </div>
-              <div class="kv-stale-actions">
-                <el-button size="small" :loading="staleActing === s.id" @click="markReviewed(s)">Still valid</el-button>
-                <el-button size="small" type="danger" plain :loading="staleActing === s.id" @click="archiveStale(s)">Archive</el-button>
+              <div class="kv-dup-mid"><span class="kv-dup-sim">{{ (p.sim * 100).toFixed(0) }}%</span></div>
+              <div class="kv-dup-side">
+                <div class="kv-dup-content" :title="p.b.content">{{ p.b.note || p.b.content }}</div>
+                <div class="kv-dup-sub">{{ p.b.content }}</div>
+                <el-button size="small" :loading="dupActing === pairKey(p)" @click="resolvePair(p, p.b, p.a)">Keep this</el-button>
               </div>
             </div>
-          </div>
+          </template>
+
+          <!-- Fuzzy candidates -->
+          <template v-if="dupFuzzy.length">
+            <h4 class="kv-dup-section">Possible duplicates <el-tag type="warning" size="small" round>{{ dupFuzzy.length }}</el-tag>
+              <span class="kv-hint">worded differently — run the AI check if unsure</span></h4>
+            <div v-for="p in dupFuzzy" :key="pairKey(p)" class="kv-dup-pair"
+              :class="{ 'kv-dup-ai': aiDupKeys.has(pairKey(p)) }">
+              <div class="kv-dup-side">
+                <div class="kv-dup-content" :title="p.a.content">{{ p.a.note || p.a.content }}</div>
+                <div class="kv-dup-sub">{{ p.a.content }}</div>
+                <el-button size="small" :loading="dupActing === pairKey(p)" @click="resolvePair(p, p.a, p.b)">Keep this</el-button>
+              </div>
+              <div class="kv-dup-mid">
+                <span class="kv-dup-sim">{{ (p.sim * 100).toFixed(0) }}%</span>
+                <el-tag v-if="aiDupKeys.has(pairKey(p))" type="danger" size="small">AI: dup</el-tag>
+              </div>
+              <div class="kv-dup-side">
+                <div class="kv-dup-content" :title="p.b.content">{{ p.b.note || p.b.content }}</div>
+                <div class="kv-dup-sub">{{ p.b.content }}</div>
+                <el-button size="small" :loading="dupActing === pairKey(p)" @click="resolvePair(p, p.b, p.a)">Keep this</el-button>
+              </div>
+            </div>
+          </template>
         </div>
       </el-tab-pane>
 
@@ -414,4 +387,15 @@
   0%, 30% { background: rgba(10,132,255,0.16); box-shadow: 0 0 0 2px rgba(10,132,255,0.4); }
   100% { background: transparent; box-shadow: none; }
 }
+
+.kv-dup-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.kv-dup-section { margin: 18px 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.kv-dup-pair { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+  background: #fff; border: 1px solid rgba(0,0,0,0.07); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+.kv-dup-ai { border-color: rgba(255,59,48,0.4); box-shadow: 0 0 0 1px rgba(255,59,48,0.15); }
+.kv-dup-side { min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.kv-dup-content { font-size: 14px; color: #1d1d1f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.kv-dup-sub { font-size: 12px; color: #86868b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.kv-dup-mid { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.kv-dup-sim { font-size: 12px; font-weight: 600; color: #86868b; }
 </style>

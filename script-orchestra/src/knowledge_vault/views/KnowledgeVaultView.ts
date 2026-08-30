@@ -9,7 +9,7 @@ import type {
 export default defineComponent({
   name: 'KnowledgeVaultView',
   setup() {
-    const activeTab = ref<'capture' | 'search' | 'network' | 'settings'>('capture')
+    const activeTab = ref<'capture' | 'search' | 'duplicates' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
       auto_build: false, embed_model: '<embed-model>', relate_top_k: 5, stale_days: 90,
       link_check_enabled: false,
@@ -255,6 +255,59 @@ export default defineComponent({
       } finally { checkingLinks.value = false }
     }
 
+    // ---- duplicates (on-demand; vector pairs are zero-cost, ai-check spends tokens) ----
+    const dupConfident = ref<api.DupPair[]>([])
+    const dupFuzzy = ref<api.DupPair[]>([])
+    const dupLoading = ref(false)
+    const dupChecked = ref(false)          // has the user run a scan yet?
+    const aiChecking = ref(false)
+    const aiDupKeys = ref<Set<string>>(new Set())   // fuzzy pairs AI judged duplicate
+    const dupActing = ref<string | null>(null)      // pair key currently being resolved
+    const pairKey = (p: api.DupPair) => `${Math.min(p.a.id, p.b.id)}-${Math.max(p.a.id, p.b.id)}`
+
+    async function loadDuplicates() {
+      dupLoading.value = true
+      try {
+        const r = await api.findDuplicates()
+        dupConfident.value = r.confident
+        dupFuzzy.value = r.fuzzy
+        aiDupKeys.value = new Set()
+        dupChecked.value = true
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Failed to find duplicates')
+      } finally { dupLoading.value = false }
+    }
+    async function aiCheckFuzzy() {
+      if (!dupFuzzy.value.length) return
+      aiChecking.value = true
+      try {
+        const pairs = dupFuzzy.value.map((p) => [p.a.id, p.b.id] as [number, number])
+        const dups = await api.aiCheckDuplicates(pairs)
+        aiDupKeys.value = new Set(dups.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`))
+        ElMessage.success(`AI judged ${dups.length} of ${pairs.length} fuzzy pair(s) as duplicates`)
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'AI check failed')
+      } finally { aiChecking.value = false }
+    }
+    // Resolve a pair: keep one fragment, archive (soft-delete) the other.
+    async function resolvePair(p: api.DupPair, keep: api.DupFrag, drop: api.DupFrag) {
+      try {
+        await ElMessageBox.confirm(
+          `Keep “${(keep.note || keep.content).slice(0, 60)}” and archive the other? The archived fragment is hidden, not deleted (recoverable).`,
+          'Confirm', { type: 'warning' })
+      } catch { return }
+      dupActing.value = pairKey(p)
+      try {
+        const r = await api.resolveDuplicate(keep.id, drop.id)
+        dupConfident.value = r.confident
+        dupFuzzy.value = r.fuzzy
+        await loadFragments()   // archived fragment drops from the capture list
+        ElMessage.success('Resolved')
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Failed')
+      } finally { dupActing.value = null }
+    }
+
     // ---- graph filter / search / navigation (C2) ----
     const graphKinds = computed<string[]>(() =>
       Array.from(new Set(nodes.value.map((n) => n.kind || 'note'))).sort())
@@ -416,6 +469,8 @@ export default defineComponent({
       nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
       staleActing, markReviewed, archiveStale,
       checkingLinks, checkLinks,
+      dupConfident, dupFuzzy, dupLoading, dupChecked, aiChecking, aiDupKeys, dupActing,
+      pairKey, loadDuplicates, aiCheckFuzzy, resolvePair,
       selected, graphEl, KIND_COLOR,
       graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
       graphLabels, labelFilter, toggleLabelFilter,
