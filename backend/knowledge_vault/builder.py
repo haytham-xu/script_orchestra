@@ -26,6 +26,9 @@ _AI_DEDUP = _os.environ.get("KV_AI_DEDUP", "0") == "1"   # AI dedup off by defau
 # each item's text length so long fragments can't blow up the prompt.
 _CLASSIFY_BATCH = int(_os.environ.get("KV_CLASSIFY_BATCH", "20"))
 _ITEM_TEXT_MAX = int(_os.environ.get("KV_ITEM_TEXT_MAX", "400"))
+# AI dedup (opt-in) judges candidate pairs in batches of this many per call, so
+# the fuzzy-dedup phase stays a handful of CLI spawns rather than one-per-pair.
+_DEDUP_BATCH = int(_os.environ.get("KV_DEDUP_BATCH", "10"))
 
 
 def get_status() -> dict:
@@ -67,6 +70,12 @@ def rebuild(use_ai: bool = True) -> dict:
 
         vecs = {fid: v for fid, v in repository.get_all_vectors()}
         frag_by_id = {f.id: f for f in frags}
+        # First pass: auto-group the near-identical (sim>=0.97, zero AI) and
+        # collect the fuzzy 0.80-0.97 candidate pairs for a possible batched AI
+        # judgement. We do NOT call the AI per pair here — dozens of serial CLI
+        # spawns are exactly what made builds crawl. See _ai_dedup_batch below.
+        fuzzy_pairs = []          # [(a_id, b_id)] awaiting AI judgement
+        seen_fuzzy = set()
         for f in frags:
             if f.id not in vecs:
                 continue
@@ -78,15 +87,21 @@ def rebuild(use_ai: bool = True) -> dict:
                     continue  # only strong candidates are dedup-considered
                 if rep(cand_id) == rep(f.id):
                     continue
-                is_dup = sim >= 0.97  # near-identical → auto group
-                # AI dedup on the fuzzy 0.80–0.97 band is the lowest-value AI
-                # use (vector already auto-groups the near-identical) and it's
-                # what made builds crawl. Off by default; opt in via env.
-                if not is_dup and _AI_DEDUP and ai_budget[0] > 0:
-                    ai_budget[0] -= 1
-                    is_dup = _ai_is_duplicate(f, frag_by_id[cand_id])
-                if is_dup:
+                if sim >= 0.97:  # near-identical → auto group, no AI
                     group_of[rep(cand_id)] = rep(f.id)
+                elif _AI_DEDUP:
+                    key = tuple(sorted((f.id, cand_id)))
+                    if key not in seen_fuzzy:
+                        seen_fuzzy.add(key)
+                        fuzzy_pairs.append(key)
+
+        # Second pass: batched AI dedup on the fuzzy band (opt-in, budget-capped).
+        # One prompt judges many pairs, so the whole phase is a handful of CLI
+        # calls instead of one-per-pair.
+        if _AI_DEDUP and fuzzy_pairs and ai_budget[0] > 0:
+            for a_id, b_id in _ai_dedup_batch(fuzzy_pairs, frag_by_id, ai_budget):
+                if rep(a_id) != rep(b_id):
+                    group_of[rep(b_id)] = rep(a_id)
 
         # Materialize nodes from groups.
         _status["phase"] = "nodes"
@@ -184,18 +199,54 @@ def _guess_kind(content: str) -> str:
     return "note"
 
 
-def _ai_is_duplicate(a, b) -> bool:
-    prompt = (
-        "Are these two knowledge fragments duplicates (same underlying item, "
-        "just worded differently)? Answer JSON {\"duplicate\": true|false}.\n\n"
-        f"A: {a.content} | note: {a.note}\nB: {b.content} | note: {b.note}"
-    )
-    try:
-        res = ai_client.ask_json(prompt, max_tokens=64, timeout=25)
-    except Exception as exc:
-        print(f"[knowledge_vault] AI dedup failed, falling back to vector: {exc}")
-        return False
-    return bool(res and res.get("duplicate"))
+def _ai_dedup_batch(pairs, frag_by_id, ai_budget) -> list:
+    """Judge many candidate duplicate pairs with as few AI calls as possible.
+
+    pairs: [(a_id, b_id)] in the fuzzy similarity band. Chunks them into batches
+    (KV_DEDUP_BATCH pairs per prompt) and asks Claude for a verdict on each in a
+    single JSON reply — so the phase costs a handful of CLI spawns, not one per
+    pair (per-pair spawning is what made builds crawl). Each batch decrements the
+    shared ai_budget; once exhausted the remaining pairs are left un-merged
+    (vector already auto-grouped the near-identical, so this only skips fuzzy
+    merges). Returns the subset of pairs judged duplicates.
+    """
+    dups = []
+    for start in range(0, len(pairs), _DEDUP_BATCH):
+        if ai_budget[0] <= 0:
+            break
+        ai_budget[0] -= 1
+        batch = pairs[start:start + _DEDUP_BATCH]
+        items = []
+        for i, (a_id, b_id) in enumerate(batch):
+            a, b = frag_by_id.get(a_id), frag_by_id.get(b_id)
+            if not a or not b:
+                continue
+            items.append({
+                "i": i,
+                "a": f"{a.content} | {a.note}"[:_ITEM_TEXT_MAX],
+                "b": f"{b.content} | {b.note}"[:_ITEM_TEXT_MAX],
+            })
+        if not items:
+            continue
+        prompt = (
+            "For each pair below, decide if A and B are duplicates (the same "
+            "underlying item, just worded differently). Return STRICT JSON: "
+            '{"pairs":[{"i":<i>,"duplicate":true|false}]}.'
+            "\n\nPAIRS:\n" + json.dumps(items, ensure_ascii=False)
+        )
+        try:
+            res = ai_client.ask_json(prompt, max_tokens=1024, timeout=60) or {}
+        except Exception as exc:
+            print(f"[knowledge_vault] batch dedup failed, keeping vector groups: {exc}")
+            continue
+        for p in (res.get("pairs") or []):
+            try:
+                idx = int(p.get("i"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < len(batch) and p.get("duplicate"):
+                dups.append(batch[idx])
+    return dups
 
 
 def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
