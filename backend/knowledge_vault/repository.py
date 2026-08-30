@@ -255,6 +255,13 @@ def update_node_meta(node_id: int, title: str, summary: str, kind: str) -> None:
     conn.close()
 
 
+def set_edge_relation(edge_id: int, relation: str) -> None:
+    conn = _conn()
+    conn.execute("UPDATE edge SET relation = ? WHERE id = ?", (relation, edge_id))
+    conn.commit()
+    conn.close()
+
+
 # ---- labels (user-managed tags; a fragment may have many) --------------
 
 def get_labels() -> List[dict]:

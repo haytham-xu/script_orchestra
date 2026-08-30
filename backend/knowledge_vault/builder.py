@@ -29,6 +29,11 @@ _ITEM_TEXT_MAX = int(_os.environ.get("KV_ITEM_TEXT_MAX", "400"))
 # AI dedup (opt-in) judges candidate pairs in batches of this many per call, so
 # the fuzzy-dedup phase stays a handful of CLI spawns rather than one-per-pair.
 _DEDUP_BATCH = int(_os.environ.get("KV_DEDUP_BATCH", "10"))
+# AI edge-relation labelling (opt-in). Off by default: the similarity heuristic
+# (same-topic/related) is instant and good enough; richer labels (prereq/
+# alternative) need AI, but ONLY batched — per-edge CLI calls made builds crawl.
+_AI_RELATIONS = _os.environ.get("KV_AI_RELATIONS", "0") == "1"
+_RELATION_BATCH = int(_os.environ.get("KV_RELATION_BATCH", "10"))
 
 
 def get_status() -> dict:
@@ -134,6 +139,7 @@ def rebuild(use_ai: bool = True) -> dict:
                     node_of_frag[g] = nid
         seen_pairs = set()
         edge_count = 0
+        inserted_edges = []   # (edge, src_node_id, tgt_node_id) for optional AI relabel
         for f in frags:
             if f.id not in vecs:
                 continue
@@ -153,11 +159,19 @@ def rebuild(use_ai: bool = True) -> dict:
                     # NOT call the AI per edge here: with N nodes that is dozens
                     # of serial CLI calls, each seconds long, which made the
                     # build crawl (and appear to hang). The edge itself carries
-                    # the signal; the label is a nicety.
+                    # the signal; the label is a nicety. Optionally, one BATCHED
+                    # AI pass below refines these into richer relations.
                     relation = "same-topic" if sim >= 0.75 else "related"
-                    repository.insert_edge(Edge(None, src_node, tgt_node, relation, round(sim, 3)))
+                    edge = repository.insert_edge(Edge(None, src_node, tgt_node, relation, round(sim, 3)))
+                    inserted_edges.append(edge)
                     edge_count += 1
         _status["edges"] = edge_count
+
+        # Optional: refine relation labels in batched AI calls (opt-in, budget-capped).
+        if use_ai and _AI_RELATIONS and inserted_edges and ai_budget[0] > 0:
+            _status["phase"] = "relations"
+            node_by_id = {n.id: n for n in repository.get_nodes()}
+            _ai_relabel_edges(inserted_edges, node_by_id, ai_budget)
 
         _status["phase"] = "lifecycle"
         lifecycle.recompute_freshness()
@@ -245,6 +259,58 @@ def _ai_dedup_batch(pairs, frag_by_id, ai_budget) -> list:
             if 0 <= idx < len(batch) and p.get("duplicate"):
                 dups.append(batch[idx])
     return dups
+
+
+_RELATIONS = ("same-topic", "prereq", "alternative", "related")
+
+
+def _ai_relabel_edges(edges, node_by_id, ai_budget) -> None:
+    """Refine edge relation labels via batched AI calls (opt-in, budget-capped).
+
+    The heuristic already set same-topic/related from similarity; here Claude may
+    upgrade a batch of edges to richer relations (prereq/alternative). Batched
+    (KV_RELATION_BATCH edges per prompt) so the phase is a few CLI spawns, not one
+    per edge. Each batch decrements ai_budget; leftover edges keep their heuristic
+    label. Unknown/absent verdicts are left unchanged.
+    """
+    for start in range(0, len(edges), _RELATION_BATCH):
+        if ai_budget[0] <= 0:
+            break
+        ai_budget[0] -= 1
+        batch = edges[start:start + _RELATION_BATCH]
+        _status["phase"] = f"relations {start + 1}-{start + len(batch)}/{len(edges)}"
+        items = []
+        for i, e in enumerate(batch):
+            a, b = node_by_id.get(e.source_id), node_by_id.get(e.target_id)
+            if not a or not b:
+                continue
+            items.append({
+                "i": i,
+                "a": f"{a.title}: {a.summary}"[:_ITEM_TEXT_MAX],
+                "b": f"{b.title}: {b.summary}"[:_ITEM_TEXT_MAX],
+            })
+        if not items:
+            continue
+        prompt = (
+            "For each pair (A, B) below, classify how A relates to B with ONE of: "
+            "same-topic, prereq (A is a prerequisite for B), alternative (A and B "
+            "are interchangeable options), related. Return STRICT JSON: "
+            '{"edges":[{"i":<i>,"relation":"..."}]}.'
+            "\n\nPAIRS:\n" + json.dumps(items, ensure_ascii=False)
+        )
+        try:
+            res = ai_client.ask_json(prompt, max_tokens=1024, timeout=60) or {}
+        except Exception as exc:
+            print(f"[knowledge_vault] batch relation labelling failed, keeping heuristics: {exc}")
+            continue
+        for r in (res.get("edges") or []):
+            try:
+                idx = int(r.get("i"))
+            except (TypeError, ValueError):
+                continue
+            rel = str(r.get("relation") or "").strip()
+            if 0 <= idx < len(batch) and rel in _RELATIONS:
+                repository.set_edge_relation(batch[idx].id, rel)
 
 
 def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
