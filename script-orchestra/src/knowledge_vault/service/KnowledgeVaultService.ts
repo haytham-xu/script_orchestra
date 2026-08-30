@@ -60,6 +60,13 @@ export async function getEdges(): Promise<KnowledgeEdge[]> {
 export async function getStale(): Promise<KnowledgeNode[]> {
   return (await getRequest<{ stale: KnowledgeNode[] }>(`${B}/lifecycle/stale`)).stale
 }
+// Stale review — acts on the node's source fragments (raw layer). Both return the fresh stale list.
+export async function markStaleReviewed(nodeId: number): Promise<KnowledgeNode[]> {
+  return (await postRequest(`${B}/lifecycle/stale/${nodeId}/reviewed`, {}, {}) as { stale: KnowledgeNode[] }).stale
+}
+export async function archiveStale(nodeId: number): Promise<KnowledgeNode[]> {
+  return (await postRequest(`${B}/lifecycle/stale/${nodeId}/archive`, {}, {}) as { stale: KnowledgeNode[] }).stale
+}
 export async function getSettings(): Promise<KnowledgeVaultSettings> {
   return (await getRequest<{ settings: KnowledgeVaultSettings }>(`${B}/settings`)).settings
 }

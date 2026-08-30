@@ -114,6 +114,27 @@
               <p class="kv-detail-meta">{{ selected.fragment_ids?.length || 0 }} source fragment(s)</p>
             </el-card>
           </div>
+
+          <!-- Needs review: nodes that have gone stale. Each: keep (still valid) or archive. -->
+          <div v-if="stale.length" class="kv-stale">
+            <div class="kv-stale-head">
+              <h4>Needs review <el-tag type="danger" size="small" round>{{ stale.length }}</el-tag></h4>
+              <span class="kv-hint">Untouched a long while — likely outdated. Keep it (marks as still valid) or archive it.</span>
+            </div>
+            <div v-for="s in stale" :key="s.id" class="kv-stale-row">
+              <div class="kv-stale-main">
+                <div class="kv-stale-title" :title="s.summary || s.title">{{ s.title }}</div>
+                <div class="kv-stale-meta">
+                  <el-tag v-if="s.kind" size="small" effect="plain">{{ s.kind }}</el-tag>
+                  <span>{{ s.fragment_ids?.length || 0 }} source fragment(s)</span>
+                </div>
+              </div>
+              <div class="kv-stale-actions">
+                <el-button size="small" :loading="staleActing === s.id" @click="markReviewed(s)">Still valid</el-button>
+                <el-button size="small" type="danger" plain :loading="staleActing === s.id" @click="archiveStale(s)">Archive</el-button>
+              </div>
+            </div>
+          </div>
         </div>
       </el-tab-pane>
 
@@ -321,4 +342,19 @@
 .kv-detail h4 { margin: 0 0 8px; font-size: 15px; }
 .kv-detail-summary { font-size: 13px; color: #3a3a3c; margin: 10px 0 4px; white-space: pre-wrap; }
 .kv-detail-meta { font-size: 12px; color: #86868b; margin: 0; }
+
+.kv-stale { margin-top: 16px; background: #fff; border-radius: 12px;
+  border: 1px solid rgba(255,59,48,0.18); overflow: hidden; }
+.kv-stale-head { padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.05);
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.kv-stale-head h4 { margin: 0; font-size: 15px; }
+.kv-stale-row { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 16px; border-bottom: 1px solid rgba(0,0,0,0.04); }
+.kv-stale-row:last-child { border-bottom: none; }
+.kv-stale-main { min-width: 0; }
+.kv-stale-title { font-size: 14px; color: #1d1d1f; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.kv-stale-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  font-size: 12px; color: #86868b; }
+.kv-stale-actions { flex-shrink: 0; }
 </style>

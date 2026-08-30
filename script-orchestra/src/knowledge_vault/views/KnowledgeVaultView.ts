@@ -207,6 +207,35 @@ export default defineComponent({
       renderGraph()
     }
 
+    // ---- stale review (acts on the node's source fragments; nodes are rebuildable) ----
+    const staleActing = ref<number | null>(null)   // node id currently being acted on
+    async function markReviewed(node: KnowledgeNode) {
+      staleActing.value = node.id
+      try {
+        stale.value = await api.markStaleReviewed(node.id)
+        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
+        ElMessage.success('Marked as still valid')
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Failed')
+      } finally { staleActing.value = null }
+    }
+    async function archiveStale(node: KnowledgeNode) {
+      try {
+        await ElMessageBox.confirm(
+          `Archive “${node.title}”? Its ${node.fragment_ids?.length || 0} source fragment(s) will be hidden (not deleted). Rebuild to fully drop it from the graph.`,
+          'Confirm', { type: 'warning' })
+      } catch { return }   // cancelled
+      staleActing.value = node.id
+      try {
+        stale.value = await api.archiveStale(node.id)
+        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
+        await loadFragments()   // archived fragments drop from the capture list
+        ElMessage.success('Archived')
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Failed')
+      } finally { staleActing.value = null }
+    }
+
     function renderGraph() {
       if (!graphEl.value) return
       const visNodes = nodes.value.map((n) => ({
@@ -298,6 +327,7 @@ export default defineComponent({
       suggestedLabels, applySuggestedLabel,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
       nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
+      staleActing, markReviewed, archiveStale,
       selected, graphEl, KIND_COLOR,
       toggleAutoBuild,
     }

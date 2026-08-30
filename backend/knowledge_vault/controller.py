@@ -313,6 +313,47 @@ class StaleResource(Resource):
         return {"stale": lifecycle.stale_nodes()}, 200
 
 
+def _node_fragment_ids(node_id):
+    """Source fragment ids of a node, or None if the node doesn't exist.
+
+    Stale review acts on the raw layer (the source of truth); the node is
+    derived and rebuildable, so touching/archiving a node's freshness directly
+    would be lost on the next rebuild.
+    """
+    for n in repository.get_nodes():
+        if n.id == node_id:
+            import json
+            return json.loads(n.fragment_ids or "[]")
+    return None
+
+
+@ns.route("/lifecycle/stale/<int:node_id>/reviewed")
+class StaleReviewedResource(Resource):
+    def post(self, node_id):
+        """Mark a stale node still valid: refresh its source fragments' access time."""
+        fids = _node_fragment_ids(node_id)
+        if fids is None:
+            return {"error": "node not found"}, 404
+        for fid in fids:
+            repository.touch_fragment(fid)
+        lifecycle.recompute_freshness()
+        return {"stale": lifecycle.stale_nodes()}, 200
+
+
+@ns.route("/lifecycle/stale/<int:node_id>/archive")
+class StaleArchiveResource(Resource):
+    def post(self, node_id):
+        """Archive a stale node: soft-remove its source fragments (raw is never hard-deleted)."""
+        fids = _node_fragment_ids(node_id)
+        if fids is None:
+            return {"error": "node not found"}, 404
+        for fid in fids:
+            repository.archive_fragment(fid)
+        backup.snapshot()
+        lifecycle.recompute_freshness()
+        return {"stale": lifecycle.stale_nodes()}, 200
+
+
 @ns.route("/backups")
 class BackupsResource(Resource):
     def get(self):
