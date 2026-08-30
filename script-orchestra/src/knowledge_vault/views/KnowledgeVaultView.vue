@@ -1,13 +1,15 @@
 <template>
   <div class="kv">
     <header class="kv-topbar">
-      <h1>Knowledge Vault</h1>
-      <div class="kv-auto">
-        <span>Auto-build</span>
-        <el-switch :model-value="settings.auto_build" @change="(v: any) => toggleAutoBuild(v)" />
-        <el-button size="small" :loading="building" @click="rebuild">
-          {{ building ? (buildPhase ? 'Building — ' + buildPhase : 'Building…') : 'Rebuild network' }}
-        </el-button>
+      <div class="kv-topbar-inner">
+        <h1>Knowledge Vault</h1>
+        <div class="kv-auto">
+          <span>Auto-build</span>
+          <el-switch :model-value="settings.auto_build" @change="(v: any) => toggleAutoBuild(v)" />
+          <el-button size="small" :loading="building" @click="rebuild">
+            {{ building ? (buildPhase ? 'Building — ' + buildPhase : 'Building…') : 'Rebuild network' }}
+          </el-button>
+        </div>
       </div>
     </header>
 
@@ -255,12 +257,11 @@
 <script lang="ts" src="@/knowledge_vault/views/KnowledgeVaultView.ts"></script>
 
 <style scoped>
-.kv { min-height: 100vh; background: #f5f5f7; color: #1d1d1f;
+.kv { min-height: 100vh; width: 100%; box-sizing: border-box; background: #f5f5f7; color: #1d1d1f;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
-.kv-topbar { display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fff; }
-.kv-topbar > * { max-width: 1240px; }
-.kv-topbar { padding-left: max(24px, calc((100% - 1240px) / 2)); padding-right: max(24px, calc((100% - 1240px) / 2)); }
+.kv-topbar { display: flex; padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fff; }
+.kv-topbar-inner { display: flex; align-items: center; justify-content: space-between;
+  width: 100%; max-width: 1240px; margin: 0 auto; }
 .kv-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; }
 .kv-auto { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #86868b; }
 .kv-tabs { padding: 0 24px; max-width: 1240px; margin: 0 auto; }

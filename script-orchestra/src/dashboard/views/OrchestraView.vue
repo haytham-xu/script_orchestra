@@ -40,6 +40,7 @@ const tools = [
   { key: 'file-git',               name: 'File-Git',               path: '/file-git' },
   { key: 'memory-curve',           name: 'Memory Curve',           path: '/memory-curve' },
   { key: 'knowledge-vault',        name: 'Knowledge Vault',        path: '/knowledge-vault' },
+  { key: 'claude-bridge',          name: 'Claude Bridge',          path: '/claude-bridge' },
 ]
 </script>
 
@@ -49,6 +50,9 @@ const tools = [
   flex-wrap: wrap;
   gap: 20px;
   padding: 24px;
+  max-width: 1240px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 .tool-card {
   width: 200px;
