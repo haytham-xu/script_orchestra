@@ -36,6 +36,7 @@ export interface KnowledgeNode {
   summary: string
   kind: string
   fragment_ids: number[]
+  label_ids?: number[]   // union of source fragments' labels (aggregated by /nodes)
   freshness: 'fresh' | 'aging' | 'stale'
   updated_at: string
 }

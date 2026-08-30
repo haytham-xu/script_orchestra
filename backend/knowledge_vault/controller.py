@@ -298,7 +298,18 @@ class BuildStatusResource(Resource):
 @ns.route("/nodes")
 class NodesResource(Resource):
     def get(self):
-        return {"nodes": [n.to_dict() for n in repository.get_nodes()]}, 200
+        # A node's labels = union of its source fragments' labels (labels live on
+        # the raw layer). Aggregated here so the graph can filter by label.
+        labels_by_frag = {f.id: f.label_ids for f in repository.get_fragments(include_archived=True)}
+        out = []
+        for n in repository.get_nodes():
+            d = n.to_dict()
+            lids = set()
+            for fid in d.get("fragment_ids", []):
+                lids.update(labels_by_frag.get(fid, []))
+            d["label_ids"] = sorted(lids)
+            out.append(d)
+        return {"nodes": out}, 200
 
 
 @ns.route("/edges")

@@ -241,6 +241,7 @@ export default defineComponent({
     const graphKinds = computed<string[]>(() =>
       Array.from(new Set(nodes.value.map((n) => n.kind || 'note'))).sort())
     const kindFilter = ref<Set<string>>(new Set())   // empty = show all kinds
+    const labelFilter = ref<Set<number>>(new Set())   // empty = show all labels
     const nodeSearch = ref('')
     function toggleKind(kind: string) {
       const s = new Set(kindFilter.value)
@@ -248,11 +249,24 @@ export default defineComponent({
       kindFilter.value = s
       renderGraph()
     }
-    // Nodes to draw: kind filter (empty = all) ∩ search-name match (empty = all).
+    function toggleLabelFilter(id: number) {
+      const s = new Set(labelFilter.value)
+      s.has(id) ? s.delete(id) : s.add(id)
+      labelFilter.value = s
+      renderGraph()
+    }
+    // Labels actually present on the current network (for the filter chips).
+    const graphLabels = computed<Label[]>(() => {
+      const present = new Set<number>()
+      nodes.value.forEach((n) => (n.label_ids || []).forEach((id) => present.add(id)))
+      return labels.value.filter((l) => present.has(l.id))
+    })
+    // Nodes to draw: kind filter ∩ label filter ∩ search match (empty set = no constraint).
     const visibleNodes = computed<KnowledgeNode[]>(() => {
       const q = nodeSearch.value.trim().toLowerCase()
       return nodes.value.filter((n) => {
         if (kindFilter.value.size && !kindFilter.value.has(n.kind || 'note')) return false
+        if (labelFilter.value.size && !(n.label_ids || []).some((id) => labelFilter.value.has(id))) return false
         if (q && !(`${n.title} ${n.summary}`.toLowerCase().includes(q))) return false
         return true
       })
@@ -381,6 +395,7 @@ export default defineComponent({
       staleActing, markReviewed, archiveStale,
       selected, graphEl, KIND_COLOR,
       graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
+      graphLabels, labelFilter, toggleLabelFilter,
       visibleNodes, selectedFragments, goToFragment, highlightFragId,
       toggleAutoBuild,
     }

@@ -106,7 +106,12 @@
               <span class="kv-hint">Show:</span>
               <el-check-tag v-for="k in graphKinds" :key="k" :checked="kindFilter.has(k)"
                 @change="toggleKind(k)">{{ k }}</el-check-tag>
-              <span v-if="kindFilter.size" class="kv-hint">({{ visibleNodes.length }}/{{ nodes.length }})</span>
+              <template v-if="graphLabels.length">
+                <span class="kv-hint" style="margin-left:8px">Labels:</span>
+                <el-check-tag v-for="l in graphLabels" :key="l.id" :checked="labelFilter.has(l.id)"
+                  @change="toggleLabelFilter(l.id)">{{ l.name }}</el-check-tag>
+              </template>
+              <span v-if="kindFilter.size || labelFilter.size" class="kv-hint">({{ visibleNodes.length }}/{{ nodes.length }})</span>
             </div>
             <el-input v-model="nodeSearch" placeholder="Find a node…" clearable size="small"
               style="max-width:240px" @keyup.enter="focusSearch">
