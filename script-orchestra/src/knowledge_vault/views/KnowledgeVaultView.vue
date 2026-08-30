@@ -27,7 +27,8 @@
 
           <div class="kv-list">
             <el-empty v-if="!fragments.length" description="No fragments yet" :image-size="70" />
-            <div v-for="row in fragments" :key="row.id" class="kv-frag">
+            <div v-for="row in fragments" :key="row.id" class="kv-frag"
+              :class="{ 'kv-frag-hl': highlightFragId === row.id }" :data-frag-id="row.id">
               <div class="kv-frag-main">
                 <div class="kv-frag-content" :title="row.content">{{ row.content }}</div>
                 <div v-if="row.note" class="kv-frag-note">{{ row.note }}</div>
@@ -99,6 +100,20 @@
             </div>
           </div>
 
+          <!-- Filter by kind + search-to-focus a node (C2). -->
+          <div v-if="nodes.length" class="kv-net-tools">
+            <div class="kv-kind-filter">
+              <span class="kv-hint">Show:</span>
+              <el-check-tag v-for="k in graphKinds" :key="k" :checked="kindFilter.has(k)"
+                @change="toggleKind(k)">{{ k }}</el-check-tag>
+              <span v-if="kindFilter.size" class="kv-hint">({{ visibleNodes.length }}/{{ nodes.length }})</span>
+            </div>
+            <el-input v-model="nodeSearch" placeholder="Find a node…" clearable size="small"
+              style="max-width:240px" @keyup.enter="focusSearch">
+              <template #append><el-button @click="focusSearch">Locate</el-button></template>
+            </el-input>
+          </div>
+
           <el-empty v-if="!nodes.length"
             description="No knowledge network yet — capture some fragments, then click “Rebuild network”."
             :image-size="80" />
@@ -114,6 +129,13 @@
               </el-tag>
               <p class="kv-detail-summary">{{ selected.summary || '—' }}</p>
               <p class="kv-detail-meta">{{ selected.fragment_ids?.length || 0 }} source fragment(s)</p>
+              <div v-if="selectedFragments.length" class="kv-detail-frags">
+                <div v-for="f in selectedFragments" :key="f.id" class="kv-detail-frag"
+                  :title="f.content" @click="goToFragment(f)">
+                  <span class="kv-detail-frag-text">{{ f.note || f.content }}</span>
+                  <el-icon class="kv-detail-frag-go"><Right /></el-icon>
+                </div>
+              </div>
             </el-card>
           </div>
 
@@ -358,4 +380,19 @@
 .kv-stale-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px;
   font-size: 12px; color: #86868b; }
 .kv-stale-actions { flex-shrink: 0; }
+
+.kv-net-tools { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.kv-kind-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.kv-detail-frags { margin-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 8px; }
+.kv-detail-frag { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; color: #3a3a3c; }
+.kv-detail-frag:hover { background: rgba(10,132,255,0.08); color: #0a84ff; }
+.kv-detail-frag-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-detail-frag-go { flex-shrink: 0; opacity: 0.6; }
+.kv-frag-hl { animation: kv-flash 2.4s ease-out; }
+@keyframes kv-flash {
+  0%, 30% { background: rgba(10,132,255,0.16); box-shadow: 0 0 0 2px rgba(10,132,255,0.4); }
+  100% { background: transparent; box-shadow: none; }
+}
 </style>

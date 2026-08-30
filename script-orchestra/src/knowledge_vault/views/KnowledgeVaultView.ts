@@ -236,9 +236,57 @@ export default defineComponent({
       } finally { staleActing.value = null }
     }
 
+    // ---- graph filter / search / navigation (C2) ----
+    // kinds present in the current network (for the filter chips).
+    const graphKinds = computed<string[]>(() =>
+      Array.from(new Set(nodes.value.map((n) => n.kind || 'note'))).sort())
+    const kindFilter = ref<Set<string>>(new Set())   // empty = show all kinds
+    const nodeSearch = ref('')
+    function toggleKind(kind: string) {
+      const s = new Set(kindFilter.value)
+      s.has(kind) ? s.delete(kind) : s.add(kind)
+      kindFilter.value = s
+      renderGraph()
+    }
+    // Nodes to draw: kind filter (empty = all) ∩ search-name match (empty = all).
+    const visibleNodes = computed<KnowledgeNode[]>(() => {
+      const q = nodeSearch.value.trim().toLowerCase()
+      return nodes.value.filter((n) => {
+        if (kindFilter.value.size && !kindFilter.value.has(n.kind || 'note')) return false
+        if (q && !(`${n.title} ${n.summary}`.toLowerCase().includes(q))) return false
+        return true
+      })
+    })
+    // Jump the viewport to the first search match and select it.
+    function focusSearch() {
+      const first = visibleNodes.value[0]
+      if (!first || !network) { ElMessage.info('No matching node'); return }
+      selected.value = first
+      network.selectNodes([first.id])
+      network.focus(first.id, { scale: 1.1, animation: { duration: 400, easingFunction: 'easeInOutQuad' } })
+    }
+    // Source fragments of the selected node (resolved from the in-memory list).
+    const selectedFragments = computed<RawFragment[]>(() => {
+      if (!selected.value) return []
+      const byId = new Map(fragments.value.map((f) => [f.id, f]))
+      return (selected.value.fragment_ids || []).map((id) => byId.get(id)).filter(Boolean) as RawFragment[]
+    })
+    // Jump to the Capture tab and briefly highlight a fragment.
+    const highlightFragId = ref<number | null>(null)
+    function goToFragment(f: RawFragment) {
+      activeTab.value = 'capture'
+      highlightFragId.value = f.id
+      nextTick(() => {
+        document.querySelector(`[data-frag-id="${f.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+      setTimeout(() => { if (highlightFragId.value === f.id) highlightFragId.value = null }, 2400)
+    }
+
     function renderGraph() {
       if (!graphEl.value) return
-      const visNodes = nodes.value.map((n) => ({
+      const shown = visibleNodes.value
+      const shownIds = new Set(shown.map((n) => n.id))
+      const visNodes = shown.map((n) => ({
         id: n.id,
         label: n.title,
         title: n.summary || n.title,          // native tooltip
@@ -252,9 +300,12 @@ export default defineComponent({
         shape: 'dot',
         size: 14 + (n.fragment_ids?.length || 1) * 2,   // bigger = more source fragments
       }))
-      const visEdges = edges.value.map((e) => ({
+      const visEdges = edges.value
+        .filter((e) => shownIds.has(e.source_id) && shownIds.has(e.target_id))
+        .map((e) => ({
         from: e.source_id, to: e.target_id,
         label: e.relation, width: 1 + (e.weight || 0.5) * 3,
+        title: e.weight != null ? `similarity ${Number(e.weight).toFixed(2)}` : undefined,
         font: { size: 10, color: '#86868b', strokeWidth: 0 },
         color: { color: '#c7c7cc', highlight: '#0a84ff' },
         smooth: { enabled: true, type: 'continuous', roundness: 0.3 },
@@ -329,6 +380,8 @@ export default defineComponent({
       nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
       staleActing, markReviewed, archiveStale,
       selected, graphEl, KIND_COLOR,
+      graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
+      visibleNodes, selectedFragments, goToFragment, highlightFragId,
       toggleAutoBuild,
     }
   },
