@@ -198,21 +198,6 @@ def _ai_is_duplicate(a, b) -> bool:
     return bool(res and res.get("duplicate"))
 
 
-def _ai_relation(a, b) -> str:
-    prompt = (
-        "Classify the relationship between fragment A and B with one of: "
-        "same-topic, prereq, alternative, related. JSON {\"relation\": \"...\"}.\n\n"
-        f"A: {a.content} | {a.note}\nB: {b.content} | {b.note}"
-    )
-    try:
-        res = ai_client.ask_json(prompt, max_tokens=64)
-    except Exception as exc:
-        print(f"[knowledge_vault] AI relation failed, defaulting to 'related': {exc}")
-        return "related"
-    rel = (res or {}).get("relation", "related")
-    return rel if rel in ("same-topic", "prereq", "alternative", "related") else "related"
-
-
 def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
     """Enrich node titles/summaries/kinds via batched AI calls.
 
