@@ -115,7 +115,7 @@ def rebuild(use_ai: bool = True) -> dict:
             r = rep(f.id)
             if r not in node_id_by_group:
                 members = [g for g in frag_ids if rep(g) == r]
-                node = _make_node(members, frag_by_id, use_ai=False)
+                node = _make_node(members, frag_by_id)
                 node = repository.insert_node(node)
                 node_id_by_group[r] = node.id
                 rep_of_node[node.id] = (r, members)
@@ -169,20 +169,18 @@ def rebuild(use_ai: bool = True) -> dict:
         raise
 
 
-def _make_node(member_ids, frag_by_id, use_ai) -> KnowledgeNode:
+def _make_node(member_ids, frag_by_id) -> KnowledgeNode:
+    """Build a node from its member fragments with fast heuristics only.
+
+    Titles/summaries/kinds are refined afterwards in one batched AI call
+    (_ai_enrich_nodes) rather than per node, so this stays instant.
+    """
     members = [frag_by_id[m] for m in member_ids if m in frag_by_id]
     primary = members[0]
     title = (primary.note or primary.content)[:80]
     summary = primary.content
-    # kind is inferred (users no longer type it): heuristic first, AI refines.
+    # kind is inferred (users no longer type it): heuristic here, AI refines later.
     kind = primary.kind or _guess_kind(primary.content)
-    if use_ai:
-        info = _ai_classify(members)
-        if info:
-            title = (info.get("title") or title)[:120]
-            summary = info.get("summary") or summary
-            if info.get("kind"):
-                kind = info["kind"]
     return KnowledgeNode(None, title=title, summary=summary, kind=kind,
                          fragment_ids=json.dumps(member_ids), freshness="fresh",
                          updated_at=datetime.now().isoformat())
@@ -289,18 +287,3 @@ def _ai_enrich_nodes(rep_of_node: dict, frag_by_id: dict) -> None:
             kind = str(n.get("kind") or "").strip()
             if title or summary or kind:
                 repository.update_node_meta(nid, title or "(untitled)", summary, kind or "note")
-
-
-def _ai_classify(members) -> dict:
-    lines = "\n".join(f"- {m.content} | {m.note}" for m in members)
-    plural = "these fragments (they were judged duplicates)" if len(members) > 1 else "this fragment"
-    prompt = (
-        f"Classify and summarize {plural}. Return JSON "
-        "{\"title\": \"...\", \"summary\": \"...\", \"kind\": \"url|command|script|link|doc|note\"}.\n\n"
-        + lines
-    )
-    try:
-        return ai_client.ask_json(prompt, max_tokens=256, timeout=25) or {}
-    except Exception as exc:
-        print(f"[knowledge_vault] AI classify failed: {exc}")
-        return {}
