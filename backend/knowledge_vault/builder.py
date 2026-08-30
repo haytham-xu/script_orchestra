@@ -8,6 +8,7 @@ Build is expensive/slow by design; query is not. This runs on explicit
 "Rebuild" or, if auto_build is on, incrementally after ingest.
 """
 import json
+import hashlib
 from datetime import datetime
 
 from . import repository, embedder, lifecycle, settings_manager, ai_client
@@ -40,6 +41,11 @@ def get_status() -> dict:
     return dict(_status)
 
 
+def _content_hash(content: str, note: str) -> str:
+    """Stable hash of a fragment's embedded text, for incremental re-embedding."""
+    return hashlib.sha256(f"{content or ''}\n{note or ''}".encode("utf-8")).hexdigest()
+
+
 def rebuild(use_ai: bool = True) -> dict:
     """Full rebuild of the knowledge network from raw fragments.
 
@@ -52,10 +58,22 @@ def rebuild(use_ai: bool = True) -> dict:
     ai_budget = [_AI_BUDGET if use_ai else 0]
     try:
         frags = [f for f in repository.get_fragments() if not f.archived]
-        # (Re)embed everything so vectors match current raw content.
+        # Incremental embedding: re-embed only fragments whose content changed
+        # (hash mismatch) or that were never embedded. Unchanged fragments keep
+        # their stored vector — embedding dominates build time on a large vault,
+        # and it's a pure function of (content, note), so this is safe. The
+        # network itself is still rebuilt in full below (no partial-graph state).
         store = get_store()
+        prev_hashes = repository.get_vector_hashes()
+        reembedded = 0
         for f in frags:
-            store.add(f.id, embedder.embed(f"{f.content}\n{f.note}"))
+            h = _content_hash(f.content, f.note)
+            if prev_hashes.get(f.id) == h:
+                continue  # unchanged → reuse existing vector
+            vec = embedder.embed(f"{f.content}\n{f.note}")
+            repository.save_vector(f.id, vec, h)
+            reembedded += 1
+        _status["reembedded"] = reembedded
 
         repository.clear_network()
         settings = settings_manager.load_settings()

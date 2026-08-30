@@ -60,7 +60,18 @@ def _conn():
     conn = sqlite3.connect(settings_manager.get_db_path())
     for stmt in _SCHEMA:
         conn.execute(stmt)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn) -> None:
+    """Idempotent column-level migrations (self-healing schema can't add columns).
+
+    Cheap: PRAGMA reads are in-memory. Adds columns that older DBs lack.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(fragment_vector)")}
+    if "content_hash" not in cols:
+        conn.execute("ALTER TABLE fragment_vector ADD COLUMN content_hash TEXT")
 
 
 def init_db() -> None:
@@ -167,12 +178,27 @@ def touch_fragment(fid) -> None:
 
 # ---- vectors ----------------------------------------------------------
 
-def save_vector(fragment_id: int, vector: List[float]) -> None:
+def save_vector(fragment_id: int, vector: List[float], content_hash: str = None) -> None:
     conn = _conn()
-    conn.execute("INSERT OR REPLACE INTO fragment_vector (fragment_id, vector) VALUES (?, ?)",
-                 (fragment_id, json.dumps(vector)))
+    conn.execute(
+        "INSERT OR REPLACE INTO fragment_vector (fragment_id, vector, content_hash) VALUES (?, ?, ?)",
+        (fragment_id, json.dumps(vector), content_hash))
     conn.commit()
     conn.close()
+
+
+def get_vector_hashes() -> dict:
+    """{fragment_id: content_hash} for fragments that already have a vector.
+
+    Lets an incremental build skip re-embedding fragments whose content is
+    unchanged (hash matches). None hash means 'unknown' → treat as changed.
+    """
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT fragment_id, content_hash FROM fragment_vector")
+    rows = cur.fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
 
 
 def get_all_vectors() -> List[tuple]:
