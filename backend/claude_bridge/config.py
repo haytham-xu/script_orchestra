@@ -4,6 +4,7 @@ Env-driven, mirrors the conventions in knowledge_vault/ai_client.py and
 assistant/config.py (ANTHROPIC_BASE_URL from the environment, CLI path resolution).
 """
 import os
+import json
 import shutil
 
 
@@ -25,13 +26,29 @@ def cli_path() -> str:
     return os.environ.get("CLAUDE_BRIDGE_CLI") or shutil.which("claude") or "claude"
 
 
-# Model aliases exposed to the client (label -> model id). First is the default.
-MODEL_ALIASES = [
-    {"label": "Sonnet (default)", "id": "<model>"},
-    {"label": "Opus", "id": "<model>"},
-    {"label": "Haiku (fast)", "id": "<model>"},
-]
-DEFAULT_MODEL = os.environ.get("CLAUDE_BRIDGE_MODEL", MODEL_ALIASES[0]["id"])
+# Model choices exposed to the client — NOT hardcoded. Configure via env:
+#   CLAUDE_BRIDGE_MODELS = JSON list of {"label","id"}  (the picker options)
+#   CLAUDE_BRIDGE_MODEL  = default model id
+# Both empty by default; the CLI then uses its own default model.
+def _load_model_aliases() -> list:
+    raw = os.environ.get("CLAUDE_BRIDGE_MODELS", "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+        return [
+            {"label": str(m.get("label") or m.get("id")), "id": str(m["id"])}
+            for m in items if isinstance(m, dict) and m.get("id")
+        ]
+    except (ValueError, TypeError, KeyError):
+        return []
+
+
+MODEL_ALIASES = _load_model_aliases()
+DEFAULT_MODEL = os.environ.get(
+    "CLAUDE_BRIDGE_MODEL",
+    MODEL_ALIASES[0]["id"] if MODEL_ALIASES else "",
+)
 
 # cwd root whitelist: a new session's cwd must live under one of these roots.
 # Defaults to the repo root's parent (…/code/github) plus the user's home code dir.

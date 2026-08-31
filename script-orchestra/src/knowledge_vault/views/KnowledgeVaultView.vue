@@ -167,7 +167,7 @@
             local Claude CLI. Change it to any model your CLI/proxy supports.
           </p>
           <div class="kv-model-row">
-            <el-input v-model="settings.ai_model" placeholder="e.g. <model>"
+            <el-input v-model="settings.ai_model" placeholder="model id (as your CLI/proxy expects)"
               style="max-width:360px" @keyup.enter="saveAiModel" />
             <el-button type="primary" @click="saveAiModel">Save</el-button>
           </div>

@@ -16,7 +16,7 @@ from .config import (
     DEFAULT_SYSTEM_PROMPT,
     MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS_PER_MESSAGE,
-    MODEL_ALIAS,
+    MODEL_ALIASES,
 )
 from .voice import asr as voice_asr
 from .voice import tts as voice_tts
@@ -109,8 +109,8 @@ chat_reply_model = ns.model('AssistantChatReply', {
 
 def _validate_alias(alias: str) -> str:
     alias = (alias or DEFAULT_MODEL_ALIAS).lower()
-    if alias not in MODEL_ALIAS:
-        ns.abort(400, f"model_alias must be one of {list(MODEL_ALIAS.keys())}")
+    if alias not in MODEL_ALIASES:
+        ns.abort(400, f"model_alias must be one of {list(MODEL_ALIASES)}")
     return alias
 
 
@@ -380,7 +380,7 @@ class ModelsResource(Resource):
         """Return the list of model aliases the UI can pick from."""
         return {
             "default": DEFAULT_MODEL_ALIAS,
-            "aliases": list(MODEL_ALIAS.keys()),
+            "aliases": list(MODEL_ALIASES),
         }
 
 

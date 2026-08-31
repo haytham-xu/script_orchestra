@@ -11,7 +11,7 @@ export default defineComponent({
   setup() {
     const activeTab = ref<'capture' | 'search' | 'duplicates' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
-      auto_build: false, embed_model: '<embed-model>', ai_model: '<model>', relate_top_k: 5, stale_days: 90,
+      auto_build: false, embed_model: '', ai_model: '', relate_top_k: 5, stale_days: 90,
       link_check_enabled: false,
     })
 

@@ -109,12 +109,13 @@ AI-organized personal knowledge store. **Two layers**: raw fragments are the app
     `/nodes`, `/edges`, `/lifecycle/stale`, `/backups`, `/settings`.
   - `ai_client.py`: calls the **Claude CLI directly** —
     `subprocess.run(["claude","--print","--model",MODEL, prompt], stdin=DEVNULL, timeout=...)`.
-    No API key; uses the locally logged-in CLI. Default model `<model>` (env `KV_MODEL`).
+    No API key; uses the locally logged-in CLI. Model is user-configured in Settings
+    (`ai_model`, or env `KV_MODEL`) — no baked-in default.
     `ask_text()` / `ask_json()` (extracts first balanced `{...}`, tolerates fences/prose).
   - `builder.py`: re-embed → vector-dedup (union-find, ≥0.97 auto-group) → materialize nodes →
     **batched** AI enrich titles/summaries (budget capped by `KV_AI_BUDGET`, `KV_CLASSIFY_BATCH` to stay fast/non-hanging) →
     relate into edges by similarity → recompute freshness. `get_status()`.
-  - `embedder.py`: lazy `sentence-transformers` (`<embed-model>`, L2-norm, HF offline after first cache).
+  - `embedder.py`: lazy `sentence-transformers` (embed model user-configured in Settings, L2-norm, HF offline after first cache).
   - `vector_store.py`: `VectorStore` iface + `SqliteVectorStore` (in-memory cosine).
   - `repository.py` SQLite tables: `raw_fragment, node, edge, fragment_vector, label, fragment_label`.
 - Frontend `src/knowledge_vault/`: `views/KnowledgeVaultView.{vue,ts}` (tabs: capture | search | network | settings;

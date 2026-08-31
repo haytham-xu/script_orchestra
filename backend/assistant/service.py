@@ -35,16 +35,15 @@ def _post_message_hooks(conv_id: str) -> None:
 from .config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL,
-    COMPLEXITY_TO_MODEL,
     DEFAULT_MODEL_ALIAS,
     DEFAULT_SYSTEM_PROMPT,
     MAX_HISTORY_MESSAGES,
     MAX_OUTPUT_TOKENS,
-    MODEL_ALIAS,
-    MODEL_HAIKU,
+    MODEL_ALIASES,
     ROUTER_MAX_TOKENS,
-    ROUTER_MODEL,
     ROUTER_TIMEOUT_SECONDS,
+    router_model,
+    complexity_model,
 )
 
 logger = logging.getLogger("assistant.service")
@@ -101,7 +100,7 @@ def classify_complexity(user_message: str,
 
     try:
         resp = get_client().messages.create(
-            model=ROUTER_MODEL,
+            model=router_model(),
             max_tokens=ROUTER_MAX_TOKENS,
             system=_CLASSIFIER_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
@@ -125,19 +124,20 @@ def resolve_model(model_alias: str, user_message: str,
                   history: Optional[List[Dict]] = None
                   ) -> Tuple[str, Optional[str]]:
     """
-    Given the conversation's alias ('auto' / 'haiku' / 'sonnet' / 'opus'),
-    return (concrete_model_id, complexity_label_or_None).
+    Given the conversation's alias ('auto' / 'simple' / 'medium' / 'hard'),
+    return (concrete_model_id, complexity_label_or_None). Concrete ids come
+    from user settings (no hardcoded model names).
     """
     alias = (model_alias or DEFAULT_MODEL_ALIAS).lower()
-    if alias not in MODEL_ALIAS:
+    if alias not in MODEL_ALIASES:
         alias = DEFAULT_MODEL_ALIAS
 
-    forced = MODEL_ALIAS[alias]
-    if forced is not None:
-        return forced, None
+    if alias != "auto":
+        # a specific tier was forced
+        return complexity_model(alias), None
 
     complexity = classify_complexity(user_message, history)
-    return COMPLEXITY_TO_MODEL.get(complexity, MODEL_HAIKU), complexity
+    return complexity_model(complexity), complexity
 
 
 # ── Chat ──────────────────────────────────────────────────

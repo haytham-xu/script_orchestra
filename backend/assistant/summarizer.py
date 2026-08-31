@@ -52,7 +52,8 @@ def maybe_summarize(conv_id: str) -> Optional[str]:
     the last summary boundary. Returns the resulting summary string, or
     None if nothing was done.
     """
-    from .service import get_client, ROUTER_MODEL   # local import to break cycles
+    from .service import get_client   # local import to break cycles
+    from .config import router_model
 
     conv = db.get_conversation(conv_id)
     if conv is None:
@@ -78,7 +79,7 @@ def maybe_summarize(conv_id: str) -> Optional[str]:
 
     try:
         resp = get_client().messages.create(
-            model=ROUTER_MODEL,     # Haiku — summaries don't need Opus
+            model=router_model(),   # the small router/summarizer model (from settings)
             max_tokens=SUMMARIZER_MAX_TOKENS,
             system=_SUMMARIZER_SYSTEM,
             messages=[{"role": "user", "content": prompt}],

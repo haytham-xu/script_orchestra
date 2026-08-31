@@ -27,6 +27,7 @@ backend/browser_agent/settings.json
 backend/browser_agent/*.db
 
 # Assistant runtime storage
+backend/assistant/settings.json
 backend/assistant/*.db
 backend/assistant/media/
 

@@ -114,7 +114,7 @@ class AgentSession:
 
             options = ClaudeAgentOptions(
                 cwd=self.cwd,
-                model=self.model,
+                model=self.model or None,   # empty => let the CLI use its default model
                 # A PreToolUse hook (below) is the sole approval authority. We do
                 # NOT list write/exec tools in allowed_tools (that would
                 # auto-approve them before any gating). Read-only tools are

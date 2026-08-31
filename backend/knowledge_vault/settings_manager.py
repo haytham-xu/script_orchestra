@@ -9,8 +9,8 @@ SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "auto_build": False,          # auto-build knowledge network after new fragments
-    "embed_model": "<embed-model>",
-    "ai_model": "<model>",  # model for build/query AI calls (user-configurable)
+    "embed_model": "",            # vector embed model — set in Settings (no baked-in name)
+    "ai_model": "",               # model for build/query AI calls — set in Settings
     "relate_top_k": 5,            # candidates considered for auto-relate/dedup
     "stale_days": 90,             # a fragment unused this long → flagged for review
     "link_check_enabled": False,  # opt-in: probe url fragments over HTTP (leaves the machine — off by default)

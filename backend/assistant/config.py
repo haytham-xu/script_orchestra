@@ -12,31 +12,28 @@ from pathlib import Path
 ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# Model IDs
-MODEL_HAIKU = "<model>"
-MODEL_SONNET = "<model>"
-MODEL_OPUS = "<model>"
+# Model IDs are NOT hardcoded here — they are user-configured and persisted
+# (see settings_manager). Code refers to tier *names* (router/simple/medium/hard)
+# and resolves the real id from settings at call time.
+from . import settings_manager
 
-# The tiny model used for prompt-complexity classification.
-ROUTER_MODEL = MODEL_HAIKU
 
-# UI selector values → real model ids
-MODEL_ALIAS = {
-    "auto": None,           # let the router decide
-    "haiku": MODEL_HAIKU,
-    "sonnet": MODEL_SONNET,
-    "opus": MODEL_OPUS,
-}
+def router_model() -> str:
+    """Tiny model for complexity classification + summarization."""
+    return settings_manager.model_for("router")
+
+
+def complexity_model(complexity: str) -> str:
+    """Resolve a complexity tier (simple/medium/hard) to its configured model id."""
+    return settings_manager.model_for(complexity if complexity in ("simple", "medium", "hard") else "simple")
+
+
+# UI selector values. "auto" lets the router decide; the tier names map to the
+# same-named settings slots (resolved via complexity_model / model_for).
+MODEL_ALIASES = ("auto", "simple", "medium", "hard")
 
 # Default behaviour when the user hasn't picked one
 DEFAULT_MODEL_ALIAS = "auto"
-
-# Complexity → model mapping used by the router
-COMPLEXITY_TO_MODEL = {
-    "simple": MODEL_HAIKU,
-    "medium": MODEL_SONNET,
-    "hard": MODEL_OPUS,
-}
 
 # Generation limits
 MAX_OUTPUT_TOKENS = 4096

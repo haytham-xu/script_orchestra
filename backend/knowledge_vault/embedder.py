@@ -17,10 +17,12 @@ _model_name: Optional[str] = None
 
 def _get_model():
     global _model, _model_name
-    # embed_model is settings-driven; fall back to the single source of truth
-    # (DEFAULT_SETTINGS) rather than repeating the model name here.
-    settings = settings_manager.load_settings()
-    want = settings.get("embed_model") or settings_manager.DEFAULT_SETTINGS["embed_model"]
+    # embed_model is user-configured in Settings; there is no baked-in name.
+    want = (settings_manager.load_settings().get("embed_model") or "").strip()
+    if not want:
+        raise RuntimeError(
+            "No embedding model configured. Set embed_model in "
+            "Knowledge Vault → Settings.")
     if _model is None or _model_name != want:
         # Use the local HF cache only — no network round-trips on load.
         os.environ.setdefault("HF_HUB_OFFLINE", "1")

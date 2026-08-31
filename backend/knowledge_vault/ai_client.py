@@ -18,12 +18,17 @@ from . import settings_manager
 
 def _resolve_model() -> str:
     """Model is user-configurable in settings (ai_model). KV_MODEL env, if set,
-    overrides for one-off/ops use; otherwise fall back to the settings default."""
+    overrides for one-off/ops use. There is no baked-in model name — raise if
+    neither is configured so the user knows to set it in Settings."""
     env = os.environ.get("KV_MODEL")
     if env:
         return env
-    return settings_manager.load_settings().get("ai_model") \
-        or settings_manager.DEFAULT_SETTINGS["ai_model"]
+    m = (settings_manager.load_settings().get("ai_model") or "").strip()
+    if not m:
+        raise RuntimeError(
+            "No AI model configured. Set it in Knowledge Vault → Settings "
+            "(or the KV_MODEL env var).")
+    return m
 
 
 def _cli_path() -> str:
