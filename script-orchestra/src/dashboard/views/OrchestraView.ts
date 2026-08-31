@@ -24,6 +24,7 @@ const TOOLS: Tool[] = [
   { key: 'file-git',               name: 'File-Git',               path: '/file-git' },
   { key: 'memory-curve',           name: 'Memory Curve',           path: '/memory-curve' },
   { key: 'knowledge-vault',        name: 'Knowledge Vault',        path: '/knowledge-vault' },
+  { key: 'translator',             name: 'Translator',             path: '/translator' },
   { key: 'claude-bridge',          name: 'Claude Bridge',          path: '/claude-bridge' },
 ]
 
