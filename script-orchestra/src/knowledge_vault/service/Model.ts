@@ -52,6 +52,7 @@ export interface KnowledgeEdge {
 export interface KnowledgeVaultSettings {
   auto_build: boolean
   embed_model: string
+  ai_model: string
   relate_top_k: number
   stale_days: number
   link_check_enabled: boolean

@@ -161,6 +161,17 @@
             <el-empty v-if="!labels.length" description="No labels yet" :image-size="50" />
           </div>
 
+          <h3 style="margin-top:24px">AI model</h3>
+          <p class="kv-hint">
+            Model used for build (dedup / classify) and AI deep-answer, run via the
+            local Claude CLI. Change it to any model your CLI/proxy supports.
+          </p>
+          <div class="kv-model-row">
+            <el-input v-model="settings.ai_model" placeholder="e.g. <model>"
+              style="max-width:360px" @keyup.enter="saveAiModel" />
+            <el-button type="primary" @click="saveAiModel">Save</el-button>
+          </div>
+
           <h3 style="margin-top:24px">Link checking</h3>
           <p class="kv-hint">
             Probe your saved URLs over HTTP so dead links get flagged for review sooner.
@@ -376,6 +387,7 @@
   gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .kv-kind-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .kv-link-toggle { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #3a3a3c; }
+.kv-model-row { display: flex; align-items: center; gap: 10px; }
 .kv-detail-frags { margin-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 8px; }
 .kv-detail-frag { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   border-radius: 6px; cursor: pointer; font-size: 12px; color: #3a3a3c; }

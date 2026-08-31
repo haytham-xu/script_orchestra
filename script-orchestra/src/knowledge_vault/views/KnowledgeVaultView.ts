@@ -11,7 +11,7 @@ export default defineComponent({
   setup() {
     const activeTab = ref<'capture' | 'search' | 'duplicates' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
-      auto_build: false, embed_model: '<embed-model>', relate_top_k: 5, stale_days: 90,
+      auto_build: false, embed_model: '<embed-model>', ai_model: '<model>', relate_top_k: 5, stale_days: 90,
       link_check_enabled: false,
     })
 
@@ -446,6 +446,14 @@ export default defineComponent({
       try { settings.value = await api.updateSettings({ link_check_enabled: v }) }
       catch (e: any) { ElMessage.error(e.message || 'Failed') }
     }
+    async function saveAiModel() {
+      const m = (settings.value.ai_model || '').trim()
+      if (!m) { ElMessage.warning('Model cannot be empty'); return }
+      try {
+        settings.value = await api.updateSettings({ ai_model: m })
+        ElMessage.success('Model saved')
+      } catch (e: any) { ElMessage.error(e.response?.data?.error || e.message || 'Failed') }
+    }
 
     onMounted(async () => {
       try { settings.value = await api.getSettings() } catch { /* defaults */ }
@@ -475,7 +483,7 @@ export default defineComponent({
       graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
       graphLabels, labelFilter, toggleLabelFilter,
       visibleNodes, selectedFragments, goToFragment, highlightFragId,
-      toggleAutoBuild, toggleLinkCheck,
+      toggleAutoBuild, toggleLinkCheck, saveAiModel,
     }
   },
 })

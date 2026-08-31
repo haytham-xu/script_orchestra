@@ -10,6 +10,7 @@ SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "auto_build": False,          # auto-build knowledge network after new fragments
     "embed_model": "<embed-model>",
+    "ai_model": "<model>",  # model for build/query AI calls (user-configurable)
     "relate_top_k": 5,            # candidates considered for auto-relate/dedup
     "stale_days": 90,             # a fragment unused this long → flagged for review
     "link_check_enabled": False,  # opt-in: probe url fragments over HTTP (leaves the machine — off by default)
@@ -52,6 +53,11 @@ def validate_and_normalize(patch: dict, current: dict) -> dict:
         if not isinstance(v, str) or not v.strip():
             raise ValueError("embed_model must be a non-empty string")
         merged["embed_model"] = v.strip()
+    if "ai_model" in patch:
+        v = patch["ai_model"]
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("ai_model must be a non-empty string")
+        merged["ai_model"] = v.strip()
     if "relate_top_k" in patch:
         try:
             merged["relate_top_k"] = max(1, min(int(patch["relate_top_k"]), 50))
