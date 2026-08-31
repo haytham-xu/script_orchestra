@@ -46,6 +46,19 @@ from memory_curve import repository as memory_curve_repo
 from knowledge_vault.blueprint import blueprint as knowledge_vault_blueprint
 from knowledge_vault import repository as knowledge_vault_repo
 
+# Import translator tool
+from translator.blueprint import blueprint as translator_blueprint
+from translator import repository as translator_repo
+from translator import websocket_service as translator_ws
+
+# Import dashboard layout module (Launchpad-style layout persistence)
+from dashboard.blueprint import blueprint as dashboard_blueprint
+
+# Import claude_bridge tool (remote Claude Code agent)
+from claude_bridge.blueprint import blueprint as claude_bridge_blueprint
+from claude_bridge import websocket_service as cb_websocket
+from claude_bridge.session_manager import get_manager as get_claude_bridge_manager
+
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
@@ -112,6 +125,15 @@ def create_app() -> Flask:
     # Register knowledge_vault blueprint
     app.register_blueprint(knowledge_vault_blueprint)
 
+    # Register translator blueprint
+    app.register_blueprint(translator_blueprint)
+
+    # Register dashboard layout blueprint
+    app.register_blueprint(dashboard_blueprint)
+
+    # Register claude_bridge blueprint
+    app.register_blueprint(claude_bridge_blueprint)
+
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
 
@@ -135,6 +157,8 @@ def create_app() -> Flask:
         cs_websocket.init_socketio(socketio)
         cs_websocket.register_socketio_events()
         v_df_websocket.init_socketio(socketio)
+        translator_ws.init_socketio(socketio)
+        translator_ws.register_socketio_events()
         cf_websocket.init_socketio(socketio)
         cf_websocket.register_socketio_events()
         get_caffeinate_service().register_broadcaster(cf_websocket.broadcast_log_entry)
@@ -147,6 +171,10 @@ def create_app() -> Flask:
         ba_websocket.register_socketio_events()
         get_browser_agent_service().register_broadcaster(ba_websocket.broadcast_progress)
 
+        cb_websocket.init_socketio(socketio)
+        cb_websocket.register_socketio_events()
+        get_claude_bridge_manager().register_broadcaster(cb_websocket.broadcast_event)
+
     # Initialize browser_agent DB and start its background download dispatcher.
     browser_agent_repo.init_db()
     browser_agent_dispatcher.start_background_loop()
@@ -156,6 +184,9 @@ def create_app() -> Flask:
 
     # Initialize knowledge_vault DB.
     knowledge_vault_repo.init_db()
+
+    # Initialize translator DB.
+    translator_repo.init_db()
 
     return app, socketio
 

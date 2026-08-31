@@ -63,6 +63,12 @@ requests==2.34.2
 # assistant tool — Claude API client (pin to poc03's version for parity)
 anthropic==0.42.0
 
+# claude_bridge drives Claude Code via the Agent SDK (streaming, tool use,
+# PreToolUse-hook approvals). 0.2.x is required: the tool-gating hook does not
+# fire reliably on the older 0.1.x line against CLI 2.x. Reuses the host's
+# logged-in `claude` CLI auth (no API key).
+claude-agent-sdk==0.2.148
+
 # knowledge_vault calls Claude via the `claude` CLI in one-shot --print mode
 # (no pip dep, no API key). Prerequisite: the Claude CLI must be installed and
 # logged in on the host; see https://docs.claude.com/claude-code

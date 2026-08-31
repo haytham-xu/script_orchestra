@@ -23,6 +23,9 @@ import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
 import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
 import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
 import KnowledgeVaultView from '@/knowledge_vault/views/KnowledgeVaultView.vue'
+import TranslatorView from '@/translator/views/TranslatorView.vue'
+import ClaudeBridgeView from '@/claude_bridge/views/ChatView.vue'
+import ClaudeBridgeTerminalView from '@/claude_bridge/views/TerminalView.vue'
 import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
@@ -156,6 +159,21 @@ const router = createRouter({
       path: '/knowledge-vault',
       name: 'knowledge-vault',
       component: KnowledgeVaultView
+    },
+    {
+      path: '/translator',
+      name: 'translator',
+      component: TranslatorView
+    },
+    {
+      path: '/claude-bridge',
+      name: 'claude-bridge',
+      component: ClaudeBridgeView
+    },
+    {
+      path: '/claude-bridge/terminal',
+      name: 'claude-bridge-terminal',
+      component: ClaudeBridgeTerminalView
     },
     {
       path: '/assistant',

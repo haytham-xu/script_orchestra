@@ -145,4 +145,21 @@ export const toolIcons: Record<string, string> = {
       <circle cx="47" cy="46" r="4" fill="#ccfbf1"/>
       <path d="M29 43l18 3" stroke="#99f6e4" stroke-width="2.5" stroke-linecap="round"/>
     </svg>`,
+  // Translator — bidirectional Zh <-> En with two-way arrows
+  'translator': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#4f46e5"/>
+      <text x="18" y="30" font-size="15" font-family="sans-serif" font-weight="700" fill="#fff" text-anchor="middle">Zh</text>
+      <text x="46" y="46" font-size="15" font-family="sans-serif" font-weight="700" fill="#fff" text-anchor="middle">En</text>
+      <path d="M34 22h10m0 0l-4-4m4 4l-4 4" stroke="#c7d2fe" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M30 42H20m0 0l4-4m-4 4l4 4" stroke="#c7d2fe" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`,
+  'claude-bridge': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#c2410c"/>
+      <rect x="14" y="16" width="36" height="24" rx="4" fill="#fff"/>
+      <path d="M20 24l5 4-5 4M28 32h8" stroke="#c2410c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="26" y="44" width="12" height="4" rx="2" fill="#fed7aa"/>
+      <path d="M32 40v4" stroke="#fed7aa" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>`,
 }
