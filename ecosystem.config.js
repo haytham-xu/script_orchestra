@@ -33,8 +33,7 @@ module.exports = {
       env: {
         PORT: '50001',
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || '',
-        ANTHROPIC_BASE_URL:
-          process.env.ANTHROPIC_BASE_URL || '<your-anthropic-base-url>',
+        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || '',
         // Empty => auth disabled (LAN only). Set before internet exposure.
         CLAUDE_BRIDGE_TOKEN: process.env.CLAUDE_BRIDGE_TOKEN || '',
       },

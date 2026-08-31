@@ -1,18 +1,16 @@
 """Claude Bridge — configuration.
 
 Env-driven, mirrors the conventions in knowledge_vault/ai_client.py and
-assistant/config.py (ANTHROPIC_BASE_URL local proxy, CLI path resolution).
+assistant/config.py (ANTHROPIC_BASE_URL from the environment, CLI path resolution).
 """
 import os
 import shutil
 
-# The CLI reads ANTHROPIC_BASE_URL from the environment. Default to the local
-# proxy when unset (e.g. under pm2 which doesn't inherit the interactive shell).
-DEFAULT_BASE_URL = "<your-anthropic-base-url>"
-
 
 def base_url() -> str:
-    return os.environ.get("ANTHROPIC_BASE_URL", DEFAULT_BASE_URL)
+    # The CLI reads ANTHROPIC_BASE_URL from the environment; provide it via the
+    # process env (e.g. pm2 ecosystem config). Empty when unset — no baked-in default.
+    return os.environ.get("ANTHROPIC_BASE_URL", "")
 
 
 # Optional fallback auth token for the local proxy, forwarded to the SDK

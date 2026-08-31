@@ -8,11 +8,8 @@ hard-codes strings.
 import os
 from pathlib import Path
 
-# Anthropic API — same env-var contract as poc03
-ANTHROPIC_BASE_URL = os.environ.get(
-    "ANTHROPIC_BASE_URL",
-    "<your-anthropic-base-url>",
-)
+# Anthropic API — read from the environment (no baked-in default).
+ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # Model IDs

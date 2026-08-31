@@ -13,12 +13,17 @@ import shutil
 import subprocess
 from typing import Optional
 
-MODEL = os.environ.get("KV_MODEL", "<model>")
+from . import settings_manager
 
-# Default to the local proxy when the environment doesn't set one (e.g. under
-# pm2, which doesn't inherit the interactive shell's env). The CLI reads
-# ANTHROPIC_BASE_URL from the environment. Mirrors assistant/config.py.
-_DEFAULT_BASE_URL = "<your-anthropic-base-url>"
+
+def _resolve_model() -> str:
+    """Model is user-configurable in settings (ai_model). KV_MODEL env, if set,
+    overrides for one-off/ops use; otherwise fall back to the settings default."""
+    env = os.environ.get("KV_MODEL")
+    if env:
+        return env
+    return settings_manager.load_settings().get("ai_model") \
+        or settings_manager.DEFAULT_SETTINGS["ai_model"]
 
 
 def _cli_path() -> str:
@@ -26,12 +31,15 @@ def _cli_path() -> str:
 
 
 def _run_query(prompt: str, timeout: int = 120) -> str:
-    """Run a one-shot prompt through the Claude CLI and return its text output."""
+    """Run a one-shot prompt through the Claude CLI and return its text output.
+
+    The CLI reads ANTHROPIC_BASE_URL / auth from the environment; we do not set
+    a default here (provide it via the process env, e.g. pm2 ecosystem config).
+    """
     env = dict(os.environ)
-    env.setdefault("ANTHROPIC_BASE_URL", _DEFAULT_BASE_URL)
     try:
         proc = subprocess.run(
-            [_cli_path(), "--print", "--model", MODEL, prompt],
+            [_cli_path(), "--print", "--model", _resolve_model(), prompt],
             capture_output=True, text=True, timeout=timeout, env=env,
             stdin=subprocess.DEVNULL,   # never block waiting on a tty
         )
