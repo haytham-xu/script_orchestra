@@ -65,3 +65,12 @@ backend/knowledge_vault/settings.json
 backend/knowledge_vault/*.db
 backend/knowledge_vault/.backups/
 backend/dashboard/layout.json
+
+# Translator runtime storage
+backend/translator/settings.json
+backend/translator/*.db
+
+# Chinese-language design/handoff docs (process artifacts, keep local only)
+backend/translator/DESIGN.md
+backend/dashboard/DESIGN.md
+backend/knowledge_vault/REMAINING_WORK.md
