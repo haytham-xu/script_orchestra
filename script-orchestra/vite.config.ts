@@ -13,6 +13,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // Allow access from other devices on LAN
     port: 5001,
+    // Allow the Tailscale MagicDNS domain so the phone can reach the dev server
+    // over the private tailnet (Vite blocks unknown Host headers by default).
+    // Plain 100.x Tailscale IPs are allowed automatically; this covers the
+    // friendlier *.ts.net hostnames.
+    allowedHosts: ['.ts.net'],
     strictPort: true,
     proxy: {
       '/api': {
