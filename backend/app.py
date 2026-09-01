@@ -54,10 +54,20 @@ from translator import websocket_service as translator_ws
 # Import dashboard layout module (Launchpad-style layout persistence)
 from dashboard.blueprint import blueprint as dashboard_blueprint
 
-# Import claude_bridge tool (remote Claude Code agent)
-from claude_bridge.blueprint import blueprint as claude_bridge_blueprint
-from claude_bridge import websocket_service as cb_websocket
-from claude_bridge.session_manager import get_manager as get_claude_bridge_manager
+# Import claude_bridge tool (remote Claude Code agent). It depends on the
+# Unix-only `pty`/`termios` stack, so on Windows we skip the import instead
+# of failing the whole app.
+try:
+    from claude_bridge.blueprint import blueprint as claude_bridge_blueprint
+    from claude_bridge import websocket_service as cb_websocket
+    from claude_bridge.session_manager import get_manager as get_claude_bridge_manager
+    _claude_bridge_available = True
+except ImportError as _cb_err:
+    print(f"[App] claude_bridge disabled: {_cb_err}", flush=True)
+    claude_bridge_blueprint = None
+    cb_websocket = None
+    get_claude_bridge_manager = None
+    _claude_bridge_available = False
 
 import manga_viewer.controller
 import manga_viewer.settings_controller
@@ -131,8 +141,9 @@ def create_app() -> Flask:
     # Register dashboard layout blueprint
     app.register_blueprint(dashboard_blueprint)
 
-    # Register claude_bridge blueprint
-    app.register_blueprint(claude_bridge_blueprint)
+    # Register claude_bridge blueprint (only if the Unix-only deps loaded)
+    if _claude_bridge_available:
+        app.register_blueprint(claude_bridge_blueprint)
 
     # Register Cypress support API blueprint
     app.register_blueprint(cypress_api)
@@ -171,9 +182,10 @@ def create_app() -> Flask:
         ba_websocket.register_socketio_events()
         get_browser_agent_service().register_broadcaster(ba_websocket.broadcast_progress)
 
-        cb_websocket.init_socketio(socketio)
-        cb_websocket.register_socketio_events()
-        get_claude_bridge_manager().register_broadcaster(cb_websocket.broadcast_event)
+        if _claude_bridge_available:
+            cb_websocket.init_socketio(socketio)
+            cb_websocket.register_socketio_events()
+            get_claude_bridge_manager().register_broadcaster(cb_websocket.broadcast_event)
 
     # Initialize browser_agent DB and start its background download dispatcher.
     browser_agent_repo.init_db()
@@ -221,11 +233,13 @@ if __name__ == "__main__":
     # Use a dedicated backend port to keep frontend/backend ports separated.
     # Bind to 0.0.0.0 to allow access from other devices on LAN
 
+    debug_flag = os.environ.get('FLASK_DEBUG', '1') == '1'
+
     if socketio:
         # Run with SocketIO if available
-        print(f"[App] Starting with WebSocket support on {host}:{port}")
-        socketio.run(app, debug=True, host=host, port=port, allow_unsafe_werkzeug=True)
+        print(f"[App] Starting with WebSocket support on {host}:{port} (debug={debug_flag})")
+        socketio.run(app, debug=debug_flag, host=host, port=port, allow_unsafe_werkzeug=True)
     else:
         # Fallback to regular Flask if SocketIO not available
         print(f"[App] Starting without WebSocket on {host}:{port} (install flask-socketio to enable)")
-        app.run(debug=True, host=host, port=port)
+        app.run(debug=debug_flag, host=host, port=port)
