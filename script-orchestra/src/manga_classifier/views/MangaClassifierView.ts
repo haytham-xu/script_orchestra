@@ -7,8 +7,20 @@ import type {ButtonConfigJSON, FolderObject, FolderObjectList, FileList} from '@
 import {FolderStatus} from '@/manga_classifier/service/Model'
 import {getSettings} from '@/manga_classifier/service/SettingsService'
 import CategoryButtonCardComponment from "@/manga_classifier/components/CategoryButtonCardComponment.vue"
-import { ElMessage } from 'element-plus'
+import { ElNotification } from 'element-plus'
 import { Setting, RefreshLeft, FolderOpened } from '@element-plus/icons-vue'
+
+// Classification result notifications go bottom-right (out of the reading
+// area) with a shorter dwell so they don't crowd the eye.
+function notify(type: 'success' | 'error' | 'info' | 'warning', message: string) {
+  ElNotification({
+    message,
+    type,
+    position: 'bottom-right',
+    duration: 2250,
+    showClose: false,
+  })
+}
 
 export default defineComponent({
   name: 'ParentView',
@@ -55,6 +67,9 @@ export default defineComponent({
     // Set of folder names that can currently be undone in this session.
     // Mirrors the backend stack; entries are removed on successful undo.
     const undoableNames = reactive(new Set<string>())
+    // Turns on while a move/delete/undo is in flight so the view can render
+    // a spinner overlay and block double-clicks.
+    const classifyBusy = ref(false)
 
     // The current folder was moved/deleted and is still undoable → show
     // inline restore UI in the content area instead of files.
@@ -126,7 +141,7 @@ export default defineComponent({
 
     function jumpToIndex(oneBasedIndex: number) {
       if (folderObjectList.value === null) {
-        ElMessage.warning("folderObjectList is not ready, please wait.");
+        notify('warning',"folderObjectList is not ready, please wait.");
         return;
       }
       const total = folderObjectList.value.folderList.length;
@@ -195,7 +210,7 @@ export default defineComponent({
         await postOpenFolder(name)
       } catch (e: any) {
         const msg = e?.response?.data?.error || e.message || 'Failed to open folder'
-        ElMessage.error(msg)
+        notify('error',msg)
       }
     }
 
@@ -217,7 +232,7 @@ export default defineComponent({
 
     async function nextFolder() {
       if (folderObjectList.value === null || currentFolderObject.value === null) {
-        ElMessage.warning("folderObjectList is not ready, please wait.");
+        notify('warning',"folderObjectList is not ready, please wait.");
         return;
       }
       if(currentIndex.value < maxFolderindex) {
@@ -230,15 +245,15 @@ export default defineComponent({
           currentIndex.value += 1;
           currentFolderName.value = "EOL";
           scheduleLoadFiles('EOL');
-          ElMessage.info('This is the Lates Folder.');
+          notify('info','This is the Lates Folder.');
       } else {
-          ElMessage.info('This is the Lates Folder.');
+          notify('info','This is the Lates Folder.');
       }
     }
 
     async function previousFolder() {
       if (folderObjectList.value === null || currentFolderObject.value === null) {
-        ElMessage.warning("folderObjectList is not ready, please wait.");
+        notify('warning',"folderObjectList is not ready, please wait.");
         return;
       }
       if(currentIndex.value > 0) {
@@ -251,61 +266,67 @@ export default defineComponent({
           currentIndex.value -= 1;
           currentFolderName.value = "EOL";
           scheduleLoadFiles('EOL');
-          ElMessage.info('This is the First Folder.');
+          notify('info','This is the First Folder.');
       } else {
-          ElMessage.info('This is the First Folder.');
+          notify('info','This is the First Folder.');
       }
     }
 
     async function moveFolder(sourceFolderPath:string, targetFolderPath:string) {
       if (folderObjectList.value === null || currentFolderObject.value === null) {
-        ElMessage.warning("folderObjectList is not ready, please wait.")
+        notify('warning',"folderObjectList is not ready, please wait.")
         return;
       }
       if (currentFolderObject.value.folderName == "EOL") {
-        ElMessage.warning("This is the EOL, cannot move.");
+        notify('warning',"This is the EOL, cannot move.");
         return;
       }
       if (currentFolderObject.value.status == FolderStatus.Done) {
-        ElMessage.info("The Folder already moved.");
+        notify('info',"The Folder already moved.");
         return;
       }
       const movedName = sourceFolderPath;
+      classifyBusy.value = true;
       try {
         await postMoveFolder(sourceFolderPath, targetFolderPath);
         currentFolderObject.value.status = FolderStatus.Done
         undoableNames.add(movedName);
-        ElMessage.success(`Moved: ${sourceFolderPath} → ${targetFolderPath}`);
+        notify('success',`Moved: ${sourceFolderPath} → ${targetFolderPath}`);
         nextFolder();
       } catch (e: any) {
         const msg = e?.response?.data?.error || e.message || 'Failed to move'
-        ElMessage.error(msg);
+        notify('error',msg);
+      } finally {
+        classifyBusy.value = false;
       }
     }
 
     async function deleteFolder() {
       if (folderObjectList.value === null || currentFolderObject.value === null) {
-        ElMessage.warning("folderObjectList is not ready, please wait.")
+        notify('warning',"folderObjectList is not ready, please wait.")
         return;
       }
       if (currentFolderObject.value.folderName == "EOL") {
-        ElMessage.warning("This is the EOL, cannot delete.");
+        notify('warning',"This is the EOL, cannot delete.");
         return;
       }
       if (currentFolderObject.value.status == FolderStatus.Done) {
-        ElMessage.info("The Folder already moved.");
+        notify('info',"The Folder already moved.");
         return;
       }
       const movedName = currentFolderName.value;
+      classifyBusy.value = true;
       try {
         await postDeleteFolder(movedName);
         currentFolderObject.value.status = FolderStatus.Done;
         undoableNames.add(movedName);
-        ElMessage.success(`Deleted: ${movedName}`);
+        notify('success',`Deleted: ${movedName}`);
         nextFolder();
       } catch (e: any) {
         const msg = e?.response?.data?.error || e.message || 'Failed to delete'
-        ElMessage.error(msg);
+        notify('error',msg);
+      } finally {
+        classifyBusy.value = false;
       }
     }
 
@@ -313,6 +334,7 @@ export default defineComponent({
       const folderObj = currentFolderObject.value;
       const name = currentFolderName.value;
       if (!folderObj || !name || !undoableNames.has(name)) return;
+      classifyBusy.value = true;
       try {
         await postUndo(name);
         folderObj.status = FolderStatus.Pending;
@@ -322,12 +344,14 @@ export default defineComponent({
         if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
         if (activeAbort) { activeAbort.abort(); activeAbort = null; }
         currentFileList.value = await getFileList(name);
-        ElMessage.success(`Restored: ${name}`);
+        notify('success',`Restored: ${name}`);
       } catch (e: any) {
         const msg = e?.response?.data?.error || e.message || 'Failed to undo'
-        ElMessage.error(msg);
+        notify('error',msg);
         // Backend rejected — the stale entry is no longer valid, drop it.
         undoableNames.delete(name);
+      } finally {
+        classifyBusy.value = false;
       }
     }
 
@@ -379,6 +403,7 @@ export default defineComponent({
       categoryButtonCardJSON,
       currentFolderName,
       currentFileList,
+      classifyBusy,
       moveFolder,
       goToSettings: () => router.push('/manga-classifier/settings'),
       isEmpty,

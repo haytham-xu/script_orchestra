@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div v-loading.fullscreen.lock="classifyBusy" element-loading-text="处理中…" element-loading-background="rgba(255,255,255,0.4)">
     <el-container>
       <el-header>
         <span class="mc-title" :style="{ fontSize: titleFontSize }">{{ currentFolderName }}</span>
