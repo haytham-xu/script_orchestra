@@ -1,4 +1,4 @@
-import { defineComponent, reactive, ref, computed, onMounted } from 'vue'
+﻿import { defineComponent, reactive, ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Plus, Delete, Refresh } from '@element-plus/icons-vue'
@@ -10,6 +10,8 @@ const DEFAULTS: BrowserAgentSettings = {
   maxRetries: 3,
   pollIntervalSec: 60,
   siteRules: [],
+  downloadSSMH: { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' },
+  downloadJM: { sourceDomain: '', downloadPath: '' },
 }
 
 export default defineComponent({
@@ -29,6 +31,12 @@ export default defineComponent({
       try {
         const s = await getSettings()
         Object.assign(state, s)
+        if (!state.downloadSSMH) {
+          state.downloadSSMH = { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' }
+        }
+        if (!state.downloadJM) {
+          state.downloadJM = { sourceDomain: '', downloadPath: '' }
+        }
         originalJson.value = JSON.stringify(state)
       } catch (e: any) {
         ElMessage.error(e.message || 'Failed to load settings')
@@ -72,11 +80,30 @@ export default defineComponent({
       rule.coverDomains = text.split(',').map(s => s.trim()).filter(Boolean)
     }
 
+    // downloadSSMH lists — one domain per line (more forgiving than commas
+    // when host names get long).
+    function ssmhSourcesText(): string {
+      return (state.downloadSSMH?.sourceDomains || []).join('\n')
+    }
+    function setSsmhSourcesText(text: string) {
+      if (!state.downloadSSMH) state.downloadSSMH = { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' }
+      state.downloadSSMH.sourceDomains = text.split('\n').map(s => s.trim()).filter(Boolean)
+    }
+    function ssmhDownloadsText(): string {
+      return (state.downloadSSMH?.downloadDomains || []).join('\n')
+    }
+    function setSsmhDownloadsText(text: string) {
+      if (!state.downloadSSMH) state.downloadSSMH = { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' }
+      state.downloadSSMH.downloadDomains = text.split('\n').map(s => s.trim()).filter(Boolean)
+    }
+
     onMounted(load)
 
     return {
       state, loading, saving, isDirty,
       load, save, addRule, removeRule, domainsText, setDomainsText,
+      ssmhSourcesText, setSsmhSourcesText,
+      ssmhDownloadsText, setSsmhDownloadsText,
       goBack: () => router.push('/browser-agent'),
     }
   },

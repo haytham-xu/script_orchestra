@@ -6,6 +6,9 @@
         <p class="ba-sub">Download queue from browser tabs</p>
       </div>
       <div class="ba-topbar-right">
+        <el-button type="primary" @click="onSendCurrentTabs" :loading="sending">
+          Send current tabs
+        </el-button>
         <el-button :icon="Refresh" @click="load" :loading="loading">Refresh</el-button>
         <el-button :icon="Setting" @click="goToSettings">Settings</el-button>
       </div>
@@ -15,7 +18,7 @@
       <el-empty v-if="tasks.length === 0 && !loading" description="No download tasks yet">
         <p class="ba-hint">
           Open some target pages in your browser, then click
-          <b>Send all tabs to download queue</b> in the Browser Agent extension.
+          <b>Send current tabs</b> in the top-right to queue downloads.
         </p>
       </el-empty>
 

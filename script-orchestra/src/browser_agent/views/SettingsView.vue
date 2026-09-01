@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="ba-settings">
     <header class="ba-topbar">
       <div class="ba-topbar-left">
@@ -73,6 +73,71 @@
             </div>
           </div>
           <el-button :icon="Plus" size="small" @click="addRule" text>Add rule</el-button>
+        </div>
+      </section>
+
+      <!-- Download SSMH -->
+      <section class="ba-card">
+        <div class="ba-card-header">
+          <h2>Download SSMH</h2>
+          <p class="ba-hint">
+            Interactive per-tab flow: filters open tabs by source-domain +
+            <code>/photos-index-aid-&lt;id&gt;.html</code>, then downloads via
+            the anchor whose visible text matches <em>Link label</em> below.
+          </p>
+        </div>
+        <div class="ba-card-body">
+          <div class="ba-row">
+            <label class="ba-label">Source domains</label>
+            <el-input
+              type="textarea" :rows="3"
+              :model-value="ssmhSourcesText()"
+              @update:model-value="setSsmhSourcesText"
+              placeholder="one per line, e.g. foo.com" spellcheck="false" />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Download domains</label>
+            <el-input
+              type="textarea" :rows="3"
+              :model-value="ssmhDownloadsText()"
+              @update:model-value="setSsmhDownloadsText"
+              placeholder="one per line, e.g. cdn.foo.com" spellcheck="false" />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Link label</label>
+            <el-input v-model="state.downloadSSMH.linkLabel"
+                      placeholder="visible text of the anchor to pick"
+                      spellcheck="false" />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Download path</label>
+            <el-input v-model="state.downloadSSMH.downloadPath"
+                      placeholder="/absolute/path/to/output" spellcheck="false" />
+          </div>
+        </div>
+      </section>
+
+      <!-- Download JM -->
+      <section class="ba-card">
+        <div class="ba-card-header">
+          <h2>Download JM</h2>
+          <p class="ba-hint">
+            Cloudflare-protected site. You must be <strong>already logged in via
+            your browser</strong> — the extension hands cookies to the backend.
+          </p>
+        </div>
+        <div class="ba-card-body">
+          <div class="ba-row">
+            <label class="ba-label">Source domain</label>
+            <el-input v-model="state.downloadJM.sourceDomain"
+                      placeholder="e.g. example.com  (single host, no scheme)"
+                      spellcheck="false" />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Download path</label>
+            <el-input v-model="state.downloadJM.downloadPath"
+                      placeholder="/absolute/path/to/output" spellcheck="false" />
+          </div>
         </div>
       </section>
     </main>

@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+﻿import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from '@/dashboard/views/OrchestraView.vue'
 import MangaClassifierView from '@/manga_classifier/views/MangaClassifierView.vue'
 import MangaClassifierSettingsView from '@/manga_classifier/views/SettingsView.vue'
@@ -21,6 +21,12 @@ import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
 import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
 import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
+import BrowserAgentHubView from '@/browser_agent/views/BrowserAgentHubView.vue'
+import TabsView from '@/browser_agent/views/TabsView.vue'
+import TabDedupView from '@/browser_agent/views/TabDedupView.vue'
+import DownloadSSMHView from '@/browser_agent/views/DownloadSSMHView.vue'
+import DownloadJMView from '@/browser_agent/views/DownloadJMView.vue'
+import CaptchaTrainerView from '@/browser_agent/views/CaptchaTrainerView.vue'
 import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
 import KnowledgeVaultView from '@/knowledge_vault/views/KnowledgeVaultView.vue'
 import TranslatorView from '@/translator/views/TranslatorView.vue'
@@ -146,9 +152,39 @@ const router = createRouter({
       component: BrowserAgentSettingsView
     },
     {
+      path: '/browser-agent/tabs',
+      name: 'browser-agent-tabs',
+      component: TabsView
+    },
+    {
+      path: '/browser-agent/tab-dedup',
+      name: 'browser-agent-tab-dedup',
+      component: TabDedupView
+    },
+    {
+      path: '/browser-agent/download-ssmh',
+      name: 'browser-agent-download-ssmh',
+      component: DownloadSSMHView
+    },
+    {
+      path: '/browser-agent/download-jm',
+      name: 'browser-agent-download-jm',
+      component: DownloadJMView
+    },
+    {
+      path: '/browser-agent/captcha-trainer',
+      name: 'browser-agent-captcha-trainer',
+      component: CaptchaTrainerView
+    },
+    {
+      path: '/browser-agent/downloads',
+      name: 'browser-agent-downloads',
+      component: BrowserAgentView
+    },
+    {
       path: '/browser-agent',
       name: 'browser-agent',
-      component: BrowserAgentView
+      component: BrowserAgentHubView
     },
     {
       path: '/memory-curve',

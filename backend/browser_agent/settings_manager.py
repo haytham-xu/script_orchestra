@@ -1,8 +1,8 @@
 """Browser Agent — settings manager (JSON persistence).
 
-Mirrors the manga_classifier / photo_classifier settings pattern:
-load/save a JSON file inside the package dir, deep-merge defaults so new
-keys survive across upgrades. settings.json is gitignored.
+Mirrors the manga_classifier / photo_classifier settings pattern: load/save
+a JSON file inside the package dir, deep-merge defaults so new keys survive
+across upgrades. settings.json is gitignored.
 """
 import os
 import json
@@ -12,19 +12,30 @@ from typing import Any, Dict
 SETTINGS_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 
+# Defaults are intentionally empty — every deployment configures its own
+# site info via the Browser Agent Settings page.
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "downloadDir": "",            # target dir; empty → dispatcher refuses to download
     "maxRetries": 3,
     "pollIntervalSec": 60,
-    "siteRules": [
-        {
-            "coverDomains": ["www.wn01.cc", "www.hm17.lol", "www.wn05.cc"],
-            "overviewUriFormat": "photos-slide-aid-{aid}.html",
-            "downloadUriFormat": "download-index-aid-{aid}.html",
-            "downloadLinkRegex":
-                r'href="(//v1\.wzip\.download/down/\d+/[a-f0-9]+\.zip\?n=[^"]+)"',
-        }
-    ],
+    "siteRules": [],
+    # Download SSMH — interactive per-tab flow that resolves the real .zip
+    # URL from a paginated download page. See download_ssmh.py.
+    "downloadSSMH": {
+        "sourceDomains": [],       # allowlisted hosts, no scheme
+        "downloadDomains": [],     # allowlisted final-download hosts
+        "downloadPath": "",        # absolute local dir where .zip files land
+        # Text label of the anchor to pick on the download-index page.
+        # e.g. the site's "backup line / Server 2" link.
+        "linkLabel": "",
+    },
+    # Download JM — Cloudflare-protected site that requires the user to be
+    # logged in via their real browser. The extension hands back cookies.
+    # See download_jm.py.
+    "downloadJM": {
+        "sourceDomain": "",        # single host, no scheme
+        "downloadPath": "",        # absolute local dir where downloads land
+    },
 }
 
 
@@ -37,13 +48,25 @@ def _ensure_settings_file_exists() -> None:
             print(f"⚠️ Failed to create browser_agent settings.json: {e}")
 
 
+def _migrate_legacy_keys(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Rename any legacy key names to their current form so old settings
+    files keep working after a rename. Non-destructive: leaves other keys
+    alone."""
+    if "downloadType1" in data and "downloadSSMH" not in data:
+        data["downloadSSMH"] = data.pop("downloadType1")
+    if "downloadType2" in data and "downloadJM" not in data:
+        data["downloadJM"] = data.pop("downloadType2")
+    return data
+
+
 def load_settings() -> Dict[str, Any]:
     _ensure_settings_file_exists()
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
+        data = _migrate_legacy_keys(data or {})
         merged = copy.deepcopy(DEFAULT_SETTINGS)
-        merged.update(data or {})
+        merged.update(data)
         return merged
     except Exception as e:
         print(f"⚠️ Failed to load browser_agent settings.json: {e}")
@@ -67,6 +90,7 @@ def get_db_path() -> str:
 def validate_and_normalize(patch: dict, current: dict) -> dict:
     """Validate a settings PUT patch and merge into current."""
     merged = dict(current)
+    patch = _migrate_legacy_keys(dict(patch))
 
     if "downloadDir" in patch:
         v = patch["downloadDir"]
@@ -89,7 +113,51 @@ def validate_and_normalize(patch: dict, current: dict) -> dict:
     if "siteRules" in patch:
         merged["siteRules"] = _validate_site_rules(patch["siteRules"])
 
+    if "downloadSSMH" in patch:
+        merged["downloadSSMH"] = _validate_download_ssmh(patch["downloadSSMH"])
+
+    if "downloadJM" in patch:
+        merged["downloadJM"] = _validate_download_jm(patch["downloadJM"])
+
     return merged
+
+
+def _validate_download_ssmh(cfg: Any) -> dict:
+    if not isinstance(cfg, dict):
+        raise ValueError("downloadSSMH must be an object")
+    src = cfg.get("sourceDomains", [])
+    dst = cfg.get("downloadDomains", [])
+    path = cfg.get("downloadPath", "")
+    link_label = cfg.get("linkLabel", "")
+    if not isinstance(src, list) or not all(isinstance(d, str) for d in src):
+        raise ValueError("downloadSSMH.sourceDomains must be a list of strings")
+    if not isinstance(dst, list) or not all(isinstance(d, str) for d in dst):
+        raise ValueError("downloadSSMH.downloadDomains must be a list of strings")
+    if not isinstance(path, str):
+        raise ValueError("downloadSSMH.downloadPath must be a string")
+    if not isinstance(link_label, str):
+        raise ValueError("downloadSSMH.linkLabel must be a string")
+    return {
+        "sourceDomains": [d.strip().lower() for d in src if d.strip()],
+        "downloadDomains": [d.strip().lower() for d in dst if d.strip()],
+        "downloadPath": path.strip(),
+        "linkLabel": link_label.strip(),
+    }
+
+
+def _validate_download_jm(cfg: Any) -> dict:
+    if not isinstance(cfg, dict):
+        raise ValueError("downloadJM must be an object")
+    src = cfg.get("sourceDomain", "")
+    path = cfg.get("downloadPath", "")
+    if not isinstance(src, str):
+        raise ValueError("downloadJM.sourceDomain must be a string")
+    if not isinstance(path, str):
+        raise ValueError("downloadJM.downloadPath must be a string")
+    return {
+        "sourceDomain": src.strip().lower(),
+        "downloadPath": path.strip(),
+    }
 
 
 def _validate_site_rules(rules: Any) -> list:

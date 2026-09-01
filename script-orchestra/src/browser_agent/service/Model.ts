@@ -1,4 +1,4 @@
-export enum BrowserTaskStatus {
+﻿export enum BrowserTaskStatus {
   Todo = 'TODO',
   InProgress = 'IN_PROGRESS',
   Failed = 'FAILED',
@@ -24,11 +24,25 @@ export interface SiteRule {
   downloadLinkRegex: string
 }
 
+export interface DownloadSSMHConfig {
+  sourceDomains: string[]
+  downloadDomains: string[]
+  downloadPath: string
+  linkLabel: string
+}
+
+export interface DownloadJMConfig {
+  sourceDomain: string
+  downloadPath: string
+}
+
 export interface BrowserAgentSettings {
   downloadDir: string
   maxRetries: number
   pollIntervalSec: number
   siteRules: SiteRule[]
+  downloadSSMH?: DownloadSSMHConfig
+  downloadJM?: DownloadJMConfig
 }
 
 // Live progress event pushed over WebSocket.
