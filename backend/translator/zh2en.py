@@ -144,7 +144,11 @@ def translate(text: str, model: str = None, job_id: str = None, extra_prompt: st
     ws.emit_progress(job_id, SCENE, "learning_points")
     learning_points: List[dict] = []
     try:
-        lp_prompt = f"{_LP_INSTRUCTION}\n\nUSER'S ORIGINAL TEXT:\n{text}"
+        # Optional user preference (from settings) appended to the fixed
+        # instruction — steers WHAT to focus on, not the JSON format.
+        pref = (cfg.get("learning_prompt") or "").strip()
+        lp_instruction = f"{_LP_INSTRUCTION}\n\nUser preference for these learning points: {pref}" if pref else _LP_INSTRUCTION
+        lp_prompt = f"{lp_instruction}\n\nUSER'S ORIGINAL TEXT:\n{text}"
         raw, u3 = copilot_client.ask_with_usage(lp_prompt, model=model)
         usage = copilot_client.add_usage(usage, u3)
         learning_points = _parse_learning_points(raw)

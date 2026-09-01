@@ -14,7 +14,9 @@ SETTINGS_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "zh2en": {"system_prompt": "", "model": "auto"},
+    # learning_prompt: optional user preference appended to the fixed
+    # learning-point instruction (zh2en only; en2zh has no learning points).
+    "zh2en": {"system_prompt": "", "model": "auto", "learning_prompt": ""},
     "en2zh": {"system_prompt": "", "model": "auto"},
     "cleanup_days": 30,   # default retention for one-click cleanup
 }
@@ -64,6 +66,11 @@ def _normalize_scene(patch_scene: dict, current_scene: dict) -> dict:
         if not isinstance(v, str) or not v.strip():
             raise ValueError("model must be a non-empty string")
         merged["model"] = v.strip()
+    if "learning_prompt" in patch_scene:
+        v = patch_scene["learning_prompt"]
+        if not isinstance(v, str):
+            raise ValueError("learning_prompt must be a string")
+        merged["learning_prompt"] = v
     return merged
 
 

@@ -61,6 +61,7 @@ export interface UsageSummary extends SceneUsage {
 export interface SceneConfig {
   system_prompt: string
   model: string
+  learning_prompt?: string   // zh2en only: user preference for learning-point extraction
 }
 
 export interface TranslatorSettings {

@@ -45,7 +45,7 @@ export default defineComponent({
 
     // ---- shared: settings + models ----
     const settings = ref<TranslatorSettings>({
-      zh2en: { system_prompt: '', model: 'auto' },
+      zh2en: { system_prompt: '', model: 'auto', learning_prompt: '' },
       en2zh: { system_prompt: '', model: 'auto' },
       cleanup_days: 30,
     })

@@ -177,6 +177,9 @@
             <label class="tr-label">System prompt (translation style, write your own)</label>
             <el-input v-model="settings.zh2en.system_prompt" type="textarea" :rows="4"
               placeholder="e.g. Translate into concise, friendly Slack-style English…" />
+            <label class="tr-label">Learning-point preference (optional)</label>
+            <el-input v-model="settings.zh2en.learning_prompt" type="textarea" :rows="3"
+              placeholder="Steer what the learning points focus on, e.g. emphasize preposition collocations and business tone. (Appended to the built-in learning-point instruction; does not change the JSON format.)" />
             <label class="tr-label">Model</label>
             <el-select v-model="settings.zh2en.model" class="tr-select">
               <el-option v-for="m in modelOptions" :key="m.id" :label="m.name" :value="m.id" />
