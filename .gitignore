@@ -25,6 +25,8 @@ backend/file_git/mock_cloud_storage/
 # Browser Agent runtime storage (settings + SQLite download queue)
 backend/browser_agent/settings.json
 backend/browser_agent/*.db
+# Captcha template cache (built up over time from Captcha Trainer labels).
+backend/browser_agent/captcha_templates/
 
 # Assistant runtime storage
 backend/assistant/settings.json
