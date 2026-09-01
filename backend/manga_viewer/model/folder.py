@@ -12,7 +12,8 @@ class Folder:
                  number=0,
                  initialized=False,
                  tags=None,
-                 favorite=False):
+                 favorite=False,
+                 read_count=0):
         self.id: str = id_
         self.name: str = name
         self.path: str = path
@@ -22,18 +23,20 @@ class Folder:
         self.initialized: bool = initialized
         self.tags: Tag = tags or Tag()
         self.favorite: bool = favorite
+        self.read_count: int = read_count
 
     def to_dict(self):
         return {
             "id": self.id,
             "name": self.name,
             "path": self.path,
-            "files": self.file_list,  # Frontend expects 'files', not 'file_list'
+            "files": [],
             "size": self.size,
             "number": self.number,
             "initialized": self.initialized,
             "tags": self.tags.to_dict(),
             "favorite": self.favorite,
+            "read_count": self.read_count,
         }
 
     @staticmethod
@@ -42,10 +45,11 @@ class Folder:
             d.get("id", ""),
             d.get("name", ""),
             d.get("path", ""),
-            d.get("file_list") or d.get("files", []),  # Support both 'file_list' and 'files'
+            d.get("file_list") or d.get("files", []),
             d.get("size", 0),
             d.get("number", 0),
             d.get("initialized", False),
             Tag.from_dict(d.get("tags", {})),
             d.get("favorite", False),
+            d.get("read_count", 0),
         )

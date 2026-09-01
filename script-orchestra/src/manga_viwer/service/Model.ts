@@ -18,12 +18,16 @@ export interface FolderModel {
   files: string[]
   tags: TagData
   favorite?: boolean
+  read_count?: number
 }
 
 export interface MetadataModel {
   auth: string[]
   category_main: string[]
   category_sub: string[]
+  total_folders?: number
+  total_files?: number
+  total_size?: number
 }
 
 export interface MangaIndex {

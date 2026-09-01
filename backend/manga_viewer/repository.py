@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import threading
 from basic.flex_sort import flex_natsort
 from manga_viewer.model.metadata import Metadata
 from manga_viewer.model.manga_index import MangaIndex
@@ -12,6 +13,12 @@ from urllib.parse import quote
 
 class Repository:
     manga_index: MangaIndex = None
+    _index_mtime: float = 0
+    # Progress state for the async /refresh-index endpoint. Polled by
+    # /manga-viewer/refresh-status. Kept as a plain dict so the JSON encoder
+    # can serialize it directly.
+    _refresh_status = {"running": False, "phase": "idle", "total": 0, "done": 0}
+    _refresh_lock = threading.Lock()
 
     @staticmethod
     def get_index_path():
@@ -65,15 +72,27 @@ class Repository:
 
     @staticmethod
     def load_index():
+        """Load index from disk. Caches by file mtime — subsequent calls with
+        an unchanged file skip the re-parse, so hot endpoints like /index and
+        /index/random no longer re-decode ~100MB of JSON on every request."""
         index_path = Repository.get_index_path()
-        if not os.path.exists(index_path):
-            Repository.manga_index = MangaIndex()
+        try:
+            mtime = os.path.getmtime(index_path)
+        except OSError:
+            if Repository.manga_index is None:
+                Repository.manga_index = MangaIndex()
+                Repository._index_mtime = 0
+            return
+        if Repository.manga_index is not None and mtime == Repository._index_mtime:
+            return
         try:
             with open(index_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             Repository.manga_index = MangaIndex.from_dict(data)
+            Repository._index_mtime = mtime
         except (json.JSONDecodeError, OSError):
             Repository.manga_index = MangaIndex()
+            Repository._index_mtime = 0
             with open(index_path, "w", encoding="utf-8") as f:
                 json.dump(
                     Repository.manga_index.to_dict(), f, ensure_ascii=False, indent=2
@@ -85,6 +104,10 @@ class Repository:
         os.makedirs(os.path.dirname(index_path), exist_ok=True)
         with open(index_path, "w", encoding="utf-8") as f:
             json.dump(Repository.manga_index.to_dict(), f, ensure_ascii=False, indent=2)
+        try:
+            Repository._index_mtime = os.path.getmtime(index_path)
+        except OSError:
+            Repository._index_mtime = 0
 
     @staticmethod
     def get_size_number(folder_path: str):
@@ -155,81 +178,177 @@ class Repository:
 
         return file_list
 
-    # refresh will sepend lots of time, so only run manually.
+    # refresh will spend lots of time, so only run manually.
     @staticmethod
     def refresh_index():
-        Repository.load_index()
+        status = Repository._refresh_status
+        with Repository._refresh_lock:
+            status.update({"running": True, "phase": "loading index", "total": 0, "done": 0})
+            try:
+                Repository.load_index()
 
-        path_id_map = {
-            folder_instance.path: folder_id
-            for folder_id, folder_instance in Repository.manga_index.folders.items()
-        }
+                path_id_map = {
+                    folder_instance.path: folder_id
+                    for folder_id, folder_instance in Repository.manga_index.folders.items()
+                }
 
-        # Scan source is derived from category main×sub combinations. Each
-        # combo dir's direct children are manga folders, and their category
-        # is known from the combo itself (no inference needed).
-        # existing: list of (manga_path, main_key, sub_key)
-        existing = []
-        existing_paths = []
-        # Normalize ignore entries the same way we normalize scanned paths, so
-        # the comparison is case-insensitive and separator/abspath-consistent
-        # (Windows filesystems are case-insensitive; users may enter forward
-        # slashes or relative paths).
-        ignore = {os.path.normcase(os.path.abspath(p))
-                  for p in Repository.get_ignore_scan_paths() if p}
-        for combo_dir, main_key, sub_key in Repository.get_scan_targets():
-            for a_name in os.listdir(combo_dir):
-                a_folder_path = os.path.join(combo_dir, a_name)
-                if (os.path.isdir(a_folder_path)
-                        and os.path.normcase(os.path.abspath(a_folder_path)) not in ignore):
-                    existing.append((a_folder_path, main_key, sub_key))
-                    existing_paths.append(a_folder_path)
+                # Scan source is derived from category main×sub combinations. Each
+                # combo dir's direct children are manga folders, and their category
+                # is known from the combo itself (no inference needed).
+                status["phase"] = "scanning disk"
+                existing = []
+                existing_paths = []
+                ignore = {os.path.normcase(os.path.abspath(p))
+                          for p in Repository.get_ignore_scan_paths() if p}
+                for combo_dir, main_key, sub_key in Repository.get_scan_targets():
+                    for a_name in os.listdir(combo_dir):
+                        a_folder_path = os.path.join(combo_dir, a_name)
+                        if (os.path.isdir(a_folder_path)
+                                and os.path.normcase(os.path.abspath(a_folder_path)) not in ignore):
+                            existing.append((a_folder_path, main_key, sub_key))
+                            existing_paths.append(a_folder_path)
 
-        for folder_id, folder_instance in list(Repository.manga_index.folders.items()):
-            if folder_instance.path not in existing_paths:
-                del Repository.manga_index.folders[folder_id]
+                # Prune deleted folders
+                for folder_id, folder_instance in list(Repository.manga_index.folders.items()):
+                    if folder_instance.path not in existing_paths:
+                        del Repository.manga_index.folders[folder_id]
 
-        for a_folder_path, main_key, sub_key in existing:
-            if a_folder_path in path_id_map:
-                # Existing folder: refresh metrics only, never overwrite tags
-                # (protects user's manual classification / labels).
-                folder_id = path_id_map[a_folder_path]
-                folder_instance = Repository.manga_index.folders[folder_id]
-                size, number = Repository.get_size_number(a_folder_path)
-                folder_instance.size = size
-                folder_instance.number = number
-                folder_instance.file_list = Repository.get_files_url_list(a_folder_path)
-            else:
-                # New folder: category is inferred from the combo dir it lives in.
-                size, number = Repository.get_size_number(a_folder_path)
-                folder_id = str(uuid.uuid4())
-                new_folder = Folder(
-                    id_=folder_id,
-                    name=os.path.basename(a_folder_path),
-                    path=a_folder_path,
-                    file_list=Repository.get_files_url_list(a_folder_path),
-                    size=size,
-                    number=number,
-                    initialized=bool(main_key or sub_key),
-                    tags=Tag(category_main=main_key, category_sub=sub_key),
+                status.update({"phase": "processing folders", "total": len(existing), "done": 0})
+                for i, (a_folder_path, main_key, sub_key) in enumerate(existing):
+                    if a_folder_path in path_id_map:
+                        # Existing folder: refresh metrics only, never overwrite tags
+                        # (protects user's manual classification / labels).
+                        folder_id = path_id_map[a_folder_path]
+                        folder_instance = Repository.manga_index.folders[folder_id]
+                        size, number = Repository.get_size_number(a_folder_path)
+                        folder_instance.size = size
+                        folder_instance.number = number
+                    else:
+                        # New folder: category is inferred from the combo dir it lives in.
+                        size, number = Repository.get_size_number(a_folder_path)
+                        folder_id = str(uuid.uuid4())
+                        new_folder = Folder(
+                            id_=folder_id,
+                            name=os.path.basename(a_folder_path),
+                            path=a_folder_path,
+                            size=size,
+                            number=number,
+                            initialized=bool(main_key or sub_key),
+                            tags=Tag(category_main=main_key, category_sub=sub_key),
+                        )
+                        Repository.manga_index.folders[folder_id] = new_folder
+                        path_id_map[a_folder_path] = folder_id
+                    status["done"] = i + 1
+
+                status["phase"] = "rebuilding metadata"
+                auth_set, cat_main_set, cat_sub_set = set(), set(), set()
+                total_files = 0
+                total_size = 0
+                for folder_instance in Repository.manga_index.folders.values():
+                    for a_auth in folder_instance.tags.auth:
+                        auth_set.add(a_auth)
+                    if folder_instance.tags.category_main:
+                        cat_main_set.add(folder_instance.tags.category_main)
+                    if folder_instance.tags.category_sub:
+                        cat_sub_set.add(folder_instance.tags.category_sub)
+                    total_files += folder_instance.number
+                    total_size += folder_instance.size
+                Repository.manga_index.metadata = Metadata(
+                    auth=sorted(auth_set),
+                    category_main=sorted(cat_main_set),
+                    category_sub=sorted(cat_sub_set),
+                    total_folders=len(Repository.manga_index.folders),
+                    total_files=total_files,
+                    total_size=total_size,
                 )
-                Repository.manga_index.folders[folder_id] = new_folder
-                path_id_map[a_folder_path] = folder_id
 
-        auth_set, cat_main_set, cat_sub_set = set(), set(), set()
-        for folder_instance in Repository.manga_index.folders.values():
-            for a_auth in folder_instance.tags.auth:
-                auth_set.add(a_auth)
-            if folder_instance.tags.category_main:
-                cat_main_set.add(folder_instance.tags.category_main)
-            if folder_instance.tags.category_sub:
-                cat_sub_set.add(folder_instance.tags.category_sub)
-        Repository.manga_index.metadata = Metadata(
-            auth=sorted(auth_set),
-            category_main=sorted(cat_main_set),
-            category_sub=sorted(cat_sub_set),
-        )
-        Repository.save_index()
+                status["phase"] = "saving"
+                Repository.save_index()
+            finally:
+                status.update({"running": False, "phase": "idle"})
+
+    # Scan every indexed folder, move ones with zero manga files to
+    # <delete_paths>, and drop them from the index. Progress is reported
+    # through _refresh_status so the same /refresh-status endpoint powers
+    # both refresh and clean-empty.
+    @staticmethod
+    def clean_empty_folders():
+        status = Repository._refresh_status
+        with Repository._refresh_lock:
+            status.update({"running": True, "phase": "clean: loading index",
+                           "total": 0, "done": 0})
+            moved = []
+            skipped = []
+            try:
+                Repository.load_index()
+                delete_root = settings_manager.get_setting('paths.delete_paths', '')
+                if not delete_root:
+                    status["phase"] = "clean: delete_paths not configured"
+                    return {"moved": [], "skipped": [], "error": "delete_paths not configured"}
+                delete_root_abs = os.path.abspath(delete_root)
+                os.makedirs(delete_root_abs, exist_ok=True)
+
+                items = list(Repository.manga_index.folders.items())
+                status.update({"phase": "clean: scanning", "total": len(items), "done": 0})
+
+                for i, (folder_id, folder) in enumerate(items):
+                    status["done"] = i + 1
+                    try:
+                        if not os.path.isdir(folder.path):
+                            del Repository.manga_index.folders[folder_id]
+                            moved.append({"id": folder_id, "path": folder.path, "reason": "missing on disk"})
+                            continue
+                        # Empty = no files of ANY extension anywhere below the
+                        # folder (subdirs count too). Whitelisted-media-only
+                        # counting would delete folders that contain e.g. .wmv
+                        # / .flv videos or .zip archives.
+                        has_any_file = False
+                        for _, _, filenames in os.walk(folder.path):
+                            if filenames:
+                                has_any_file = True
+                                break
+                        if has_any_file:
+                            continue
+                        dst = os.path.join(delete_root_abs, os.path.basename(folder.path))
+                        counter = 1
+                        base_name = os.path.basename(folder.path)
+                        while os.path.exists(dst):
+                            dst = os.path.join(delete_root_abs, f"{base_name}_empty_{counter}")
+                            counter += 1
+                        import shutil
+                        shutil.move(folder.path, dst)
+                        del Repository.manga_index.folders[folder_id]
+                        moved.append({"id": folder_id, "path": folder.path, "moved_to": dst})
+                    except OSError as e:
+                        skipped.append({"id": folder_id, "path": folder.path, "error": str(e)})
+
+                status["phase"] = "clean: rebuilding metadata"
+                auth_set, cat_main_set, cat_sub_set = set(), set(), set()
+                total_files = 0
+                total_size = 0
+                for folder_instance in Repository.manga_index.folders.values():
+                    for a_auth in folder_instance.tags.auth:
+                        auth_set.add(a_auth)
+                    if folder_instance.tags.category_main:
+                        cat_main_set.add(folder_instance.tags.category_main)
+                    if folder_instance.tags.category_sub:
+                        cat_sub_set.add(folder_instance.tags.category_sub)
+                    total_files += folder_instance.number
+                    total_size += folder_instance.size
+                Repository.manga_index.metadata = Metadata(
+                    auth=sorted(auth_set),
+                    category_main=sorted(cat_main_set),
+                    category_sub=sorted(cat_sub_set),
+                    total_folders=len(Repository.manga_index.folders),
+                    total_files=total_files,
+                    total_size=total_size,
+                )
+
+                status["phase"] = "clean: saving"
+                Repository.save_index()
+                return {"moved": moved, "skipped": skipped}
+            finally:
+                status.update({"running": False, "phase": "idle"})
 
     @staticmethod
     def update_folder(folder_id: str, new_folder_instance: Folder):

@@ -8,11 +8,13 @@ api = Namespace("")
 
 
 def _validate_categories(updates: dict):
-    """Validate category config on PUT:
+    """Validate + provision category dirs on PUT:
       - Every category must have a non-empty key AND a non-empty path
         (path drives the on-disk folder; an empty path corrupts moves).
-      - If root_path is known, each path must exist on disk:
-          main: <root>/<main.path> ; sub: <root>/<some main.path>/<sub.path>
+      - Missing main dirs are created (<root>/<main.path>).
+      - A sub with no matching dir under any main gets one created under
+        the first main (so validation passes without forcing the user to
+        `mkdir` before saving).
     Returns an error string, or None if valid.
     """
     if "categories" not in updates:
@@ -24,7 +26,6 @@ def _validate_categories(updates: dict):
     mains = [settings_manager.normalize_category(c) for c in cats.get("main", [])]
     subs = [settings_manager.normalize_category(c) for c in cats.get("sub", [])]
 
-    # Required fields (structural — checked regardless of root_path).
     for label, items in (("main", mains), ("sub", subs)):
         for c in items:
             if not c["key"].strip():
@@ -34,19 +35,19 @@ def _validate_categories(updates: dict):
 
     root = merged.get("paths", {}).get("root_path", "")
     if not root:
-        return None  # can't validate existence without a root
+        return None
 
-    main_paths = [m["path"] for m in mains if m["path"]]
-    for m in mains:
-        if not os.path.isdir(os.path.join(root, m["path"])):
-            return f"main category '{m['key']}': directory not found at {os.path.join(root, m['path'])}"
-    for s in subs:
-        exists_under_any = any(
-            os.path.isdir(os.path.join(root, mp, s["path"])) for mp in main_paths
-        )
-        if not exists_under_any:
-            return (f"sub category '{s['key']}': directory '{s['path']}' not found "
-                    f"under any main category folder")
+    try:
+        for m in mains:
+            os.makedirs(os.path.join(root, m["path"]), exist_ok=True)
+        main_paths = [m["path"] for m in mains if m["path"]]
+        for s in subs:
+            if any(os.path.isdir(os.path.join(root, mp, s["path"])) for mp in main_paths):
+                continue
+            if main_paths:
+                os.makedirs(os.path.join(root, main_paths[0], s["path"]), exist_ok=True)
+    except OSError as e:
+        return f"failed to create category directory: {e}"
     return None
 
 

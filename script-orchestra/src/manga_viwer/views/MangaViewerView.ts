@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import type { FolderModel } from '../service/Model'
 import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, RefreshLeft, Folder, EditPen, Star, StarFilled } from '@element-plus/icons-vue'
-import { openFolder, refreshIndex, fetchSettings, updateFolderModels } from '@/manga_viwer/service/Service'
+import { openFolder, fetchSettings, updateFolderModels, incReadCount, resetReadCount } from '@/manga_viwer/service/Service'
 import * as pdfjsLib from 'pdfjs-dist'
 // Import worker as URL
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -93,7 +93,18 @@ export default defineComponent({
     // the user hits the reshuffle control.
     const randomSortEnabled = ref(true)
     const randomSeed = ref(0)
+    // When on, the folder list is restricted to unread items (read_count == 0).
+    // This is an independent filter — it does not react to sort changes or to
+    // clicks on 🎲 Random. The 🎲 Random Unread button is a convenience that
+    // turns this on AND kicks a reshuffle.
+    const unreadOnlyMode = ref(false)
     function reshuffle() {
+      randomSortEnabled.value = true
+      randomSeed.value++
+    }
+    function reshuffleUnread() {
+      unreadOnlyMode.value = true
+      randomSortEnabled.value = true
       randomSeed.value++
     }
 
@@ -152,6 +163,9 @@ export default defineComponent({
       if (showFavoritesOnly.value) {
         base = base.filter(f => f.favorite)
       }
+      if (unreadOnlyMode.value) {
+        base = base.filter(f => (f.read_count ?? 0) === 0)
+      }
       if (nameSortEnabled.value) {
         base = [...base].sort((a, b) => a.name.localeCompare(b.name))
       } else if (sizeSortEnabled.value) {
@@ -183,8 +197,13 @@ export default defineComponent({
       currentPage.value = 1
       fetchFilesForCurrentPage()
     })
+    watch(unreadOnlyMode, () => {
+      currentPage.value = 1
+      fetchFilesForCurrentPage()
+    })
     // Turning on name/size sort switches random off; turning both off brings
-    // random back as the fallback ordering.
+    // random back as the fallback ordering. The "unread only" filter is
+    // orthogonal (like ★ fav) and stays put across sort changes.
     watch([nameSortEnabled, sizeSortEnabled], ([n, s]) => {
       randomSortEnabled.value = !n && !s
     })
@@ -390,12 +409,27 @@ export default defineComponent({
       }
     }
 
+    async function handleResetReadCount(f: FolderModel) {
+      const prev = f.read_count ?? 0
+      f.read_count = 0
+      try {
+        await resetReadCount(f.id)
+      } catch (e) {
+        f.read_count = prev
+        console.error('resetReadCount failed:', e)
+      }
+    }
+
     function openModal(f: FolderModel) {
       dialogFolder.value = f
       dialogVisible.value = true
       if (!f.files || f.files.length === 0) {
         store.fetchFolderFiles(f)
       }
+      // Bump read_count locally + persist. Fire-and-forget — a network hiccup
+      // shouldn't block opening the reader.
+      f.read_count = (f.read_count ?? 0) + 1
+      incReadCount(f.id).catch((e) => console.error('incReadCount failed:', e))
       // Pre-render PDFs
       nextTick(async () => {
         const pdfs = (f.files || []).filter(isPdf)
@@ -613,25 +647,7 @@ export default defineComponent({
       }
     }
 
-    // Refresh Index
-    // -------------------------------------------------------------------------------------------------------
-    const refreshLoading = ref(false)
-    async function handleRefreshIndex() {
-      refreshLoading.value = true
-      try {
-        await refreshIndex()
-        ElMessage.success('索引刷新成功')
-        // Reload the index after refresh
-        await store.loadIndex()
-        currentPage.value = 1
-        fetchFilesForCurrentPage()
-      } catch (e) {
-        ElMessage.error('索引刷新失败')
-        console.error('Failed to refresh index:', e)
-      } finally {
-        refreshLoading.value = false
-      }
-    }
+    // Refresh Index moved to SettingsView.
 
     // Import Sidebar
     // -------------------------------------------------------------------------------------------------------
@@ -723,6 +739,8 @@ export default defineComponent({
       nameSortEnabled,
       randomSortEnabled,
       reshuffle,
+      reshuffleUnread,
+      unreadOnlyMode,
       // Applying
       applyChanges,
       // Deletion
@@ -730,9 +748,7 @@ export default defineComponent({
       unmarkForDeletion,
       // Open Folder
       handleOpenFolder,
-      // Refresh Index
-      handleRefreshIndex,
-      refreshLoading,
+      handleResetReadCount,
       // Icons
       Delete,
       RefreshLeft,

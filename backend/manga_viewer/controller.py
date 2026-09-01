@@ -3,6 +3,8 @@ from flask import request, jsonify, send_file, make_response
 import os
 import shutil
 import random
+import threading
+import traceback
 from extensions import restx_api
 from manga_viewer.repository import Repository
 from manga_viewer.settings_manager import settings_manager
@@ -16,21 +18,18 @@ api = Namespace("")
 class MangaIndexResource(Resource):
     def get(self):
         Repository.load_index()
-        index_dict = Repository.manga_index.to_dict()
-        for folder_id, folder_data in index_dict.get("folders", {}).items():
-            folder_data["file_list"] = []
-        return index_dict
+        return Repository.manga_index.to_dict()
 
 
 @api.route("/manga-viewer/files-url-list")
 class FolderScanResource(Resource):
     def get(self):
         folder_id = request.args.get("folderId", "").strip()
-        if folder_id not in Repository.manga_index.folders:
+        Repository.load_index()
+        folder = Repository.manga_index.folders.get(folder_id)
+        if folder is None:
             return []
-
-        file_url_list = Repository.manga_index.folders[folder_id].file_list
-        return file_url_list
+        return Repository.get_files_url_list(folder.path)
 
 
 @api.route("/manga-viewer/file/<path:filepath>")
@@ -69,10 +68,7 @@ class MangaIndexRandomResource(Resource):
         # Randomly select folders
         random_folders = random.sample(all_folders, count) if count > 0 else []
 
-        # Convert to dict
         folders_dict = {f.id: f.to_dict() for f in random_folders}
-        for folder_data in folders_dict.values():
-            folder_data["file_list"] = []
 
         result = {
             "folders": folders_dict,
@@ -327,12 +323,81 @@ class OpenFolderResource(Resource):
 @api.route("/manga-viewer/refresh-index")
 class RefreshIndexResource(Resource):
     def post(self):
-        """Refresh manga index by scanning folders"""
-        try:
-            Repository.refresh_index()
-            return {"message": "Index refreshed successfully"}, 200
-        except Exception as e:
-            return {"error": f"Failed to refresh index: {str(e)}"}, 500
+        """Kick off a background index refresh. Poll /refresh-status for progress."""
+        if Repository._refresh_status.get("running"):
+            return {"error": "refresh already running"}, 409
+
+        def run():
+            try:
+                Repository.refresh_index()
+            except Exception:
+                print(traceback.format_exc(), flush=True)
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"message": "refresh started"}, 202
+
+
+@api.route("/manga-viewer/refresh-status")
+class RefreshStatusResource(Resource):
+    def get(self):
+        return Repository._refresh_status
+
+
+@api.route("/manga-viewer/stats")
+class StatsResource(Resource):
+    def get(self):
+        Repository.load_index()
+        md = Repository.manga_index.metadata
+        return {
+            "total_folders": md.total_folders if md else 0,
+            "total_files": md.total_files if md else 0,
+            "total_size": md.total_size if md else 0,
+        }
+
+
+@api.route("/manga-viewer/folder/<string:folder_id>/read-inc")
+class FolderReadIncResource(Resource):
+    def post(self, folder_id: str):
+        """Increment a folder's read_count by 1. Called every time the user
+        opens the reading modal for that folder."""
+        Repository.load_index()
+        folder = Repository.manga_index.folders.get(folder_id)
+        if folder is None:
+            return {"error": "folder not found"}, 404
+        folder.read_count = int(getattr(folder, "read_count", 0)) + 1
+        Repository.save_index()
+        return {"id": folder_id, "read_count": folder.read_count}, 200
+
+
+@api.route("/manga-viewer/folder/<string:folder_id>/read-reset")
+class FolderReadResetResource(Resource):
+    def post(self, folder_id: str):
+        """Reset a folder's read_count to 0."""
+        Repository.load_index()
+        folder = Repository.manga_index.folders.get(folder_id)
+        if folder is None:
+            return {"error": "folder not found"}, 404
+        folder.read_count = 0
+        Repository.save_index()
+        return {"id": folder_id, "read_count": 0}, 200
+
+
+@api.route("/manga-viewer/clean-empty-folders")
+class CleanEmptyFoldersResource(Resource):
+    def post(self):
+        """Kick off a background sweep that moves every indexed folder with
+        zero manga files into delete_paths. Poll /refresh-status for progress."""
+        if Repository._refresh_status.get("running"):
+            return {"error": "another index task is already running"}, 409
+
+        def run():
+            try:
+                Repository.clean_empty_folders()
+            except Exception:
+                print(traceback.format_exc(), flush=True)
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"message": "clean-empty-folders started"}, 202
 
 
 # DEPRECATED: Import feature. manga_classifier + duplicate_finder handle intake

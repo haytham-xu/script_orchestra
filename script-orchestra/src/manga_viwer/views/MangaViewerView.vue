@@ -13,7 +13,6 @@
           <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>
           -->
           <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
-          <el-button type="warning" size="small" @click="handleRefreshIndex" :loading="refreshLoading">🔄 Refresh</el-button>
         </div>
         <div class="search-tags">
           <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
@@ -24,7 +23,9 @@
       </div>
       <div class="header-right">
         <el-switch v-model="showFavoritesOnly" inactive-text="★ fav" active-text="" />
+        <el-switch v-model="unreadOnlyMode" inactive-text="👁 unread" active-text="" />
         <el-button size="small" title="Reshuffle random order" @click="reshuffle">🎲 Random</el-button>
+        <el-button size="small" :type="unreadOnlyMode ? 'success' : 'default'" title="Random over unread manga only" @click="reshuffleUnread">🎲 Random Unread</el-button>
         <el-button class="apply-button" type="primary" @click="applyChanges">
           Apply
           <span v-if="store.deleteIdSet.size > 0" style="margin-left: 5px;">
@@ -98,6 +99,18 @@
             <!-- size / number -->
             <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024/ 1024) }} MB</span></div>
             <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
+            <div class="tags-group">
+              <span class="label">Read:</span>
+              <span class="label read-count" :class="{ zero: !(f.read_count) }">{{ f.read_count ?? 0 }}</span>
+              <el-button
+                v-if="(f.read_count ?? 0) > 0"
+                size="small"
+                text
+                class="reset-read-btn"
+                title="Reset read count to 0"
+                @click.stop="handleResetReadCount(f)"
+              >↺</el-button>
+            </div>
 
             <!-- mosaic -->
             <div class="tags-group">
@@ -550,5 +563,25 @@
 .apply-button {
   margin-left: 20px;
   width: 120px;
+}
+
+.read-count {
+  font-weight: 600;
+  color: #67C23A;
+}
+.read-count.zero {
+  color: #909399;
+  font-weight: 400;
+}
+.reset-read-btn {
+  margin-left: 4px;
+  padding: 0 4px;
+  min-height: unset;
+  height: 20px;
+  font-size: 14px;
+  color: #909399;
+}
+.reset-read-btn:hover {
+  color: #F56C6C;
 }
 </style>

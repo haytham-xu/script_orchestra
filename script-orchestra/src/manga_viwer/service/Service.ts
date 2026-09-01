@@ -40,3 +40,36 @@ export async function openFolder(folderId: string): Promise<void> {
 export async function refreshIndex(): Promise<void> {
   await postRequest('/manga-viewer/refresh-index', {}, {})
 }
+
+export interface RefreshStatus {
+  running: boolean
+  phase: string
+  total: number
+  done: number
+}
+
+export async function fetchRefreshStatus(): Promise<RefreshStatus> {
+  return await getRequest<RefreshStatus>('/manga-viewer/refresh-status')
+}
+
+export interface MangaStats {
+  total_folders: number
+  total_files: number
+  total_size: number
+}
+
+export async function fetchStats(): Promise<MangaStats> {
+  return await getRequest<MangaStats>('/manga-viewer/stats')
+}
+
+export async function incReadCount(folderId: string): Promise<{ id: string; read_count: number }> {
+  return await postRequest<{ id: string; read_count: number }>(`/manga-viewer/folder/${encodeURIComponent(folderId)}/read-inc`, {}, {})
+}
+
+export async function resetReadCount(folderId: string): Promise<{ id: string; read_count: number }> {
+  return await postRequest<{ id: string; read_count: number }>(`/manga-viewer/folder/${encodeURIComponent(folderId)}/read-reset`, {}, {})
+}
+
+export async function cleanEmptyFolders(): Promise<void> {
+  await postRequest('/manga-viewer/clean-empty-folders', {}, {})
+}

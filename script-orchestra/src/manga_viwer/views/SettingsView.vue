@@ -9,6 +9,35 @@
     </div>
 
     <div class="settings-content" v-if="settings">
+      <!-- Index Stats & Maintenance -->
+      <el-card class="settings-card">
+        <template #header>
+          <div class="card-header">
+            <span>📊 Index Stats & Maintenance</span>
+          </div>
+        </template>
+        <div class="stats-row">
+          <div class="stat-item">
+            <div class="stat-label">Total Folders</div>
+            <div class="stat-value">{{ stats?.total_folders ?? '-' }}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Total Files</div>
+            <div class="stat-value">{{ stats?.total_files ?? '-' }}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Total Size</div>
+            <div class="stat-value">{{ totalSizeHuman }}</div>
+          </div>
+        </div>
+        <div class="refresh-row">
+          <el-button type="warning" @click="handleRefreshIndex" :loading="refreshLoading">🔄 Refresh Index</el-button>
+          <el-button type="danger" @click="handleCleanEmpty" :loading="refreshLoading">🧹 Clean Empty</el-button>
+          <span v-if="refreshLoading && refreshProgress" class="refresh-progress">{{ refreshProgress }}</span>
+          <span class="form-hint">Refresh Disk and refresh index; Clean Empty, move folders without manga files to delete_paths</span>
+        </div>
+      </el-card>
+
       <!-- DEPRECATED: Random Settings — the standalone Random page is hidden,
            so its count/enable config is hidden too. Kept (commented) not removed.
       <el-card class="settings-card">
@@ -188,5 +217,40 @@ h4 {
   font-size: 14px;
   font-weight: 600;
   color: #606266;
+}
+
+.stats-row {
+  display: flex;
+  gap: 24px;
+  padding: 8px 4px 16px 4px;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  min-width: 140px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.refresh-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.refresh-progress {
+  color: #E6A23C;
+  font-size: 13px;
 }
 </style>
