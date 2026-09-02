@@ -36,6 +36,7 @@ import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
+import ProxyForwardView from '@/proxy_forward/views/ProxyForwardView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -215,6 +216,11 @@ const router = createRouter({
       path: '/assistant',
       name: 'assistant',
       component: AssistantView
+    },
+    {
+      path: '/proxy-forward',
+      name: 'proxy-forward',
+      component: ProxyForwardView
     },
     {
       path: '/file-git',

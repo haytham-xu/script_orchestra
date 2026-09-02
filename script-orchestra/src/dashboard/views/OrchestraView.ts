@@ -26,6 +26,7 @@ const TOOLS: Tool[] = [
   { key: 'knowledge-vault',        name: 'Knowledge Vault',        path: '/knowledge-vault' },
   { key: 'translator',             name: 'Translator',             path: '/translator' },
   { key: 'claude-bridge',          name: 'Claude Bridge',          path: '/claude-bridge' },
+  { key: 'proxy-forward',          name: 'Proxy Forward',          path: '/proxy-forward' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))

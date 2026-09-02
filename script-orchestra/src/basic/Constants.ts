@@ -34,4 +34,6 @@ export const TRANSLATOR_ENDPOINT = '/translator'
 
 export const CLAUDE_BRIDGE_ENDPOINT = '/claude-bridge'
 
+export const PROXY_FORWARD_ENDPOINT = '/proxy-forward'
+
 export const DASHBOARD_ENDPOINT = '/dashboard'

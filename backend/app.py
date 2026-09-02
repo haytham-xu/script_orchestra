@@ -51,6 +51,9 @@ from translator.blueprint import blueprint as translator_blueprint
 from translator import repository as translator_repo
 from translator import websocket_service as translator_ws
 
+# Import proxy forward tool
+from proxy_forward.blueprint import blueprint as proxy_forward_blueprint
+
 # Import dashboard layout module (Launchpad-style layout persistence)
 from dashboard.blueprint import blueprint as dashboard_blueprint
 
@@ -137,6 +140,9 @@ def create_app() -> Flask:
 
     # Register translator blueprint
     app.register_blueprint(translator_blueprint)
+
+    # Register proxy forward blueprint
+    app.register_blueprint(proxy_forward_blueprint)
 
     # Register dashboard layout blueprint
     app.register_blueprint(dashboard_blueprint)

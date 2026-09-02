@@ -162,4 +162,12 @@ export const toolIcons: Record<string, string> = {
       <rect x="26" y="44" width="12" height="4" rx="2" fill="#fed7aa"/>
       <path d="M32 40v4" stroke="#fed7aa" stroke-width="2.5" stroke-linecap="round"/>
     </svg>`,
+  'proxy-forward': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0f766e"/>
+      <path d="M18 22h11m0 0l-4-4m4 4l-4 4" stroke="#99f6e4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M46 42H35m0 0l4-4m-4 4l4 4" stroke="#99f6e4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="22" y="24" width="20" height="16" rx="4" fill="#fff"/>
+      <circle cx="32" cy="32" r="3" fill="#0f766e"/>
+    </svg>`,
 }

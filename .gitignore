@@ -73,6 +73,9 @@ backend/dashboard/layout.json
 backend/translator/settings.json
 backend/translator/*.db
 
+# Proxy Forward runtime storage
+backend/proxy_forward/settings.json
+
 # Chinese-language design/handoff docs (process artifacts, keep local only)
 backend/translator/DESIGN.md
 backend/dashboard/DESIGN.md
