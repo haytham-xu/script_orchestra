@@ -5,6 +5,8 @@
       <h2 class="tv-title">All Tabs</h2>
       <div class="tv-header-actions">
         <el-button @click="loadTabs" :loading="loading">Refresh</el-button>
+        <el-button @click="mergeAll">Merge windows</el-button>
+        <el-button @click="groupByDomain">Group by domain</el-button>
         <el-button type="danger" :disabled="selectedTabIds.size === 0" @click="closeSelected">
           Close selected ({{ selectedTabIds.size }})
         </el-button>

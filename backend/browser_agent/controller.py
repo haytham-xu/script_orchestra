@@ -131,6 +131,26 @@ class TabDedupCloseResource(Resource):
         return result, 200
 
 
+@ns.route("/tab-dedup/merge-tabs")
+class TabDedupMergeResource(Resource):
+    def post(self):
+        """Move all tabs into a single window (the one with the most tabs)."""
+        result, err = agent_bridge.enqueue_and_wait("merge_tabs")
+        if err:
+            return {"error": err}, 504
+        return result, 200
+
+
+@ns.route("/tab-dedup/group-tabs")
+class TabDedupGroupResource(Resource):
+    def post(self):
+        """Reorder tabs in the focused window so same-domain tabs are adjacent."""
+        result, err = agent_bridge.enqueue_and_wait("group_tabs_by_domain")
+        if err:
+            return {"error": err}, 504
+        return result, 200
+
+
 # --- Download SSMH --------------------------------------------------------
 
 @ns.route("/download-ssmh/scan")

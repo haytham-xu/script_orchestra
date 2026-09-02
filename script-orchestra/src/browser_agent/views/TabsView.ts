@@ -1,7 +1,7 @@
 import { defineComponent, ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listTabs, closeTabs, type TabInfo } from '@/browser_agent/service/BrowserAgentService'
+import { listTabs, closeTabs, mergeTabs, groupTabsByDomain, type TabInfo } from '@/browser_agent/service/BrowserAgentService'
 
 type SortKey = 'window' | 'title' | 'url'
 
@@ -105,6 +105,32 @@ export default defineComponent({
       }
     }
 
+    async function mergeAll() {
+      busy.value = true
+      try {
+        const res = await mergeTabs()
+        ElMessage.success(`Merged ${res.moved} tab(s) into one window`)
+        await loadTabs()
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e.message || 'Failed to merge tabs')
+      } finally {
+        busy.value = false
+      }
+    }
+
+    async function groupByDomain() {
+      busy.value = true
+      try {
+        const res = await groupTabsByDomain()
+        ElMessage.success(`Grouped ${res.grouped} tab(s) by domain`)
+        await loadTabs()
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e.message || 'Failed to group tabs')
+      } finally {
+        busy.value = false
+      }
+    }
+
     async function closeSingle(id: number) {
       busy.value = true
       try {
@@ -132,6 +158,7 @@ export default defineComponent({
       allVisibleSelected, someVisibleSelected,
       toggleTab, toggleAllVisible, clearSelection,
       loadTabs, closeSelected, closeSingle, hideFavicon,
+      mergeAll, groupByDomain,
       goBack: () => router.push('/browser-agent'),
     }
   }

@@ -52,6 +52,16 @@ export async function closeTabs(tabIds: number[]): Promise<{ closed: number }> {
     `${BROWSER_AGENT_ENDPOINT}/tab-dedup/close-tabs`, {}, { tab_ids: tabIds })
 }
 
+export async function mergeTabs(): Promise<{ moved: number; windowId: number | null }> {
+  return postRequest<{ moved: number; windowId: number | null }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-dedup/merge-tabs`, {}, {})
+}
+
+export async function groupTabsByDomain(): Promise<{ grouped: number; windowId: number | null }> {
+  return postRequest<{ grouped: number; windowId: number | null }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-dedup/group-tabs`, {}, {})
+}
+
 export interface SendTabsResult {
   message: string
   added: number
