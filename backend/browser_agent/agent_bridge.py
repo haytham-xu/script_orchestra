@@ -17,6 +17,8 @@ _lock = threading.Lock()
 _pending_commands: List[Dict[str, Any]] = []
 _awaiting_results: Dict[str, Dict[str, Any]] = {}
 _last_extension_seen_at: float = 0.0
+_extension_version: Optional[str] = None
+_extension_capabilities: List[str] = []
 
 
 def enqueue_and_wait(cmd_type: str, params: Optional[dict] = None,
@@ -53,10 +55,15 @@ def enqueue_and_wait(cmd_type: str, params: Optional[dict] = None,
     return entry["result"], None
 
 
-def drain_pending() -> List[Dict[str, Any]]:
-    global _last_extension_seen_at
+def drain_pending(
+    extension_version: Optional[str] = None,
+    capabilities: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    global _last_extension_seen_at, _extension_version, _extension_capabilities
     with _lock:
         _last_extension_seen_at = time.time()
+        _extension_version = (extension_version or "").strip() or None
+        _extension_capabilities = sorted(set(capabilities or []))
         out = list(_pending_commands)
         _pending_commands.clear()
     return out
@@ -79,4 +86,6 @@ def extension_status() -> Dict[str, Any]:
             "last_seen_at": _last_extension_seen_at,
             "seconds_since_seen": (time.time() - _last_extension_seen_at) if _last_extension_seen_at else None,
             "pending_commands": len(_pending_commands),
+            "extension_version": _extension_version,
+            "capabilities": list(_extension_capabilities),
         }

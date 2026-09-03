@@ -1,6 +1,19 @@
-﻿import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/RequestService'
+﻿import { getRequest, postRequest, putRequest, patchRequest, deleteRequest } from '@/basic/RequestService'
 import { BROWSER_AGENT_ENDPOINT } from '@/basic/Constants'
-import type { BrowserTask, BrowserAgentSettings } from './Model'
+import type {
+  BrowserTask,
+  BrowserAgentSettings,
+  TabArchiveArchiveResult,
+  TabArchiveHealthCheckJob,
+  TabArchiveHealthCheckResult,
+  TabArchiveLabel,
+  TabArchiveRestoreResult,
+  TabArchiveSortBy,
+  TabArchiveSortOrder,
+  TabArchiveSafePreview,
+  TabArchiveSnapshot,
+  TabArchiveRecord,
+} from './Model'
 
 export async function getTasks(): Promise<BrowserTask[]> {
   const res = await getRequest<{ tasks: BrowserTask[] }>(`${BROWSER_AGENT_ENDPOINT}/tasks`)
@@ -47,8 +60,14 @@ export async function listTabs(): Promise<TabInfo[]> {
   return res.tabs || []
 }
 
-export async function closeTabs(tabIds: number[]): Promise<{ closed: number }> {
-  return postRequest<{ closed: number }>(
+export interface CloseTabsResult {
+  closed: number
+  closed_ids?: number[]
+  failed?: Array<{ tab_id: number; error: string }>
+}
+
+export async function closeTabs(tabIds: number[]): Promise<CloseTabsResult> {
+  return postRequest<CloseTabsResult>(
     `${BROWSER_AGENT_ENDPOINT}/tab-dedup/close-tabs`, {}, { tab_ids: tabIds })
 }
 
@@ -60,6 +79,143 @@ export async function mergeTabs(): Promise<{ moved: number; windowId: number | n
 export async function groupTabsByDomain(): Promise<{ grouped: number; windowId: number | null }> {
   return postRequest<{ grouped: number; windowId: number | null }>(
     `${BROWSER_AGENT_ENDPOINT}/tab-dedup/group-tabs`, {}, {})
+}
+
+// --- Tab archive ----------------------------------------------------------
+
+export async function tabArchiveSnapshot(params: {
+  q?: string
+  scope?: 'all' | 'live' | 'archive'
+  include_live_urls?: boolean
+  sort_by?: TabArchiveSortBy
+  sort_order?: TabArchiveSortOrder
+  semantic?: boolean
+  semantic_top_k?: number
+} = {}): Promise<TabArchiveSnapshot> {
+  return getRequest<TabArchiveSnapshot>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/snapshot`, params)
+}
+
+export async function tabArchiveSafePreview(includePinned = false): Promise<TabArchiveSafePreview> {
+  return postRequest<TabArchiveSafePreview>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-safe-preview`, {}, {
+      include_pinned: includePinned,
+    })
+}
+
+export async function tabArchiveSelected(tabIds: number[]): Promise<TabArchiveArchiveResult> {
+  return postRequest<TabArchiveArchiveResult>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-selected`, {}, {
+      tab_ids: tabIds,
+    })
+}
+
+export async function tabArchiveSafeRun(includePinned = false): Promise<TabArchiveArchiveResult> {
+  return postRequest<TabArchiveArchiveResult>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-safe-run`, {}, {
+      include_pinned: includePinned,
+    })
+}
+
+export async function tabArchiveRestore(
+  recordIds: number[],
+  destination: 'new_window' | 'current_window',
+): Promise<TabArchiveRestoreResult> {
+  return postRequest<TabArchiveRestoreResult>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/restore`, {}, {
+      record_ids: recordIds,
+      destination,
+    })
+}
+
+export async function tabArchiveUpdateRecord(
+  recordId: number,
+  patch: { title?: string; comment?: string; eternal?: boolean },
+): Promise<TabArchiveRecord> {
+  const res = await patchRequest<{ record: TabArchiveRecord }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/records/${recordId}`,
+    {},
+    patch,
+  )
+  return res.record
+}
+
+export async function tabArchiveDeleteRecord(recordId: number): Promise<{ deleted: boolean }> {
+  return deleteRequest<{ deleted: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/records/${recordId}`)
+}
+
+export async function tabArchiveSetRecordLabels(
+  recordId: number,
+  labelIds: number[],
+): Promise<TabArchiveRecord> {
+  const res = await putRequest<{ record: TabArchiveRecord }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/records/${recordId}/labels`,
+    {},
+    { label_ids: labelIds },
+  )
+  return res.record
+}
+
+export async function tabArchiveListLabels(): Promise<TabArchiveLabel[]> {
+  const res = await getRequest<{ labels: TabArchiveLabel[] }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/labels`)
+  return res.labels || []
+}
+
+export async function tabArchiveCreateLabel(name: string): Promise<TabArchiveLabel> {
+  const res = await postRequest<{ label: TabArchiveLabel }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/labels`,
+    {},
+    { name },
+  )
+  return res.label
+}
+
+export async function tabArchiveDeleteLabel(labelId: number): Promise<{ deleted: boolean }> {
+  return deleteRequest<{ deleted: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/labels/${labelId}`)
+}
+
+export async function tabArchiveHealthCheck(payload: {
+  record_ids?: number[]
+  limit?: number
+} = {}): Promise<TabArchiveHealthCheckResult> {
+  return postRequest<TabArchiveHealthCheckResult>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check`,
+    {},
+    payload,
+  )
+}
+
+export async function tabArchiveHealthCheckStart(payload: {
+  record_ids?: number[]
+  limit?: number
+  batch_size?: number
+} = {}): Promise<{ job: TabArchiveHealthCheckJob }> {
+  return postRequest<{ job: TabArchiveHealthCheckJob }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/start`,
+    {},
+    payload,
+  )
+}
+
+export async function tabArchiveHealthCheckStatus(jobId?: string): Promise<{
+  exists: boolean
+  job: TabArchiveHealthCheckJob | null
+}> {
+  const params = jobId ? { job_id: jobId } : {}
+  return getRequest<{ exists: boolean; job: TabArchiveHealthCheckJob | null }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/status`,
+    params,
+  )
+}
+
+export async function tabArchiveHealthCheckCancel(jobId?: string): Promise<{
+  exists: boolean
+  job: TabArchiveHealthCheckJob | null
+}> {
+  return postRequest<{ exists: boolean; job: TabArchiveHealthCheckJob | null }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/cancel`,
+    {},
+    jobId ? { job_id: jobId } : {},
+  )
 }
 
 export interface SendTabsResult {

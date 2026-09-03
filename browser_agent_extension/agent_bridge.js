@@ -5,6 +5,16 @@
 // executeCommand.
 
 const BACKEND_BASE = 'http://127.0.0.1:50001';
+const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+const BRIDGE_CAPABILITIES = [
+  'list_tabs',
+  'close_tabs',
+  'open_tabs',
+  'focus_tabs',
+  'merge_tabs',
+  'group_tabs_by_domain',
+  'get_cookies_for_domain',
+];
 // Short poll interval keeps the MV3 service worker "actively doing work"
 // (fetch counts as activity), reducing the window Chrome can suspend us in.
 // Alarm fallback below still catches the case when the worker is fully
@@ -31,8 +41,128 @@ async function executeCommand(cmd) {
     }
     if (cmd.type === 'close_tabs') {
       const ids = (cmd.params && cmd.params.tab_ids) || [];
-      await chrome.tabs.remove(ids);
-      return { result: { closed: ids.length } };
+      const closedIds = [];
+      const failed = [];
+      for (const rawId of ids) {
+        const tabId = Number(rawId);
+        if (!Number.isInteger(tabId) || tabId <= 0) {
+          failed.push({ tab_id: rawId, error: 'invalid_tab_id' });
+          continue;
+        }
+        try {
+          await chrome.tabs.remove(tabId);
+          closedIds.push(tabId);
+        } catch (e) {
+          failed.push({
+            tab_id: tabId,
+            error: (e && e.message) || String(e),
+          });
+        }
+      }
+      return {
+        result: {
+          closed: closedIds.length,
+          closed_ids: closedIds,
+          failed,
+        }
+      };
+    }
+    if (cmd.type === 'open_tabs') {
+      const params = cmd.params || {};
+      const items = Array.isArray(params.items) ? params.items : [];
+      const destination = params.destination === 'current_window' ? 'current_window' : 'new_window';
+
+      const results = [];
+      let targetWindowId = null;
+
+      if (destination === 'current_window') {
+        const focused = await chrome.windows.getLastFocused({ populate: false });
+        targetWindowId = focused && focused.id ? focused.id : null;
+      }
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i] || {};
+        const recordId = Number(item.record_id || 0);
+        const url = String(item.url || '').trim();
+        if (!url) {
+          results.push({
+            record_id: recordId,
+            url,
+            ok: false,
+            tab_id: null,
+            error: 'missing_url',
+          });
+          continue;
+        }
+
+        try {
+          let tab = null;
+          if (destination === 'new_window') {
+            if (targetWindowId === null) {
+              const created = await chrome.windows.create({ url, focused: true });
+              targetWindowId = created && created.id ? created.id : null;
+              tab = (created && created.tabs && created.tabs[0]) || null;
+            } else {
+              tab = await chrome.tabs.create({ windowId: targetWindowId, url, active: false });
+            }
+          } else {
+            if (targetWindowId !== null) {
+              tab = await chrome.tabs.create({ windowId: targetWindowId, url, active: false });
+            } else {
+              tab = await chrome.tabs.create({ url, active: false });
+            }
+          }
+
+          results.push({
+            record_id: recordId,
+            url,
+            ok: true,
+            tab_id: tab && tab.id ? tab.id : null,
+            error: '',
+          });
+        } catch (e) {
+          results.push({
+            record_id: recordId,
+            url,
+            ok: false,
+            tab_id: null,
+            error: (e && e.message) || String(e),
+          });
+        }
+      }
+
+      return {
+        result: {
+          destination,
+          results,
+        }
+      };
+    }
+    if (cmd.type === 'focus_tabs') {
+      const ids = (cmd.params && cmd.params.tab_ids) || [];
+      const results = [];
+      for (const rawId of ids) {
+        const tabId = Number(rawId);
+        if (!Number.isInteger(tabId) || tabId <= 0) {
+          results.push({ tab_id: rawId, ok: false, error: 'invalid_tab_id' });
+          continue;
+        }
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          await chrome.tabs.update(tabId, { active: true });
+          if (tab && tab.windowId) {
+            await chrome.windows.update(tab.windowId, { focused: true });
+          }
+          results.push({ tab_id: tabId, ok: true, error: '' });
+        } catch (e) {
+          results.push({
+            tab_id: tabId,
+            ok: false,
+            error: (e && e.message) || String(e),
+          });
+        }
+      }
+      return { result: { results } };
     }
     if (cmd.type === 'merge_tabs') {
       // Move every tab into a single window — the one that already has the most
@@ -113,7 +243,11 @@ async function executeCommand(cmd) {
 async function pollLoop() {
   while (true) {
     try {
-      const r = await fetch(`${BACKEND_BASE}/browser-agent/agent/commands`);
+      const query = new URLSearchParams({
+        extension_version: EXTENSION_VERSION,
+        capabilities: BRIDGE_CAPABILITIES.join(','),
+      });
+      const r = await fetch(`${BACKEND_BASE}/browser-agent/agent/commands?${query.toString()}`);
       if (r.ok) {
         const { commands } = await r.json();
         if (Array.isArray(commands) && commands.length) {

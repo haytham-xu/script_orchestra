@@ -12,6 +12,14 @@ const DEFAULTS: BrowserAgentSettings = {
   siteRules: [],
   downloadSSMH: { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' },
   downloadJM: { sourceDomain: '', downloadPath: '' },
+  tabArchive: {
+    safeExcludeDomains: [],
+    safeExcludeKeywords: [],
+    embedModel: '',
+    semanticTopK: 120,
+    heatThresholds: { high: 4, medium: 2, low: 0.8 },
+    healthCheckTimeoutSec: 4,
+  },
 }
 
 export default defineComponent({
@@ -36,6 +44,25 @@ export default defineComponent({
         }
         if (!state.downloadJM) {
           state.downloadJM = { sourceDomain: '', downloadPath: '' }
+        }
+        if (!state.tabArchive) {
+          state.tabArchive = {
+            safeExcludeDomains: [],
+            safeExcludeKeywords: [],
+            embedModel: '',
+            semanticTopK: 120,
+            heatThresholds: { high: 4, medium: 2, low: 0.8 },
+            healthCheckTimeoutSec: 4,
+          }
+        }
+        if (!state.tabArchive.heatThresholds) {
+          state.tabArchive.heatThresholds = { high: 4, medium: 2, low: 0.8 }
+        }
+        if (typeof state.tabArchive.embedModel !== 'string') {
+          state.tabArchive.embedModel = ''
+        }
+        if (!Number.isFinite(state.tabArchive.semanticTopK)) {
+          state.tabArchive.semanticTopK = 120
         }
         originalJson.value = JSON.stringify(state)
       } catch (e: any) {
@@ -97,6 +124,48 @@ export default defineComponent({
       state.downloadSSMH.downloadDomains = text.split('\n').map(s => s.trim()).filter(Boolean)
     }
 
+    function archiveExcludeDomainsText(): string {
+      return (state.tabArchive?.safeExcludeDomains || []).join('\n')
+    }
+
+    function setArchiveExcludeDomainsText(text: string) {
+      if (!state.tabArchive) {
+        state.tabArchive = {
+          safeExcludeDomains: [],
+          safeExcludeKeywords: [],
+          embedModel: '',
+          semanticTopK: 120,
+          heatThresholds: { high: 4, medium: 2, low: 0.8 },
+          healthCheckTimeoutSec: 4,
+        }
+      }
+      state.tabArchive.safeExcludeDomains = text
+        .split('\n')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean)
+    }
+
+    function archiveExcludeKeywordsText(): string {
+      return (state.tabArchive?.safeExcludeKeywords || []).join('\n')
+    }
+
+    function setArchiveExcludeKeywordsText(text: string) {
+      if (!state.tabArchive) {
+        state.tabArchive = {
+          safeExcludeDomains: [],
+          safeExcludeKeywords: [],
+          embedModel: '',
+          semanticTopK: 120,
+          heatThresholds: { high: 4, medium: 2, low: 0.8 },
+          healthCheckTimeoutSec: 4,
+        }
+      }
+      state.tabArchive.safeExcludeKeywords = text
+        .split('\n')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean)
+    }
+
     onMounted(load)
 
     return {
@@ -104,6 +173,8 @@ export default defineComponent({
       load, save, addRule, removeRule, domainsText, setDomainsText,
       ssmhSourcesText, setSsmhSourcesText,
       ssmhDownloadsText, setSsmhDownloadsText,
+      archiveExcludeDomainsText, setArchiveExcludeDomainsText,
+      archiveExcludeKeywordsText, setArchiveExcludeKeywordsText,
       Refresh,
       Plus,
       Delete,

@@ -36,6 +36,18 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "sourceDomain": "",        # single host, no scheme
         "downloadPath": "",        # absolute local dir where downloads land
     },
+    "tabArchive": {
+        "safeExcludeDomains": [],    # host/domain fragments excluded by safe archive
+        "safeExcludeKeywords": [],   # URL/title keywords excluded by safe archive
+        "embedModel": "",           # optional sentence-transformers model name
+        "semanticTopK": 120,
+        "heatThresholds": {
+            "high": 4.0,
+            "medium": 2.0,
+            "low": 0.8,
+        },
+        "healthCheckTimeoutSec": 4,
+    },
 }
 
 
@@ -67,6 +79,20 @@ def load_settings() -> Dict[str, Any]:
         data = _migrate_legacy_keys(data or {})
         merged = copy.deepcopy(DEFAULT_SETTINGS)
         merged.update(data)
+        for key in ("downloadSSMH", "downloadJM", "tabArchive"):
+            default_block = copy.deepcopy(DEFAULT_SETTINGS.get(key, {}))
+            loaded_block = merged.get(key)
+            if isinstance(default_block, dict) and isinstance(loaded_block, dict):
+                default_block.update(loaded_block)
+                merged[key] = default_block
+
+        tab_archive = merged.get("tabArchive")
+        if isinstance(tab_archive, dict):
+            default_heat = copy.deepcopy(DEFAULT_SETTINGS["tabArchive"].get("heatThresholds", {}))
+            loaded_heat = tab_archive.get("heatThresholds")
+            if isinstance(loaded_heat, dict):
+                default_heat.update(loaded_heat)
+            tab_archive["heatThresholds"] = default_heat
         return merged
     except Exception as e:
         print(f"⚠️ Failed to load browser_agent settings.json: {e}")
@@ -118,6 +144,9 @@ def validate_and_normalize(patch: dict, current: dict) -> dict:
 
     if "downloadJM" in patch:
         merged["downloadJM"] = _validate_download_jm(patch["downloadJM"])
+
+    if "tabArchive" in patch:
+        merged["tabArchive"] = _validate_tab_archive(patch["tabArchive"])
 
     return merged
 
@@ -177,3 +206,59 @@ def _validate_site_rules(rules: Any) -> list:
             "downloadLinkRegex": str(r.get("downloadLinkRegex", "")),
         })
     return out
+
+
+def _validate_tab_archive(cfg: Any) -> dict:
+    if not isinstance(cfg, dict):
+        raise ValueError("tabArchive must be an object")
+
+    safe_exclude_domains = cfg.get("safeExcludeDomains", [])
+    safe_exclude_keywords = cfg.get("safeExcludeKeywords", [])
+    heat_thresholds = cfg.get("heatThresholds", {})
+    health_check_timeout = cfg.get("healthCheckTimeoutSec", 4)
+    embed_model = cfg.get("embedModel", "")
+    semantic_top_k = cfg.get("semanticTopK", 120)
+
+    if not isinstance(safe_exclude_domains, list) or not all(isinstance(v, str) for v in safe_exclude_domains):
+        raise ValueError("tabArchive.safeExcludeDomains must be a list of strings")
+    if not isinstance(safe_exclude_keywords, list) or not all(isinstance(v, str) for v in safe_exclude_keywords):
+        raise ValueError("tabArchive.safeExcludeKeywords must be a list of strings")
+    if not isinstance(heat_thresholds, dict):
+        raise ValueError("tabArchive.heatThresholds must be an object")
+    if not isinstance(embed_model, str):
+        raise ValueError("tabArchive.embedModel must be a string")
+
+    try:
+        high = float(heat_thresholds.get("high", 4.0))
+        medium = float(heat_thresholds.get("medium", 2.0))
+        low = float(heat_thresholds.get("low", 0.8))
+    except (TypeError, ValueError):
+        raise ValueError("tabArchive.heatThresholds.high/medium/low must be numbers")
+
+    if not (high > medium > low >= 0):
+        raise ValueError("tabArchive.heatThresholds must satisfy: high > medium > low >= 0")
+
+    try:
+        health_timeout = int(health_check_timeout)
+    except (TypeError, ValueError):
+        raise ValueError("tabArchive.healthCheckTimeoutSec must be an integer")
+    health_timeout = max(1, min(15, health_timeout))
+
+    try:
+        semantic_top_k_value = int(semantic_top_k)
+    except (TypeError, ValueError):
+        raise ValueError("tabArchive.semanticTopK must be an integer")
+    semantic_top_k_value = max(10, min(500, semantic_top_k_value))
+
+    return {
+        "safeExcludeDomains": [v.strip().lower() for v in safe_exclude_domains if v.strip()],
+        "safeExcludeKeywords": [v.strip().lower() for v in safe_exclude_keywords if v.strip()],
+        "embedModel": embed_model.strip(),
+        "semanticTopK": semantic_top_k_value,
+        "heatThresholds": {
+            "high": high,
+            "medium": medium,
+            "low": low,
+        },
+        "healthCheckTimeoutSec": health_timeout,
+    }

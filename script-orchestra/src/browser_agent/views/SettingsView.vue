@@ -140,6 +140,96 @@
           </div>
         </div>
       </section>
+
+      <!-- Tab Archive -->
+      <section class="ba-card">
+        <div class="ba-card-header">
+          <h2>Tab Archive</h2>
+          <p class="ba-hint">
+            Safe archive exclusion rules, heat thresholds, and health-check timeout.
+          </p>
+        </div>
+        <div class="ba-card-body">
+          <div class="ba-row">
+            <label class="ba-label">Exclude domains</label>
+            <el-input
+              type="textarea"
+              :rows="3"
+              :model-value="archiveExcludeDomainsText()"
+              @update:model-value="setArchiveExcludeDomainsText"
+              placeholder="one domain fragment per line, e.g. mail.google.com"
+              spellcheck="false"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Exclude keywords</label>
+            <el-input
+              type="textarea"
+              :rows="3"
+              :model-value="archiveExcludeKeywordsText()"
+              @update:model-value="setArchiveExcludeKeywordsText"
+              placeholder="one keyword per line, e.g. calendar"
+              spellcheck="false"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Embed model</label>
+            <el-input
+              v-model="state.tabArchive.embedModel"
+              placeholder="e.g. sentence-transformers/all-MiniLM-L6-v2"
+              spellcheck="false"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Semantic top K</label>
+            <el-input-number
+              v-model="state.tabArchive.semanticTopK"
+              :min="10"
+              :max="500"
+              controls-position="right"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Heat high</label>
+            <el-input-number
+              v-model="state.tabArchive.heatThresholds.high"
+              :min="0.1"
+              :max="99"
+              :step="0.1"
+              controls-position="right"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Heat medium</label>
+            <el-input-number
+              v-model="state.tabArchive.heatThresholds.medium"
+              :min="0.1"
+              :max="99"
+              :step="0.1"
+              controls-position="right"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Heat low</label>
+            <el-input-number
+              v-model="state.tabArchive.heatThresholds.low"
+              :min="0"
+              :max="99"
+              :step="0.1"
+              controls-position="right"
+            />
+          </div>
+          <div class="ba-row">
+            <label class="ba-label">Health timeout (sec)</label>
+            <el-input-number
+              v-model="state.tabArchive.healthCheckTimeoutSec"
+              :min="1"
+              :max="15"
+              controls-position="right"
+            />
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 </template>

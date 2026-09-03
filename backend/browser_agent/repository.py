@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from .entity import BrowserTab, Status
 from . import settings_manager
+from . import tab_archive_repository
 
 TABLE = "browser_tab"
 
@@ -36,6 +37,9 @@ def init_db() -> None:
     """)
     conn.commit()
     conn.close()
+
+    # Initialize tab-archive schema in the same SQLite database.
+    tab_archive_repository.init_db()
 
 
 def _row_to_tab(row) -> BrowserTab:
