@@ -498,6 +498,7 @@ export default defineComponent({
         canvas.height = viewport.height
 
         await page.render({
+          canvas: canvas,
           canvasContext: context,
           viewport: viewport
         }).promise
@@ -534,6 +535,7 @@ export default defineComponent({
           canvas.height = viewport.height
 
           await page.render({
+            canvas: canvas,
             canvasContext: context,
             viewport: viewport
           } as any).promise

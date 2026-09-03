@@ -10,6 +10,15 @@ export interface ProxyForwardStatus {
   lan_ip: string | null
   lan_ips: string[]
   last_error: string | null
+  history_count: number
+}
+
+export interface ProxyForwardHistoryEntry {
+  id: number
+  timestamp: string
+  level: string
+  event: string
+  message: string
 }
 
 export interface ProxyForwardStartPayload {

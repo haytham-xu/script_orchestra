@@ -47,7 +47,7 @@ export const useRoadmapStore = defineStore('roadmap', () => {
   // State
   const tasks = ref<Task[]>([])
   const loading = ref(false)
-  const inProgressTimers = ref<Map<string, NodeJS.Timeout>>(new Map())
+  const inProgressTimers = ref<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Today tasks - tasks with ETA today or overdue
   const todayTasks = computed<Task[]>(() => {
@@ -137,6 +137,12 @@ export const useRoadmapStore = defineStore('roadmap', () => {
       }
     ]
   })
+
+  function getBlockTasks(category: TaskCategory): Task[] {
+    return tasks.value
+      .filter((t) => t.status === TaskStatus.BLOCK && t.category === category)
+      .sort((a, b) => a.order - b.order)
+  }
 
   // Start timer for task in In Progress
   function startInProgressTimer(taskId: string) {
@@ -322,6 +328,7 @@ export const useRoadmapStore = defineStore('roadmap', () => {
     categoryColumns,
     inProgressTasks,
     doneTasks,
+    getBlockTasks,
     loadTasks,
     createTask,
     updateTask,

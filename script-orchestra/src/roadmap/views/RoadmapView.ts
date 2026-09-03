@@ -32,6 +32,7 @@ export default defineComponent({
     const shouldSaveOnClose = ref(true)
     const editingCategoryKey = ref<TaskCategory | null>(null)
     const editingCategoryName = ref('')
+    const isComposingEdit = ref(false)
     const isSavingCheckbox = ref(false) // Flag to prevent duplicate saves
 
     // Markdown tab state
@@ -542,6 +543,7 @@ export default defineComponent({
           if (task.status === TaskStatus.IN_PROGRESS) {
             const updates = tasksInList.map((t, index) => ({
               id: t.id,
+              status: TaskStatus.IN_PROGRESS,
               order: index
             }))
 

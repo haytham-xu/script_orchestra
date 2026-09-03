@@ -28,6 +28,15 @@ status_model = ns.model('ProxyForwardStatus', {
     'lan_ip': fields.String(),
     'lan_ips': fields.List(fields.String()),
     'last_error': fields.String(),
+    'history_count': fields.Integer(),
+})
+
+history_entry_model = ns.model('ProxyForwardHistoryEntry', {
+    'id': fields.Integer(),
+    'timestamp': fields.String(),
+    'level': fields.String(),
+    'event': fields.String(),
+    'message': fields.String(),
 })
 
 settings_model = ns.model('ProxyForwardSettings', {
@@ -80,6 +89,22 @@ class StopResource(Resource):
     def post(self):
         """Stop the running forward server."""
         return get_service().stop()
+
+
+@ns.route('/history')
+class HistoryResource(Resource):
+    @ns.marshal_list_with(history_entry_model)
+    def get(self):
+        """Get forward history entries, newest order preserved."""
+        limit = request.args.get('limit', default=200, type=int)
+        if limit < 1 or limit > 2000:
+            ns.abort(400, 'limit must be between 1 and 2000')
+        return get_service().get_history(limit=limit)
+
+    def delete(self):
+        """Clear forward history entries."""
+        cleared = get_service().clear_history()
+        return {'cleared': cleared, 'message': 'History cleared'}, 200
 
 
 @ns.route('/settings')

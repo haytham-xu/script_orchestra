@@ -117,7 +117,7 @@ export default defineComponent({
         for (const folderId of selectedFolders.value) {
           const folder = store.mangaIndex.folders[folderId]
           if (folder && folder.name.includes(batchOperations.replaceFrom)) {
-            folder.name = folder.name.replaceAll(batchOperations.replaceFrom, batchOperations.replaceTo)
+            folder.name = folder.name.split(batchOperations.replaceFrom).join(batchOperations.replaceTo)
             folder.initialized = true
             store.addChangeId(folderId)
             store.addMoveId(folderId)

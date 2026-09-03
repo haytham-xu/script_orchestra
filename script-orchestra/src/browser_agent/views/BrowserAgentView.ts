@@ -104,6 +104,10 @@ export default defineComponent({
       load, onRetry, onDelete, statusTag,
       onSendCurrentTabs,
       goToSettings: () => router.push('/browser-agent/settings'),
+      Setting,
+      Refresh,
+      RefreshLeft,
+      Delete,
       BrowserTaskStatus,
     }
   },

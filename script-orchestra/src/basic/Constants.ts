@@ -36,4 +36,6 @@ export const CLAUDE_BRIDGE_ENDPOINT = '/claude-bridge'
 
 export const PROXY_FORWARD_ENDPOINT = '/proxy-forward'
 
+export const RELAY_PROXY_ENDPOINT = '/relay-proxy'
+
 export const DASHBOARD_ENDPOINT = '/dashboard'

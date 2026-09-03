@@ -20,7 +20,7 @@
                 data-column-id="in-progress"
                 :data-status="TaskStatus.IN_PROGRESS"
                 animation="200"
-                @change="(evt) => handleDragChange(evt, TaskStatus.IN_PROGRESS, null)"
+                @change="handleDragChange($event, TaskStatus.IN_PROGRESS, null)"
               >
                 <template #item="{ element }">
                   <div :data-task-id="element.id">
@@ -84,7 +84,7 @@
                   :data-status="TaskStatus.TODO"
                   :data-category="col.category"
                   animation="200"
-                  @change="(evt) => handleDragChange(evt, TaskStatus.TODO, col.category)"
+                  @change="handleDragChange($event, TaskStatus.TODO, col.category)"
                 >
                   <template #item="{ element }">
                     <div :data-task-id="element.id">
@@ -118,7 +118,7 @@
                   :data-status="TaskStatus.BLOCK"
                   :data-category="col.category"
                   animation="200"
-                  @change="(evt) => handleDragChange(evt, TaskStatus.BLOCK, col.category)"
+                  @change="handleDragChange($event, TaskStatus.BLOCK, col.category)"
                 >
                   <template #item="{ element }">
                     <div :data-task-id="element.id">
@@ -146,7 +146,7 @@
                 data-column-id="done"
                 :data-status="TaskStatus.DONE"
                 animation="200"
-                @change="(evt) => handleDragChange(evt, TaskStatus.DONE, null)"
+                @change="handleDragChange($event, TaskStatus.DONE, null)"
               >
                 <template #item="{ element }">
                   <div :data-task-id="element.id">

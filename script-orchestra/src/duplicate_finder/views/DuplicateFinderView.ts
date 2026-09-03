@@ -2549,6 +2549,7 @@ export function useDuplicateFinderView() {
     loadWhitelistGroups,
     removeWhitelistGroup,
     formatTimestamp,
+    verifyAndCleanup,
     addPreferFolder,
     removePreferFolder
   }

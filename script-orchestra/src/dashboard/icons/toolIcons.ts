@@ -170,4 +170,13 @@ export const toolIcons: Record<string, string> = {
       <rect x="22" y="24" width="20" height="16" rx="4" fill="#fff"/>
       <circle cx="32" cy="32" r="3" fill="#0f766e"/>
     </svg>`,
+  'relay-proxy': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0b7285"/>
+      <rect x="14" y="16" width="14" height="12" rx="3" fill="#e6fcf5"/>
+      <rect x="36" y="16" width="14" height="12" rx="3" fill="#e6fcf5"/>
+      <rect x="25" y="36" width="14" height="12" rx="3" fill="#ffffff"/>
+      <path d="M28 22h8M36 22h4M32 28v8" stroke="#99e9f2" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M32 34h10M22 22h6" stroke="#99e9f2" stroke-width="2.6" stroke-linecap="round"/>
+    </svg>`,
 }

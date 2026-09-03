@@ -16,6 +16,10 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _now_local_timestamp() -> str:
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
 def _dedupe_keep_order(items: List[str]) -> List[str]:
     seen = set()
     ordered = []
@@ -92,6 +96,27 @@ class ProxyForwardService:
 
         self._active_connections = 0
         self._total_connections = 0
+        self._history: List[Dict[str, Any]] = []
+        self._history_seq = 0
+
+    @staticmethod
+    def _format_endpoint(host: str, port: int) -> str:
+        return f'{host}:{port}'
+
+    def _append_history(self, level: str, event: str, message: str) -> None:
+        with self._lock:
+            self._history_seq += 1
+            self._history.append(
+                {
+                    'id': self._history_seq,
+                    'timestamp': _now_local_timestamp(),
+                    'level': level,
+                    'event': event,
+                    'message': message,
+                }
+            )
+            if len(self._history) > 2000:
+                self._history = self._history[-2000:]
 
     @staticmethod
     def _validate_port(port: int, field: str) -> int:
@@ -113,6 +138,7 @@ class ProxyForwardService:
     def _set_last_error(self, message: str) -> None:
         with self._lock:
             self._last_error = message
+        self._append_history('error', 'error', message)
 
     def _resolve_runtime_config(
         self,
@@ -141,6 +167,7 @@ class ProxyForwardService:
             active_connections = self._active_connections
             total_connections = self._total_connections
             last_error = self._last_error
+            history_count = len(self._history)
 
         lan_ips = detect_lan_ips()
         return {
@@ -155,7 +182,22 @@ class ProxyForwardService:
             'lan_ip': lan_ips[0] if lan_ips else None,
             'lan_ips': lan_ips,
             'last_error': last_error,
+            'history_count': history_count,
         }
+
+    def get_history(self, limit: int = 200) -> List[Dict[str, Any]]:
+        if limit < 1:
+            limit = 1
+        if limit > 2000:
+            limit = 2000
+        with self._lock:
+            return list(self._history[-limit:])
+
+    def clear_history(self) -> int:
+        with self._lock:
+            cleared = len(self._history)
+            self._history = []
+        return cleared
 
     def start(
         self,
@@ -208,6 +250,14 @@ class ProxyForwardService:
             self._accept_thread = threading.Thread(target=self._accept_loop, name='proxy-forward-accept', daemon=True)
             self._accept_thread.start()
 
+        self._append_history(
+            'info',
+            'start',
+            'Forwarding started: '
+            f'{self._format_endpoint(resolved_listen_host, resolved_listen_port)} -> '
+            f'{self._format_endpoint(resolved_target_host, resolved_target_port)}',
+        )
+
         settings_manager.save_settings(
             {
                 'listen_host': resolved_listen_host,
@@ -220,6 +270,9 @@ class ProxyForwardService:
         return self.get_status()
 
     def stop(self) -> Dict[str, Any]:
+        with self._lock:
+            was_running = self._running
+
         with self._lock:
             self._stop_event.set()
             server = self._server_socket
@@ -236,6 +289,9 @@ class ProxyForwardService:
 
         if accept_thread is not None and accept_thread.is_alive():
             accept_thread.join(timeout=2.0)
+
+        if was_running:
+            self._append_history('info', 'stop', 'Forwarding stopped')
 
         return self.get_status()
 
@@ -261,6 +317,13 @@ class ProxyForwardService:
                 self._active_connections += 1
                 self._total_connections += 1
 
+            self._append_history(
+                'info',
+                'connect',
+                f'Client connected: {client_addr[0]}:{client_addr[1]} -> '
+                f'{self._format_endpoint(target[0], target[1])}',
+            )
+
             threading.Thread(
                 target=self._handle_client,
                 args=(client_socket, client_addr, target),
@@ -285,10 +348,12 @@ class ProxyForwardService:
         target: Tuple[str, int],
     ) -> None:
         target_socket: Optional[socket.socket] = None
+        connected = False
         try:
             target_socket = socket.create_connection(target, timeout=10)
             target_socket.settimeout(None)
             client_socket.settimeout(None)
+            connected = True
 
             t1 = threading.Thread(
                 target=self._forward_data,
@@ -320,6 +385,13 @@ class ProxyForwardService:
                     pass
             with self._lock:
                 self._active_connections = max(0, self._active_connections - 1)
+
+            if connected:
+                self._append_history(
+                    'info',
+                    'disconnect',
+                    f'Client disconnected: {client_addr[0]}:{client_addr[1]}',
+                )
 
     @staticmethod
     def _forward_data(source: socket.socket, destination: socket.socket) -> None:

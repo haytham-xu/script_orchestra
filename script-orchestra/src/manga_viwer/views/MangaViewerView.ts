@@ -348,6 +348,7 @@ export default defineComponent({
         canvas.width = viewport.width
 
         await page.render({
+          canvas: canvas,
           canvasContext: context,
           viewport: viewport
         }).promise
@@ -391,6 +392,7 @@ export default defineComponent({
           canvas.width = viewport.width
 
           await page.render({
+            canvas: canvas,
             canvasContext: context,
             viewport: viewport
           }).promise

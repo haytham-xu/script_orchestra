@@ -42,6 +42,7 @@ export interface Task {
   inProgressAt?: string  // ISO date string, when task enters In Progress
   returnedFromInProgress?: boolean  // Flag for tasks auto-returned from In Progress
   returnedAt?: string  // ISO date string, when task was returned from In Progress
+  doneAt?: string  // ISO date string, when task enters Done
 }
 
 export interface Column {

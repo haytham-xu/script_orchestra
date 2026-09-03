@@ -27,6 +27,7 @@ const TOOLS: Tool[] = [
   { key: 'translator',             name: 'Translator',             path: '/translator' },
   { key: 'claude-bridge',          name: 'Claude Bridge',          path: '/claude-bridge' },
   { key: 'proxy-forward',          name: 'Proxy Forward',          path: '/proxy-forward' },
+  { key: 'relay-proxy',            name: 'Relay Proxy',            path: '/relay-proxy' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))
@@ -35,6 +36,8 @@ const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t
 export type Cell =
   | { type: 'tool'; key: string }
   | { type: 'folder'; id: string; name: string; keys: string[] }
+
+type FolderCell = Extract<Cell, { type: 'folder' }>
 
 /**
  * Reconcile a backend layout against the code-defined tool list:
@@ -86,8 +89,10 @@ export default defineComponent({
 
     function toolOf(key: string): Tool | undefined { return TOOL_BY_KEY[key] }
 
-    const openFolder = computed<Cell | null>(() =>
-      cells.value.find((c) => c.type === 'folder' && c.id === openFolderId.value) || null)
+    const openFolder = computed<FolderCell | null>(() => {
+      const candidate = cells.value.find((c) => c.type === 'folder' && c.id === openFolderId.value)
+      return candidate && candidate.type === 'folder' ? candidate : null
+    })
 
     async function load() {
       try {
@@ -168,8 +173,7 @@ export default defineComponent({
     function openFolderView(id: string) { if (!dragKey.value) openFolderId.value = id }
     function closeFolder() { openFolderId.value = null }
 
-    async function renameFolder(folder: Cell) {
-      if (folder.type !== 'folder') return
+    async function renameFolder(folder: FolderCell) {
       try {
         const { value } = await ElMessageBox.prompt('Folder name', 'Rename', {
           inputValue: folder.name, confirmButtonText: 'Save', cancelButtonText: 'Cancel',
@@ -178,8 +182,7 @@ export default defineComponent({
       } catch { /* cancelled */ }
     }
 
-    function removeFromFolder(folder: Cell, key: string) {
-      if (folder.type !== 'folder') return
+    function removeFromFolder(folder: FolderCell, key: string) {
       folder.keys = folder.keys.filter((k) => k !== key)
       const fi = cells.value.findIndex((c) => c.type === 'folder' && c.id === folder.id)
       cells.value.splice(fi + 1, 0, { type: 'tool', key })

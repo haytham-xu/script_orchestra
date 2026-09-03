@@ -1294,7 +1294,6 @@ const {
   isScanning,
   isSaving,
   isDeleting,
-  isCleaning,
   isVerifying,
   scanProgress,
   scanResult,
@@ -1400,7 +1399,6 @@ const {
   loadWhitelistGroups,
   removeWhitelistGroup,
   formatTimestamp,
-  cleanupDatabase,
   verifyAndCleanup,
   addPreferFolder,
   removePreferFolder

@@ -61,6 +61,8 @@ export interface DisplaySettings {
   page_size: number
   show_uninitialized_only: boolean
   default_sort: string
+  size_sort_enabled?: boolean
+  name_sort_enabled?: boolean
 }
 
 export interface PathsSettings {

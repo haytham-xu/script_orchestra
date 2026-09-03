@@ -41,8 +41,8 @@ export interface BrowserAgentSettings {
   maxRetries: number
   pollIntervalSec: number
   siteRules: SiteRule[]
-  downloadSSMH?: DownloadSSMHConfig
-  downloadJM?: DownloadJMConfig
+  downloadSSMH: DownloadSSMHConfig
+  downloadJM: DownloadJMConfig
 }
 
 // Live progress event pushed over WebSocket.

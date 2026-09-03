@@ -13,13 +13,13 @@ export async function getRequest<T>(uriPath: string, params = {}, signal?: Abort
   return res.data as T
 }
 
-export async function postRequest(uriPath:string, params = {}, payload = {}) {
-    const res = await axios.post(BACKEND_BASE_URL + uriPath, payload, { params })
-    if (![200, 201, 202].includes(res.status)) {
-        ElMessage.error(`Request Failed: ${res.statusText}`)
-        throw new Error(`Request Failed: ${res.statusText}`)
-    }
-    return res.data
+export async function postRequest<T = any>(uriPath:string, params = {}, payload = {}): Promise<T> {
+  const res = await axios.post(BACKEND_BASE_URL + uriPath, payload, { params })
+  if (![200, 201, 202].includes(res.status)) {
+    ElMessage.error(`Request Failed: ${res.statusText}`)
+    throw new Error(`Request Failed: ${res.statusText}`)
+  }
+  return res.data as T
 }
 
 export async function putRequest<T>(uriPath: string, params = {}, payload = {}): Promise<T> {

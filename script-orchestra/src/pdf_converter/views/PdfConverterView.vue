@@ -40,11 +40,11 @@
             directory
             multiple
             @change="handleAddFolder"
-            ref="folderInput"
+            ref="folderInputRef"
             style="display: none"
             id="folder-input"
           />
-          <el-button type="success" size="large" @click="$refs.folderInput.click()">
+          <el-button type="success" size="large" @click="triggerFolderInput">
             <el-icon><circle-plus /></el-icon>
             Browse & Select Folder
           </el-button>

@@ -26,6 +26,7 @@ export interface TaskUpdatePayload {
   eta?: string
   category?: string
   returnedFromInProgress?: boolean
+  inProgressAt?: string
 }
 
 export interface TaskReorderPayload {

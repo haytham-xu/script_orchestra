@@ -97,7 +97,7 @@
               <span class="conv-time">{{ formatDate(conv.updated_at) }}</span>
             </div>
             <div class="conv-actions" @click.stop>
-              <el-dropdown trigger="click" @command="(cmd) => handleConvCommand(cmd, conv)">
+              <el-dropdown trigger="click" @command="handleConvCommand($event, conv)">
                 <el-icon class="conv-more"><MoreFilled /></el-icon>
                 <template #dropdown>
                   <el-dropdown-menu>

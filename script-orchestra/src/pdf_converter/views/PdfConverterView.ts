@@ -41,6 +41,7 @@ export default defineComponent({
     const folderToPdfLoading = ref(false)
     const batchOutputFilename = ref('combined.pdf')
     const isDraggingOver = ref(false)
+    const folderInputRef = ref<HTMLInputElement | null>(null)
 
     // Computed properties for folder queue
     const totalFoldersInQueue = computed(() => folderQueue.value.length)
@@ -53,6 +54,19 @@ export default defineComponent({
     const mergePdfsResult = ref<MergePdfsResponse | null>(null)
     const mergePdfsLoading = ref(false)
     const mergeOutputFilename = ref('merged.pdf')
+
+    function extractRawFiles(fileList: UploadUserFile[]): File[] {
+      return fileList.reduce<File[]>((acc, item) => {
+        if (item.raw) {
+          acc.push(item.raw as File)
+        }
+        return acc
+      }, [])
+    }
+
+    function triggerFolderInput() {
+      folderInputRef.value?.click()
+    }
 
     // Handle PDF file upload
     const handlePdfFileChange = (file: UploadFile) => {
@@ -85,14 +99,14 @@ export default defineComponent({
 
     // Handle image files upload
     const handleImageFilesChange = (file: UploadFile, fileList: UploadUserFile[]) => {
-      imageFiles.value = fileList.map((f) => f.raw).filter((f): f is File => f !== undefined)
+      imageFiles.value = extractRawFiles(fileList)
       imagesToPdfResult.value = null
       return false // Prevent auto upload
     }
 
     // Remove image file
     const handleImageFileRemove = (file: UploadFile, fileList: UploadUserFile[]) => {
-      imageFiles.value = fileList.map((f) => f.raw).filter((f): f is File => f !== undefined)
+      imageFiles.value = extractRawFiles(fileList)
     }
 
     // Convert images to PDF
@@ -356,14 +370,14 @@ export default defineComponent({
 
     // Handle merge PDF files upload
     const handleMergePdfFilesChange = (file: UploadFile, fileList: UploadUserFile[]) => {
-      mergePdfFiles.value = fileList.map((f) => f.raw).filter((f): f is File => f !== undefined)
+      mergePdfFiles.value = extractRawFiles(fileList)
       mergePdfsResult.value = null
       return false
     }
 
     // Remove merge PDF file
     const handleMergePdfFileRemove = (file: UploadFile, fileList: UploadUserFile[]) => {
-      mergePdfFiles.value = fileList.map((f) => f.raw).filter((f): f is File => f !== undefined)
+      mergePdfFiles.value = extractRawFiles(fileList)
     }
 
     // Merge PDFs
@@ -441,7 +455,9 @@ export default defineComponent({
       folderToPdfLoading,
       batchOutputFilename,
       isDraggingOver,
+      folderInputRef,
       handleAddFolder,
+      triggerFolderInput,
       handleDragOver,
       handleDragLeave,
       handleDrop,

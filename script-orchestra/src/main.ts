@@ -21,7 +21,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then((regs) => {
     regs.forEach((r) => r.unregister())
   }).catch(() => { /* ignore */ })
-  if (window.caches?.keys) {
+  if ('caches' in window && typeof caches.keys === 'function') {
     caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => { /* ignore */ })
   }
 }
@@ -33,8 +33,7 @@ app.use(router)
 app.use(ElementPlus, {
   message: {
     offset: 20,
-    duration: 1500,
-    customClass: 'message-bottom'
+    duration: 1500
   }
 })
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {

@@ -4,8 +4,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSettings,
   ssmhScan, ssmhExecute, ssmhStatus,
-  type SSMHCandidate, type SSMHItem, type DownloadSSMHConfig,
+  type SSMHCandidate, type SSMHItem,
 } from '@/browser_agent/service/BrowserAgentService'
+import type { DownloadSSMHConfig } from '@/browser_agent/service/Model'
 
 export default defineComponent({
   name: 'DownloadSSMHView',

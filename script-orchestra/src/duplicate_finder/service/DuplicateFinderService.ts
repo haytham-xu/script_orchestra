@@ -11,12 +11,15 @@ export interface ScanRequest {
 }
 
 export interface ImageInfo {
+  id?: number
   file_path: string
   phash: string
   resolution: string
   filesize: number
   display_path?: string
   filename?: string
+  folder_dup?: number
+  folder_total?: number
 }
 
 export interface ScanResult {
@@ -30,16 +33,40 @@ export interface Settings {
   similarity_threshold: number
   delete_target_path: string
   phash_db_path?: string
+  root_path?: string
   folder_paths?: string[]
   folder_root_paths?: { [key: string]: string }
   exclude_folder_paths?: string[]
   max_cpu_cores?: number
   system_cpu_count?: number
-  auto_selection_rules?: {
+  auto_selection_rules: {
     auto_mark_numbered_copies?: boolean
     auto_mark_copy_suffix?: boolean
     prefer_folders?: string[]
   }
+  phase1: {
+    worker_handler_size: number
+    db_commit_batch_size: number
+    progress_update_interval: number
+    ipc_chunk_size: number
+    scan_delay: number
+    compute_delay: number
+  }
+  phase2: {
+    worker_handler_size: number
+    db_commit_batch_size: number
+    progress_update_interval: number
+    ipc_chunk_size: number
+    compare_delay: number
+  }
+  performance?: {
+    scan_delay: number
+    compute_delay: number
+    compare_delay: number
+    chunk_size: number
+    progress_update_interval: number
+  }
+  page_size?: number
 }
 
 export class DuplicateFinderService {
@@ -272,7 +299,20 @@ export class DuplicateFinderService {
       }>
     }>
   }> {
-    const response = await getRequest(`${this.BASE_URL}/whitelist`)
+    const response = await getRequest<{
+      whitelist_groups: Array<{
+        group_id: number
+        added_time: number
+        members: Array<{
+          image_id: number
+          filename: string
+          filesize: number
+          file_path: string
+          phash: string
+          resolution: string
+        }>
+      }>
+    }>(`${this.BASE_URL}/whitelist`)
     return response
   }
 
@@ -337,7 +377,7 @@ export class DuplicateFinderService {
    * Get active scans
    */
   static async getActiveScans(): Promise<{ active_scans: string[]; count: number }> {
-    const response = await getRequest(`${this.BASE_URL}/active-scans`)
+    const response = await getRequest<{ active_scans: string[]; count: number }>(`${this.BASE_URL}/active-scans`)
     return response
   }
 

@@ -104,6 +104,9 @@ export default defineComponent({
       load, save, addRule, removeRule, domainsText, setDomainsText,
       ssmhSourcesText, setSsmhSourcesText,
       ssmhDownloadsText, setSsmhDownloadsText,
+      Refresh,
+      Plus,
+      Delete,
       goBack: () => router.push('/browser-agent'),
     }
   },

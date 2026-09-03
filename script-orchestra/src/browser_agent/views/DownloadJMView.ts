@@ -4,8 +4,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSettings,
   jmCheckAuth, jmScan, jmExecute, jmStatus, jmSubmitCaptcha,
-  type DownloadJMConfig, type JMCandidate, type JMItem, type JMCaptchaPending,
+  type JMCandidate, type JMItem, type JMCaptchaPending,
 } from '@/browser_agent/service/BrowserAgentService'
+import type { DownloadJMConfig } from '@/browser_agent/service/Model'
 
 export default defineComponent({
   name: 'DownloadJMView',
