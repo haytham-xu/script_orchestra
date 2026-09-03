@@ -4,6 +4,11 @@
       <div class="tr-topbar-inner">
         <h1>Translator</h1>
         <span class="tr-sub">Copilot-backed · zh ↔ en</span>
+        <div v-if="usageSummary && usageSummary.count" class="tr-usage-header">
+          <span class="tr-usage-h-item"><b>{{ usageSummary.total_credits }}</b> credits</span>
+          <span class="tr-usage-h-item">{{ usageSummary.count }} calls</span>
+          <span class="tr-usage-h-item">↑{{ usageSummary.total_input_tokens }} ↓{{ usageSummary.total_output_tokens }}</span>
+        </div>
       </div>
     </header>
 
@@ -198,29 +203,6 @@
           </div>
 
           <div class="tr-card">
-            <div class="tr-card-title">Cumulative usage</div>
-            <el-empty v-if="!usageSummary || !usageSummary.count" description="No usage yet" :image-size="60" />
-            <div v-else class="tr-usage-grid">
-              <div class="tr-usage-cell">
-                <div class="tr-usage-num">{{ usageSummary.total_credits }}</div>
-                <div class="tr-usage-cap">Total AI Credits</div>
-              </div>
-              <div class="tr-usage-cell">
-                <div class="tr-usage-num">{{ usageSummary.count }}</div>
-                <div class="tr-usage-cap">Translations</div>
-              </div>
-              <div class="tr-usage-cell">
-                <div class="tr-usage-num">↑{{ usageSummary.total_input_tokens }} ↓{{ usageSummary.total_output_tokens }}</div>
-                <div class="tr-usage-cap">Total tokens</div>
-              </div>
-            </div>
-            <div v-if="usageSummary && usageSummary.count" class="tr-usage-byscene">
-              <span>ZH→EN: {{ usageSummary.by_scene.zh2en.total_credits }} credits / {{ usageSummary.by_scene.zh2en.count }} calls</span>
-              <span>EN→ZH: {{ usageSummary.by_scene.en2zh.total_credits }} credits / {{ usageSummary.by_scene.en2zh.count }} calls</span>
-            </div>
-          </div>
-
-          <div class="tr-card">
             <div class="tr-card-title">Data cleanup</div>
             <div class="tr-cleanup">
               <span>Delete history older than</span>
@@ -254,6 +236,9 @@
 .tr-topbar-inner { display: flex; align-items: baseline; gap: 12px; }
 .tr-topbar h1 { font-size: 24px; font-weight: 600; color: #1d1d1f; margin: 0; }
 .tr-sub { font-size: 13px; color: #86868b; }
+.tr-usage-header { margin-left: auto; display: flex; gap: 14px; align-items: baseline;
+  font-size: 12px; color: #86868b; }
+.tr-usage-h-item b { color: #1d1d1f; font-weight: 600; }
 .tr-tabs { margin-top: 8px; }
 .tr-scene { display: flex; flex-direction: column; gap: 16px; padding-top: 8px; }
 .tr-card { background: #fff; border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;
@@ -267,13 +252,6 @@
 .tr-model-select { width: 180px; }
 .tr-usage-line { font-size: 12px; color: #86868b; padding: 0 4px; margin-top: -6px; }
 .tr-hist-usage { font-size: 12px; color: #86868b; margin-top: 4px; }
-.tr-usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.tr-usage-cell { text-align: center; padding: 12px; border: 1px solid rgba(0,0,0,0.05);
-  border-radius: 8px; background: #fafafa; }
-.tr-usage-num { font-size: 20px; font-weight: 600; color: #1d1d1f; }
-.tr-usage-cap { font-size: 12px; color: #86868b; margin-top: 4px; }
-.tr-usage-byscene { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px;
-  font-size: 13px; color: #6e6e73; }
 .tr-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 720px) { .tr-two-col { grid-template-columns: 1fr; } }
 .tr-output { white-space: pre-wrap; line-height: 1.6; color: #1d1d1f; font-size: 14px; }
