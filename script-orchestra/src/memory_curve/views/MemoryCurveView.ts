@@ -1,4 +1,5 @@
 import { defineComponent, ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getCards, getDue, createCard, updateCard, deleteCard, reviewCard,
@@ -9,6 +10,9 @@ import type { MemoryCard, MemoryCurveSettings, Rating } from '../service/Model'
 export default defineComponent({
   name: 'MemoryCurveView',
   setup() {
+    const router = useRouter()
+    function goBack() { router.push('/') }
+
     const activeTab = ref<'review' | 'manage'>('review')
     const settings = ref<MemoryCurveSettings>({ card_mode: 'qa', daily_new_limit: 20 })
     const isQa = computed(() => settings.value.card_mode === 'qa')
@@ -97,6 +101,7 @@ export default defineComponent({
     })
 
     return {
+      goBack,
       activeTab, settings, isQa,
       dueCards, reviewIndex, answerShown, currentCard, reviewDone,
       loadDue, showAnswer, rate,

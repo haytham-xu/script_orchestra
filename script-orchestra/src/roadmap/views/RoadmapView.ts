@@ -1,5 +1,6 @@
 
 import { defineComponent, ref, onMounted, nextTick, watch, computed, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useRoadmapStore, invalidateSettingsCache } from '../service/RoadmapStore'
 import { TaskStatus, TaskPriority, TaskSize, TaskCategory } from '../models/Task'
 import type { Task } from '../models/Task'
@@ -20,6 +21,9 @@ export default defineComponent({
     Setting
   },
   setup() {
+    const router = useRouter()
+    function goBack() { router.push('/') }
+
     const store = useRoadmapStore()
 
     // Form state
@@ -852,6 +856,7 @@ export default defineComponent({
     })
 
     return {
+      goBack,
       store,
       showCreateDialog,
       showEditDialog,

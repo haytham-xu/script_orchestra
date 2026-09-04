@@ -1,6 +1,7 @@
 <template>
   <el-container class="pdf-converter-container">
     <el-header>
+      <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
       <h1>PDF Converter</h1>
     </el-header>
 

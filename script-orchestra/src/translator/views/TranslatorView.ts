@@ -1,4 +1,5 @@
 import { defineComponent, ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import * as api from '../service/TranslatorService'
@@ -17,6 +18,9 @@ function renderMarkdown(text?: string): string {
 export default defineComponent({
   name: 'TranslatorView',
   setup() {
+    const router = useRouter()
+    function goBack() { router.push('/') }
+
     const activeTab = ref<'zh2en' | 'en2zh' | 'settings'>('zh2en')
 
     // ---- streaming (Socket.IO) ----
@@ -223,6 +227,7 @@ export default defineComponent({
     })
 
     return {
+      goBack,
       activeTab, settings, modelOptions, savingSettings, saveSettings,
       cleanupDays, cleaning, runCleanup,
       usageSummary, fmtUsage, renderMarkdown,

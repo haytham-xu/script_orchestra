@@ -3,9 +3,12 @@
     <el-card class="main-card">
       <template #header>
         <div class="card-header">
-          <div>
-            <h2>Duplicate Image Finder</h2>
-            <span class="subtitle">Find and remove duplicate images using perceptual hashing</span>
+          <div style="display:flex;flex-direction:row;align-items:center;gap:10px;flex-shrink:0">
+            <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
+            <div>
+              <h2>Duplicate Image Finder</h2>
+              <span class="subtitle">Find and remove duplicate images using perceptual hashing</span>
+            </div>
           </div>
           <el-button @click="showWhitelistDrawer = true">⚙️ Settings</el-button>
         </div>
@@ -1283,8 +1286,12 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import { CircleCheck } from '@element-plus/icons-vue'
 import { useDuplicateFinderView } from './DuplicateFinderView'
+
+const router = useRouter()
+function goBack() { router.push('/') }
 
 const {
   // Data

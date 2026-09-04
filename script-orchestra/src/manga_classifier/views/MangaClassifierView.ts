@@ -27,6 +27,8 @@ export default defineComponent({
   components: { CategoryButtonCardComponment, Setting, RefreshLeft, FolderOpened },
   setup() {
     const router = useRouter()
+    function goBack() { router.push('/') }
+
     const currentFolderName = ref<string>('')
     const categoryButtonCardJSON = ref<ButtonConfigJSON | null>(null);
     const currentFileList = ref<FileList| null>(null);
@@ -400,6 +402,7 @@ export default defineComponent({
     })
 
     return {
+      goBack,
       categoryButtonCardJSON,
       currentFolderName,
       currentFileList,

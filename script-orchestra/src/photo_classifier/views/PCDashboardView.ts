@@ -83,6 +83,7 @@ export default defineComponent({
     })
 
     return {
+      goBack: () => router.push('/'),
       photoClassifierStore,
       goToDefaultGroup,
       goToBatchSelect,

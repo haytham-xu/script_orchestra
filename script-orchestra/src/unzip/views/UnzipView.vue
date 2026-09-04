@@ -3,7 +3,10 @@
     <el-card class="main-card">
       <template #header>
         <div class="card-header">
-          <h2>Unzip Tool</h2>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
+            <h2>Unzip Tool</h2>
+          </div>
           <span class="subtitle">Extract archives locally</span>
         </div>
       </template>
@@ -55,7 +58,11 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import { useUnzipView } from './UnzipView'
+
+const router = useRouter()
+function goBack() { router.push('/') }
 
 const {
   inputPath,

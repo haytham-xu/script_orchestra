@@ -2,6 +2,7 @@
   <div class="kv">
     <header class="kv-topbar">
       <div class="kv-topbar-inner">
+        <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <h1>Knowledge Vault</h1>
         <!-- Network build controls hidden (the Network tab is retired for now). Kept for easy restore.
         <div class="kv-auto">

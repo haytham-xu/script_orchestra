@@ -1,4 +1,5 @@
 import { defineComponent, ref, onMounted, nextTick, onBeforeUnmount, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Network } from 'vis-network/standalone'
 import * as api from '../service/KnowledgeVaultService'
@@ -9,6 +10,9 @@ import type {
 export default defineComponent({
   name: 'KnowledgeVaultView',
   setup() {
+    const router = useRouter()
+    function goBack() { router.push('/') }
+
     const activeTab = ref<'capture' | 'search' | 'duplicates' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
       auto_build: false, embed_model: '', ai_model: '', relate_top_k: 5, stale_days: 90,
@@ -464,6 +468,7 @@ export default defineComponent({
     onBeforeUnmount(() => { if (network) { network.destroy(); network = null } })
 
     return {
+      goBack,
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,

@@ -1,6 +1,7 @@
 <template>
   <div class="mc">
     <header class="mc-topbar">
+      <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
       <h1>Memory Curve</h1>
       <div class="mc-mode">
         <span>Card mode:</span>

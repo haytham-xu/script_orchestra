@@ -2,6 +2,7 @@
   <div class="fg-repos">
     <header class="fg-topbar">
       <div class="fg-topbar-left">
+        <el-button @click="$router.push('/')" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <h1>File-Git</h1>
         <p class="fg-sub">Repositories for git-style cloud backup</p>
       </div>
@@ -174,6 +175,12 @@ function formatTime(iso: string) {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+}
+
+.fg-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .fg-topbar-left h1 {

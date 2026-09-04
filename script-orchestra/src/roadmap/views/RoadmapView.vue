@@ -1,6 +1,7 @@
 <template>
   <div class="roadmap-container" @click="handleClickOutside">
     <el-header class="header">
+      <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
       <h1>Roadmap - Multi-Dimension Kanban Board</h1>
       <el-button :icon="Setting" circle @click="openSettings" />
     </el-header>

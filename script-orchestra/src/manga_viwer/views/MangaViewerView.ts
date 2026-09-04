@@ -690,6 +690,7 @@ export default defineComponent({
 
     return {
       // Navigation
+      goBack: () => router.push('/'),
       goToRandom,
       goToSettings,
       goToBatch,

@@ -3,6 +3,7 @@
     <!-- Header -->
     <div class="header">
       <div class="header-left">
+        <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <span class="header-title">Photo Classifier</span>
       </div>
       <div class="header-right">

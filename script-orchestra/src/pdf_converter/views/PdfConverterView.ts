@@ -1,4 +1,5 @@
 import { defineComponent, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   convertPdfToImages,
   convertImagesToPdf,
@@ -21,6 +22,9 @@ interface FolderQueueItem {
 export default defineComponent({
   name: 'PdfConverterView',
   setup() {
+    const router = useRouter()
+    function goBack() { router.push('/') }
+
     // Conversion mode: 'folder-to-pdf' is default, then 'images-to-pdf', 'merge-pdfs', 'pdf-to-images'
     const conversionMode = ref<'pdf-to-images' | 'images-to-pdf' | 'folder-to-pdf' | 'merge-pdfs'>('folder-to-pdf')
 
@@ -430,6 +434,7 @@ export default defineComponent({
     }
 
     return {
+      goBack,
       conversionMode,
       // PDF to Images
       pdfFile,

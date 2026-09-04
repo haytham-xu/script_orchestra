@@ -8,6 +8,7 @@
           <!-- DEPRECATED: standalone Random page hidden for now (kept, not removed).
           <el-button type="primary" size="small" @click="goToRandom">🎲 Random</el-button>
           -->
+          <el-button size="small" @click="goBack">← Home</el-button>
           <el-button type="success" size="small" @click="goToBatch">🛠️ Batch</el-button>
           <!-- DEPRECATED: Import page hidden for now (kept, not removed).
           <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>

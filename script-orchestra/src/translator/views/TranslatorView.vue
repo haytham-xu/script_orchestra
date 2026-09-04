@@ -2,6 +2,7 @@
   <div class="tr">
     <header class="tr-topbar">
       <div class="tr-topbar-inner">
+        <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <h1>Translator</h1>
         <span class="tr-sub">Copilot-backed · zh ↔ en</span>
         <div v-if="usageSummary && usageSummary.count" class="tr-usage-header">

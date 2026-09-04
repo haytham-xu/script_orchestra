@@ -2,6 +2,7 @@
   <div v-loading.fullscreen.lock="classifyBusy" element-loading-text="处理中…" element-loading-background="rgba(255,255,255,0.4)">
     <el-container>
       <el-header>
+        <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <span class="mc-title" :style="{ fontSize: titleFontSize }">{{ currentFolderName }}</span>
         <div v-if="!isEmpty" class="mc-progress">
           <input
@@ -125,8 +126,9 @@
 
 .el-header {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
+  gap: 10px;
   height: 40px;
   font-size: 20px;
   font-weight: bold;
@@ -162,7 +164,7 @@
 }
 .mc-progress {
   position: absolute;
-  left: 12px;
+  left: 48px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;

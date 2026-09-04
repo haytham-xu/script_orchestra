@@ -6,11 +6,14 @@
     <el-card class="main-card">
       <template #header>
         <div class="card-header">
-          <div>
-            <h2>Video Duplicate Finder</h2>
-            <span class="subtitle">
-              N-frame perceptual hash · finds and removes duplicate videos
-            </span>
+          <div style="display:flex;flex-direction:row;align-items:center;gap:10px;flex-shrink:0">
+            <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
+            <div>
+              <h2>Video Duplicate Finder</h2>
+              <span class="subtitle">
+                N-frame perceptual hash · finds and removes duplicate videos
+              </span>
+            </div>
           </div>
           <div class="header-buttons">
             <el-button
@@ -872,9 +875,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { CircleCheck } from '@element-plus/icons-vue'
-
 import { useVideoDuplicateFinderView } from './VideoDuplicateFinderView'
+
+const router = useRouter()
+function goBack() { router.push('/') }
 
 // Settings drawer visibility is local to the .vue (not stateful across app)
 const showSettingsDrawer = ref(false)
