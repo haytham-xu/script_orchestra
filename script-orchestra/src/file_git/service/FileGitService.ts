@@ -166,6 +166,43 @@ export interface RebuildCloudIndexResponse {
 
 export type CleanupMode = 'expired' | 'all'
 
+export interface FileTreeEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number | null
+}
+
+export interface FileTreeResponse {
+  success: boolean
+  entries: FileTreeEntry[]
+  path: string
+  error?: string
+}
+
+export interface QueueItem {
+  key: string
+  path: string
+  action: string
+  status: 'TODO' | 'IN_PROGRESS' | 'DONE' | 'ERROR'
+  size: number
+  retry_count: number
+  last_error?: string | null
+}
+
+export interface QueueResponse {
+  success: boolean
+  lock: boolean
+  action_type: string | null
+  action_folder: string | null
+  items: QueueItem[]
+  total: number
+  done: number
+  in_progress: number
+  error: number
+  todo: number
+}
+
 export interface CleanupDryRunResponse {
   success: boolean
   message?: string
@@ -258,6 +295,16 @@ export class FileGitService {
     repoId: string,
   ): Promise<{ success: boolean; message?: string; error?: string }> {
     const { data } = await axios.post(repoUrl(repoId, '/open-folder'))
+    return data
+  }
+
+  static async getFilesTree(repoId: string, path: string = ''): Promise<FileTreeResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/files/tree'), { params: { path } })
+    return data
+  }
+
+  static async getQueue(repoId: string): Promise<QueueResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/queue'))
     return data
   }
 

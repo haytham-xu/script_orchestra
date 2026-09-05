@@ -100,6 +100,51 @@ class IndexService:
     # ---- local_index.json read/write ---------------------------------
 
     @staticmethod
+    def list_dir(
+        local_root: str,
+        rel_path: str = "",
+    ) -> list:
+        """List one level of the local directory tree.
+
+        Returns a list of dicts:
+            { name, path, is_dir, size }
+
+        ``rel_path`` is the POSIX-style path relative to ``local_root``.
+        Hidden entries (starting with '.') are excluded.
+        Directories have size=None; files have their byte size.
+        """
+        abs_path = os.path.join(local_root, rel_path) if rel_path else local_root
+        if not os.path.isdir(abs_path):
+            return []
+        entries = []
+        try:
+            names = sorted(os.listdir(abs_path))
+        except PermissionError:
+            return []
+        for name in names:
+            if name.startswith("."):
+                continue
+            full = os.path.join(abs_path, name)
+            child_rel = f"{rel_path}/{name}" if rel_path else name
+            child_rel = _normalize_middle_path(child_rel)
+            is_dir = os.path.isdir(full)
+            size = None
+            if not is_dir:
+                try:
+                    size = os.path.getsize(full)
+                except OSError:
+                    size = 0
+            entries.append({
+                "name": name,
+                "path": child_rel,
+                "is_dir": is_dir,
+                "size": size,
+            })
+        # directories first, then files, each group alphabetically
+        entries.sort(key=lambda e: (0 if e["is_dir"] else 1, e["name"].lower()))
+        return entries
+
+    @staticmethod
     def load_local_index(repo_root: str) -> Dict[str, IndexEntry]:
         path = os.path.join(repo_root, ".fgit", "local_index.json")
         if not os.path.exists(path):

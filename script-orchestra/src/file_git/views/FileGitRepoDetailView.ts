@@ -7,13 +7,15 @@
  *   Diff, Rebuild Local Index, Rebuild Cloud Index,
  *   Cleanup, Resume (visible only when lock=true)
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   FileGitService,
   type CleanupMode,
   type DiffEntry,
+  type FileTreeEntry,
+  type QueueItem,
   type QueueStatus,
   type RepoConfig,
   type Repository,
@@ -47,6 +49,39 @@ export function useFileGitRepoDetail() {
   // Manual upload state
   const manualSubpath = ref('')
 
+  // File tree (lazy, one level at a time)
+  const fileTreeKey = ref(0)   // bump to force el-tree remount on refresh
+  const filesLoading = ref(false)
+
+  async function loadFileTreeChildren(node: any, resolve: (data: any[]) => void) {
+    const relPath = node.level === 0 ? '' : node.data.path
+    try {
+      const res = await FileGitService.getFilesTree(repoId.value, relPath)
+      if (res.success) {
+        resolve(res.entries.map((e: FileTreeEntry) => ({
+          label: e.name,
+          path: e.path,
+          is_dir: e.is_dir,
+          size: e.size,
+          isLeaf: !e.is_dir,
+        })))
+      } else {
+        resolve([])
+      }
+    } catch {
+      resolve([])
+    }
+  }
+
+  function refreshFileTree() {
+    fileTreeKey.value += 1
+  }
+
+  // Queue panel
+  const queueItems = ref<QueueItem[]>([])
+  const queueStats = ref({ total: 0, done: 0, in_progress: 0, error: 0, todo: 0 })
+  let queuePollTimer: ReturnType<typeof setTimeout> | null = null
+
   // Baidu root prefix (from global settings) — used to preview the final
   // remote path the repo maps to on the cloud.
   const rootPrefix = ref('')
@@ -73,6 +108,9 @@ export function useFileGitRepoDetail() {
   const syncDirty = ref(false)
 
   // el-tree lazy loader: fetch a node's children from the backend.
+  // Pass the tree instance ref so we can setChecked after resolve.
+  const syncTreeRef = ref<any>(null)
+
   async function loadSyncChildren(node: any, resolve: (data: any[]) => void) {
     const parentPath = node.level === 0 ? '' : node.data.path
     try {
@@ -84,14 +122,24 @@ export function useFileGitRepoDetail() {
         syncDirty.value = false
       }
       const children = (res as any).children || []
-      resolve(children.map((c: any) => ({
+      const nodes = children.map((c: any) => ({
         label: c.name,
         path: c.path,
         isLeaf: !c.is_dir,
         kind: c.kind,
         synced: c.synced,
         checked: c.checked,
-      })))
+      }))
+      resolve(nodes)
+      // Apply checked state after el-tree has registered the new nodes.
+      // nextTick alone isn't enough for lazy trees — use a short timeout.
+      setTimeout(() => {
+        const tree = syncTreeRef.value
+        if (!tree) return
+        for (const n of nodes) {
+          tree.setChecked(n.path, n.checked, false)
+        }
+      }, 50)
     } catch (e: any) {
       ElMessage.error(e.response?.data?.error || e.message || 'Failed to load sync tree')
       resolve([])
@@ -395,13 +443,45 @@ export function useFileGitRepoDetail() {
     () => FileGitService.openFolder(repoId.value),
   )
 
+  async function loadQueue() {
+    try {
+      const res = await FileGitService.getQueue(repoId.value)
+      if (res.success) {
+        queueItems.value = res.items
+        queueStats.value = {
+          total: res.total,
+          done: res.done,
+          in_progress: res.in_progress,
+          error: res.error,
+          todo: res.todo,
+        }
+        // Auto-poll while items are active
+        if (res.lock && (res.in_progress > 0 || res.todo > 0)) {
+          queuePollTimer = setTimeout(loadQueue, 2000)
+        } else {
+          queuePollTimer = null
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  function stopQueuePoll() {
+    if (queuePollTimer !== null) {
+      clearTimeout(queuePollTimer)
+      queuePollTimer = null
+    }
+  }
+
   function goBack() {
     router.push('/file-git')
   }
 
   // ------------------------------------------------------------------
 
-  onMounted(loadAll)
+  onMounted(() => { loadAll(); loadQueue() })
+  onUnmounted(stopQueuePoll)
 
   return {
     repoId,
@@ -412,6 +492,7 @@ export function useFileGitRepoDetail() {
     finalRemotePath,
     syncDecision,
     syncDirty,
+    syncTreeRef,
     loadSyncChildren,
     toggleSyncNode,
     saveSyncFilter,
@@ -459,5 +540,12 @@ export function useFileGitRepoDetail() {
     cleanup,
     openFolder,
     goBack,
+    fileTreeKey,
+    filesLoading,
+    loadFileTreeChildren,
+    refreshFileTree,
+    queueItems,
+    queueStats,
+    loadQueue,
   }
 }

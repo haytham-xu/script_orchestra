@@ -16,6 +16,7 @@
           {{ repo?.status ?? 'unknown' }}
         </el-tag>
         <el-button :icon="FolderOpened" size="small" @click="openFolder">Open Folder</el-button>
+        <el-button :icon="Setting" size="small" @click="goToSettings">Settings</el-button>
         <el-button :icon="Refresh" size="small" @click="loadAll">Refresh</el-button>
       </div>
     </header>
@@ -73,187 +74,63 @@
         </div>
       </section>
 
-      <section class="fg-card">
-        <h2>Manual Upload</h2>
-        <p class="fg-hint">
-          For large batches. {{ isEncrypted
-            ? 'Files are encrypted into .fgit/buffer/; drag them into the cloud APP by hand.'
-            : 'Drag source files into the cloud APP directly.' }}
-        </p>
-        <el-form label-position="top" style="margin-bottom: 12px;">
-          <el-form-item label="Subpath (relative, empty = whole repo)">
-            <el-input
-              v-model="manualSubpath"
-              placeholder="e.g. photos/2024"
-              :disabled="isLocked" />
-          </el-form-item>
-        </el-form>
-        <div class="fg-actions">
-          <el-button
-            :icon="Upload"
-            :disabled="!canManualUploadPrepare"
-            @click="manualUpload">
-            Manual Upload — prepare
-          </el-button>
-          <el-button
-            :icon="Check"
-            :disabled="!canPostManualUpload"
-            @click="postManualUpload">
-            Post Manual Upload — confirm
-          </el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Manual Download</h2>
-        <p class="fg-hint">
-          {{ isEncrypted
-            ? 'Download ciphertext from the cloud APP into .fgit/buffer/; the tool decrypts on Post.'
-            : 'Download files from the cloud APP directly into the repo.' }}
-        </p>
-        <div class="fg-actions">
-          <el-button
-            :icon="Download"
-            :disabled="!canPreManualDownload"
-            @click="preManualDownload">
-            Pre Manual Download — acquire lock
-          </el-button>
-          <el-button
-            :icon="Check"
-            :disabled="!canPostManualDownload"
-            @click="postManualDownload">
-            Post Manual Download — decrypt &amp; reconcile
-          </el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Diff</h2>
-        <p class="fg-hint">Compare local files against cloud_index mirror. Read-only; safe while locked.</p>
-        <div class="fg-actions">
-          <el-button :icon="View" :disabled="!canDiff" @click="runDiff">Compute Diff</el-button>
-        </div>
-
-        <div v-if="diffMessage" class="fg-diff-summary">{{ diffMessage }}</div>
-        <div v-if="diffAdded.length || diffModified.length || diffDeleted.length" class="fg-diff-lists">
-          <div v-if="diffAdded.length" class="fg-diff-group">
-            <h3><el-icon><Plus /></el-icon> Added ({{ diffAdded.length }})</h3>
-            <ul>
-              <li v-for="e in diffAdded" :key="'a_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
+      <section class="fg-card" v-if="queueStats.total > 0 || queue?.lock">
+        <div class="fg-files-header">
+          <h2>
+            Queue
+            <span class="fg-files-count">({{ queueStats.total }})</span>
+          </h2>
+          <div class="fg-files-toolbar">
+            <el-tag v-if="queueStats.in_progress > 0" type="warning" size="small">{{ queueStats.in_progress }} active</el-tag>
+            <el-tag v-if="queueStats.error > 0" type="danger" size="small">{{ queueStats.error }} errors</el-tag>
+            <el-tag v-if="queueStats.done > 0" type="success" size="small">{{ queueStats.done }} done</el-tag>
+            <el-button size="small" :icon="Refresh" @click="loadQueue">Refresh</el-button>
           </div>
-          <div v-if="diffModified.length" class="fg-diff-group">
-            <h3><el-icon><Refresh /></el-icon> Modified ({{ diffModified.length }})</h3>
-            <ul>
-              <li v-for="e in diffModified" :key="'m_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
+        </div>
+        <el-progress
+          v-if="queueStats.total > 0"
+          :percentage="Math.round((queueStats.done / queueStats.total) * 100)"
+          :status="queueStats.error > 0 ? 'exception' : queueStats.done === queueStats.total ? 'success' : undefined"
+          style="margin-bottom:10px" />
+        <div class="fg-files-list" style="max-height:300px">
+          <div
+            v-for="item in queueItems"
+            :key="item.key"
+            class="fg-file-row">
+            <span class="fg-queue-status" :class="`fg-q-${item.status.toLowerCase()}`">
+              {{ item.status === 'IN_PROGRESS' ? '⟳' : item.status === 'DONE' ? '✓' : item.status === 'ERROR' ? '✗' : '·' }}
+            </span>
+            <span class="fg-file-path mono">{{ item.path }}</span>
+            <span class="fg-queue-action">{{ item.action }}</span>
+            <span class="fg-size">{{ formatSize(item.size) }}</span>
           </div>
-          <div v-if="diffDeleted.length" class="fg-diff-group">
-            <h3><el-icon><Delete /></el-icon> Deleted ({{ diffDeleted.length }})</h3>
-            <ul>
-              <li v-for="e in diffDeleted" :key="'d_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
+          <div v-if="queueItems.length === 0" class="fg-files-empty">No queued items.</div>
+        </div>
+        <div v-if="queueItems.some(i => i.last_error)" style="margin-top:8px">
+          <div v-for="item in queueItems.filter(i => i.last_error)" :key="'e_'+item.key" class="fg-queue-error">
+            <span class="mono">{{ item.path }}</span>: {{ item.last_error }}
           </div>
         </div>
       </section>
 
       <section class="fg-card">
-        <h2>Index &amp; Cleanup</h2>
-        <div class="fg-actions">
-          <el-button :icon="Refresh" :disabled="!canRebuildLocal" @click="rebuildLocalIndex">
-            Rebuild Local Index
-          </el-button>
-          <el-button :icon="Refresh" :disabled="!canRebuildCloud" @click="rebuildCloudIndex">
-            Rebuild Cloud Index…
-          </el-button>
-          <el-button :icon="Delete" :disabled="!canCleanup" @click="cleanup('expired')">
-            Cleanup Expired
-          </el-button>
-          <el-button :icon="Delete" type="danger" plain :disabled="!canCleanup" @click="cleanup('all')">
-            Cleanup All
-          </el-button>
+        <div class="fg-files-header">
+          <h2>Files</h2>
+          <el-button size="small" :icon="Refresh" :loading="filesLoading" @click="refreshFileTree">Refresh</el-button>
         </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Config</h2>
-        <el-form v-if="config" label-position="top">
-          <el-form-item label="Local path">
-            <el-input :model-value="config.local_path" disabled />
-          </el-form-item>
-          <el-form-item label="Mode (immutable)">
-            <el-input :model-value="config.mode" disabled />
-          </el-form-item>
-          <el-form-item label="Remote path (cloud folder)">
-            <el-input v-model="editRemotePath" placeholder="/backup/photos" spellcheck="false" />
-            <p class="fg-hint" v-if="finalRemotePath">
-              Final cloud path: <code>{{ finalRemotePath }}</code>
-            </p>
-          </el-form-item>
-          <el-form-item v-if="config.mode === 'ENCRYPTED'" label="Password">
-            <el-input
-              v-model="editPassword"
-              type="password"
-              show-password
-              :placeholder="config.password_set ? 'set already — enter new to change' : 'set a password'"
-              spellcheck="false" />
-            <p class="fg-hint">
-              Stored in <code>.fgit/config.json</code> (that folder is gitignored).
-              AES-256-GCM keyed by scrypt(password, remote_path).
-            </p>
-          </el-form-item>
-          <el-form-item label="Auto-cleanup retention (days)">
-            <el-input-number v-model="editHookDays" :min="0" :max="365" />
-          </el-form-item>
-        </el-form>
-        <div class="fg-actions">
-          <el-button type="primary" @click="saveConfig" :loading="isBusy">Save Config</el-button>
-          <el-button @click="loadConfig">Discard</el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Sync Filter</h2>
-        <p class="fg-hint">
-          Choose which folders participate in push/pull. Changes apply on the
-          next push/pull, not immediately. Unchecking a folder moves its local
-          files to the buffer (remote copy is kept). Refresh the remote view
-          with <b>Rebuild Cloud Index</b> above.
-        </p>
         <el-tree
-          :key="repoId"
+          :key="fileTreeKey"
           lazy
-          :load="loadSyncChildren"
+          :load="loadFileTreeChildren"
           :props="{ label: 'label', isLeaf: 'isLeaf' }"
-          node-key="path"
-          show-checkbox
-          :check-strictly="false"
-          @check-change="(data: any, checked: boolean) => toggleSyncNode(data.path, checked)">
+          node-key="path">
           <template #default="{ data }">
-            <span class="fg-sync-node" :class="{ 'fg-sync-danger': !data.checked && data.kind === 'local-only' }">
+            <span class="fg-tree-node">
               <span>{{ data.label }}</span>
-              <el-tag
-                size="small"
-                :type="data.kind === 'both' ? 'success' : data.kind === 'local-only' ? 'info' : 'warning'">
-                {{ data.kind === 'both' ? 'backed up' : data.kind === 'local-only' ? 'local only' : 'remote only' }}
-              </el-tag>
-              <span v-if="!data.checked && data.kind === 'local-only'" class="fg-sync-warn">
-                not backed up — sync will refuse
-              </span>
+              <span v-if="!data.is_dir" class="fg-size">{{ formatSize(data.size) }}</span>
             </span>
           </template>
         </el-tree>
-        <div class="fg-actions">
-          <el-button type="primary" :disabled="!syncDirty" @click="saveSyncFilter">
-            Save Sync Filter
-          </el-button>
-        </div>
       </section>
 
     </main>
@@ -262,32 +139,31 @@
 
 <script lang="ts" setup>
 import { computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
-  ArrowLeft, FolderOpened, Refresh, Upload, Download, Check,
-  View, Plus, Delete, Lock,
+  ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting,
 } from '@element-plus/icons-vue'
+
+const router = useRouter()
+const route = useRoute()
 
 const view = useFileGitRepoDetail()
 const {
-  repo, queue, config, isLoading, isBusy,
+  repo, queue, isLoading, isBusy,
   isLocked, lockActionType, pendingUploadCount, pendingQueueCount,
-  isEncrypted,
   canPushPull, canResume,
-  canManualUploadPrepare, canPostManualUpload,
-  canPreManualDownload, canPostManualDownload,
-  canDiff, canRebuildLocal, canRebuildCloud, canCleanup,
-  diffAdded, diffModified, diffDeleted, diffMessage,
-  editPassword, editRemotePath, editHookDays, manualSubpath,
-  finalRemotePath,
-  repoId, syncDirty, loadSyncChildren, toggleSyncNode, saveSyncFilter,
-  loadAll, loadConfig,
+  repoId,
+  loadAll,
   push, pull, resume,
-  manualUpload, postManualUpload,
-  preManualDownload, postManualDownload,
-  runDiff, rebuildLocalIndex, rebuildCloudIndex,
-  cleanup, openFolder, goBack, saveConfig,
+  openFolder, goBack,
+  fileTreeKey, filesLoading, loadFileTreeChildren, refreshFileTree,
+  queueItems, queueStats, loadQueue,
 } = view
+
+function goToSettings() {
+  router.push(`/file-git/${route.params.id}/settings`)
+}
 
 const lockLabel = computed(() => {
   switch (lockActionType.value) {
@@ -307,7 +183,7 @@ function statusColor(status?: string) {
 }
 
 function formatSize(n: number) {
-  if (!Number.isFinite(n)) return '?'
+  if (!Number.isFinite(n) || n < 0) return '?'
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
@@ -401,55 +277,37 @@ function formatSize(n: number) {
   flex-wrap: wrap;
   gap: 8px;
 }
-.fg-sync-node {
+.fg-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.fg-files-header h2 { margin: 0; }
+.fg-tree-node {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
-.fg-sync-danger {
-  color: #c0392b;
-}
-.fg-sync-warn {
-  font-size: 11px;
-  color: #c0392b;
-}
-.fg-diff-summary {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: #f5f5f7;
-  border-radius: 8px;
-  font-size: 12px;
-}
-.fg-diff-lists {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.fg-diff-group h3 {
+.fg-queue-status {
+  width: 16px;
+  flex-shrink: 0;
   font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  text-align: center;
 }
-.fg-diff-group ul {
-  margin: 0;
-  padding-left: 20px;
-  max-height: 200px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-.fg-diff-group li {
-  padding: 2px 0;
-}
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
-}
-.fg-size {
-  color: #86868b;
+.fg-q-done { color: #34c759; }
+.fg-q-in_progress { color: #ff9500; }
+.fg-q-error { color: #ff3b30; }
+.fg-q-todo { color: #86868b; }
+.fg-queue-action {
   font-size: 11px;
+  color: #86868b;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.fg-queue-error {
+  font-size: 11px;
+  color: #ff3b30;
+  padding: 2px 0;
 }
 </style>

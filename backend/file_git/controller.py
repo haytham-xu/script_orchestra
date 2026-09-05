@@ -38,6 +38,7 @@ from .command import (
 from .repository_manager import RepositoryManager
 from .service import QueueService
 from .service import sync_filter_service as SyncFilterService
+from .service.index_service import IndexService
 from .settings_manager import SettingsManager
 from . import baidu_oauth
 
@@ -123,6 +124,55 @@ class RepoOpenFolderResource(Resource):
             else:
                 return _err(f"Unsupported OS: {system}", 400)
             return _ok({"message": "Folder opened successfully"})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/files/tree')
+class RepoFilesTreeResource(Resource):
+    def get(self, repo_id):
+        try:
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            rel_path = request.args.get('path', '')
+            entries = IndexService.list_dir(repo['local_path'], rel_path)
+            return _ok({"entries": entries, "path": rel_path})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/queue')
+class RepoQueueResource(Resource):
+    def get(self, repo_id):
+        try:
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            qstate = QueueService.load(repo['local_path'])
+            items = [
+                {
+                    "key": k,
+                    "path": v.get("middle_path", v.get("encoded_path", k)),
+                    "action": v.get("action", ""),
+                    "status": v.get("status", ""),
+                    "size": v.get("size", 0),
+                    "retry_count": v.get("retry_count", 0),
+                    "last_error": v.get("last_error"),
+                }
+                for k, v in qstate.queue.items()
+            ]
+            return _ok({
+                "lock": qstate.lock,
+                "action_type": qstate.action_type,
+                "action_folder": qstate.action_folder,
+                "items": items,
+                "total": len(items),
+                "done": sum(1 for i in items if i["status"] == "DONE"),
+                "in_progress": sum(1 for i in items if i["status"] == "IN_PROGRESS"),
+                "error": sum(1 for i in items if i["status"] == "ERROR"),
+                "todo": sum(1 for i in items if i["status"] == "TODO"),
+            })
         except Exception as exc:
             return _err(str(exc))
 
