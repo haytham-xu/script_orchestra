@@ -56,6 +56,14 @@
           <el-button type="danger" :disabled="selectedLiveTabIds.size === 0" @click="closeSelectedLiveOnly">
             Close selected
           </el-button>
+          <el-input
+            v-model="liveKeywordSelect"
+            clearable
+            placeholder="Keyword to select"
+            style="width: 200px"
+            @keyup.enter="selectLiveByKeyword"
+          />
+          <el-button @click="selectLiveByKeyword">Select by keyword</el-button>
           <el-switch
             v-model="safeIncludePinned"
             class="with-label"
@@ -169,6 +177,7 @@
             Restore selected ({{ selectedArchiveIds.size }})
           </el-button>
           <el-button :disabled="selectedArchiveIds.size === 0" @click="clearArchiveBasket">Clear basket</el-button>
+          <el-button @click="openReplaceUrlDialog">Replace URL</el-button>
         </div>
 
         <div v-if="healthJob" class="health-job-box">
@@ -329,6 +338,50 @@
       <template #footer>
         <el-button @click="safePreviewVisible = false">Cancel</el-button>
         <el-button type="primary" @click="runSafeArchive">Run safe archive</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="replaceUrlVisible" title="Replace URL" width="760px">
+      <el-form label-width="80px">
+        <el-form-item label="Find">
+          <el-input v-model="replaceUrlFind" placeholder="e.g. old.domain.com" />
+        </el-form-item>
+        <el-form-item label="Replace">
+          <el-input v-model="replaceUrlReplace" placeholder="e.g. new.domain.com" />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="selectedArchiveIds.size > 0"
+        type="info"
+        :closable="false"
+        :title="`Scope: ${selectedArchiveIds.size} selected record(s). Clear basket to apply to all.`"
+        style="margin-bottom: 10px"
+      />
+      <div v-if="replaceUrlPreviewed">
+        <div style="margin-bottom: 6px; font-size: 13px; color: #475569">
+          Preview: {{ replaceUrlPreviewRows.length }} record(s) will be updated
+        </div>
+        <div v-if="replaceUrlPreviewRows.length > 0" class="replace-preview-list">
+          <div v-for="row in replaceUrlPreviewRows" :key="row.id" class="replace-preview-row">
+            <span class="replace-preview-title">{{ row.title || row.old_url }}</span>
+            <div class="replace-preview-urls">
+              <span class="mono replace-old">{{ row.old_url }}</span>
+              <span class="replace-arrow">→</span>
+              <span class="mono replace-new">{{ row.new_url }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="replaceUrlVisible = false">Cancel</el-button>
+        <el-button @click="previewReplaceUrl">Preview</el-button>
+        <el-button
+          type="primary"
+          :disabled="!replaceUrlPreviewed || replaceUrlPreviewRows.length === 0"
+          @click="applyReplaceUrl"
+        >
+          Apply ({{ replaceUrlPreviewRows.length }})
+        </el-button>
       </template>
     </el-dialog>
 
@@ -589,6 +642,50 @@
   display: flex;
   gap: 8px;
   width: 100%;
+}
+.replace-preview-list {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+}
+.replace-preview-row {
+  padding: 6px 0;
+  border-top: 1px solid #f1f5f9;
+}
+.replace-preview-row:first-child {
+  border-top: none;
+}
+.replace-preview-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #0f172a;
+  display: block;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.replace-preview-urls {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.replace-old {
+  color: #b91c1c;
+  text-decoration: line-through;
+  word-break: break-all;
+}
+.replace-new {
+  color: #15803d;
+  word-break: break-all;
+}
+.replace-arrow {
+  color: #64748b;
+  flex-shrink: 0;
 }
 
 @media (max-width: 1100px) {

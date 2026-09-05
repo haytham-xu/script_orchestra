@@ -1714,6 +1714,52 @@ class TabArchiveService:
         archive_repo.set_record_labels(record_id, label_ids)
         return archive_repo.get_record_by_id(record_id)
 
+    def replace_url(
+        self,
+        find: str,
+        replace: str,
+        record_ids: Optional[List[int]] = None,
+        preview: bool = False,
+    ) -> Dict[str, Any]:
+        if not find:
+            return {"error": "find must not be empty"}
+
+        all_records = archive_repo.list_records(limit=50000)
+        if record_ids is not None:
+            id_set = set(record_ids)
+            all_records = [r for r in all_records if r["id"] in id_set]
+
+        rows = []
+        for r in all_records:
+            old_url = r.get("url") or ""
+            if find not in old_url:
+                continue
+            new_url = old_url.replace(find, replace)
+            rows.append({
+                "id": r["id"],
+                "title": r.get("title") or "",
+                "old_url": old_url,
+                "new_url": new_url,
+            })
+
+        if preview:
+            return {"preview": rows, "count": len(rows)}
+
+        updated = 0
+        for row in rows:
+            new_url = row["new_url"]
+            new_domain = self._domain_from_url(new_url)
+            new_normalized = self.normalize_url(new_url) or new_url
+            archive_repo.update_record_url(
+                row["id"],
+                url=new_url,
+                domain=new_domain,
+                normalized_url=new_normalized,
+            )
+            updated += 1
+
+        return {"updated": updated}
+
 
 _service_singleton = TabArchiveService()
 

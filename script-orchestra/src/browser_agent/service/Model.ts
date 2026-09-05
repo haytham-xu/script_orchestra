@@ -228,3 +228,17 @@ export interface TabArchiveHealthCheckJob {
   last_error: string
   progress_percent: number
 }
+
+export interface TabArchiveReplaceUrlPreviewRow {
+  id: number
+  title: string
+  old_url: string
+  new_url: string
+}
+
+export interface TabArchiveReplaceUrlResult {
+  preview?: TabArchiveReplaceUrlPreviewRow[]
+  count?: number
+  updated?: number
+  error?: string
+}

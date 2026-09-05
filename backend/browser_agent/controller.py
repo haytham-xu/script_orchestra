@@ -332,6 +332,37 @@ class TabArchiveRecordLabelsResource(Resource):
         return {"record": result}, 200
 
 
+@ns.route("/tab-archive/records/replace-url")
+class TabArchiveReplaceUrlResource(Resource):
+    def post(self):
+        data = request.json or {}
+        find = str(data.get("find") or "").strip()
+        replace = str(data.get("replace") or "")
+        preview = _as_bool(data.get("preview"), default=False)
+        record_ids_raw = data.get("record_ids")
+
+        if not find:
+            return {"error": "find must not be empty"}, 400
+
+        record_ids = None
+        if record_ids_raw is not None:
+            if not isinstance(record_ids_raw, list) or not all(isinstance(x, int) for x in record_ids_raw):
+                return {"error": "record_ids must be a list of integers"}, 400
+            record_ids = record_ids_raw
+
+        try:
+            result = get_tab_archive_service().replace_url(
+                find=find,
+                replace=replace,
+                record_ids=record_ids,
+                preview=preview,
+            )
+            return result, 200
+        except Exception as e:
+            logger.exception("tab_archive.api.replace_url_failed")
+            return {"error": str(e)}, 500
+
+
 @ns.route("/tab-archive/labels")
 class TabArchiveLabelsResource(Resource):
     def get(self):

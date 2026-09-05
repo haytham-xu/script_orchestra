@@ -18,6 +18,7 @@ import {
   tabArchiveSetRecordLabels,
   tabArchiveSnapshot,
   tabArchiveUpdateRecord,
+  tabArchiveReplaceUrl,
 } from '@/browser_agent/service/BrowserAgentService'
 import type {
   HeatLevel,
@@ -29,6 +30,7 @@ import type {
   TabArchiveRecord,
   TabArchiveRestoreResultRow,
   TabArchiveSafePreview,
+  TabArchiveReplaceUrlPreviewRow,
 } from '@/browser_agent/service/Model'
 
 type Pane = 'live' | 'archive'
@@ -182,6 +184,16 @@ export default defineComponent({
 
     const healthJob = ref<TabArchiveHealthCheckJob | null>(null)
     const healthScopeLabel = ref('')
+
+    // --- Live keyword select ---
+    const liveKeywordSelect = ref('')
+
+    // --- Archive replace URL ---
+    const replaceUrlVisible = ref(false)
+    const replaceUrlFind = ref('')
+    const replaceUrlReplace = ref('')
+    const replaceUrlPreviewRows = ref<TabArchiveReplaceUrlPreviewRow[]>([])
+    const replaceUrlPreviewed = ref(false)
 
     let searchTimer: number | undefined
     let healthPollTimer: number | undefined
@@ -875,6 +887,113 @@ export default defineComponent({
       }
     }
 
+    // --- Live: select by keyword ---
+
+    function selectLiveByKeyword() {
+      const kw = liveKeywordSelect.value.trim().toLowerCase()
+      if (!kw) {
+        ElMessage.info('Enter a keyword first')
+        return
+      }
+      const next = new Set(selectedLiveTabIds.value)
+      let added = 0
+      liveRows.value.forEach(row => {
+        const matches =
+          (row.title || '').toLowerCase().includes(kw) ||
+          (row.url || '').toLowerCase().includes(kw) ||
+          (row.domain || '').toLowerCase().includes(kw)
+        if (matches && !next.has(row.tab_id)) {
+          next.add(row.tab_id)
+          added++
+        }
+      })
+      selectedLiveTabIds.value = next
+      ElMessage.success(`Added ${added} tab(s) to selection`)
+    }
+
+    // --- Archive: replace URL ---
+
+    function openReplaceUrlDialog() {
+      replaceUrlFind.value = ''
+      replaceUrlReplace.value = ''
+      replaceUrlPreviewRows.value = []
+      replaceUrlPreviewed.value = false
+      replaceUrlVisible.value = true
+    }
+
+    async function previewReplaceUrl() {
+      if (!replaceUrlFind.value.trim()) {
+        ElMessage.warning('Find text must not be empty')
+        return
+      }
+      busy.value = true
+      try {
+        const scopeIds = selectedArchiveIds.value.size > 0
+          ? uniqueNumbers(Array.from(selectedArchiveIds.value))
+          : undefined
+        const result = await tabArchiveReplaceUrl({
+          find: replaceUrlFind.value,
+          replace: replaceUrlReplace.value,
+          record_ids: scopeIds,
+          preview: true,
+        })
+        replaceUrlPreviewRows.value = result.preview || []
+        replaceUrlPreviewed.value = true
+        if (replaceUrlPreviewRows.value.length === 0) {
+          ElMessage.info('No records match the find text')
+        }
+      } catch (error) {
+        ElMessage.error(errorMessage(error, 'Preview failed'))
+      } finally {
+        busy.value = false
+      }
+    }
+
+    async function applyReplaceUrl() {
+      if (!replaceUrlFind.value.trim()) {
+        ElMessage.warning('Find text must not be empty')
+        return
+      }
+      const count = replaceUrlPreviewRows.value.length
+      if (count === 0) {
+        ElMessage.info('Nothing to replace')
+        return
+      }
+      try {
+        await ElMessageBox.confirm(
+          `Replace URL in ${count} record(s)?`,
+          'Confirm replace',
+          {
+            type: 'warning',
+            confirmButtonText: 'Replace',
+            cancelButtonText: 'Cancel',
+          },
+        )
+      } catch {
+        return
+      }
+
+      busy.value = true
+      try {
+        const scopeIds = selectedArchiveIds.value.size > 0
+          ? uniqueNumbers(Array.from(selectedArchiveIds.value))
+          : undefined
+        const result = await tabArchiveReplaceUrl({
+          find: replaceUrlFind.value,
+          replace: replaceUrlReplace.value,
+          record_ids: scopeIds,
+          preview: false,
+        })
+        ElMessage.success(`Replaced URL in ${result.updated} record(s)`)
+        replaceUrlVisible.value = false
+        await loadSnapshot()
+      } catch (error) {
+        ElMessage.error(errorMessage(error, 'Replace failed'))
+      } finally {
+        busy.value = false
+      }
+    }
+
     function formatTime(text: string | null): string {
       if (!text) {
         return '-'
@@ -994,6 +1113,18 @@ export default defineComponent({
       heatTagType,
       formatTime,
       goBack: () => router.push('/browser-agent'),
+
+      liveKeywordSelect,
+      selectLiveByKeyword,
+
+      replaceUrlVisible,
+      replaceUrlFind,
+      replaceUrlReplace,
+      replaceUrlPreviewRows,
+      replaceUrlPreviewed,
+      openReplaceUrlDialog,
+      previewReplaceUrl,
+      applyReplaceUrl,
     }
   },
 })

@@ -13,6 +13,7 @@ import type {
   TabArchiveSafePreview,
   TabArchiveSnapshot,
   TabArchiveRecord,
+  TabArchiveReplaceUrlResult,
 } from './Model'
 
 export async function getTasks(): Promise<BrowserTask[]> {
@@ -215,6 +216,19 @@ export async function tabArchiveHealthCheckCancel(jobId?: string): Promise<{
     `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/cancel`,
     {},
     jobId ? { job_id: jobId } : {},
+  )
+}
+
+export async function tabArchiveReplaceUrl(payload: {
+  find: string
+  replace: string
+  record_ids?: number[]
+  preview: boolean
+}): Promise<TabArchiveReplaceUrlResult> {
+  return postRequest<TabArchiveReplaceUrlResult>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/records/replace-url`,
+    {},
+    payload,
   )
 }
 

@@ -516,6 +516,18 @@ def update_record(tab_id: int, patch: Dict[str, Any]) -> Optional[Dict[str, Any]
     return get_record_by_id(tab_id)
 
 
+def update_record_url(tab_id: int, *, url: str, domain: str, normalized_url: str) -> None:
+    now = _now_text()
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        f"UPDATE {TABLE_ARCHIVED_TAB} SET url = ?, domain = ?, normalized_url = ?, updated_at = ? WHERE id = ?",
+        (url, domain, normalized_url, now, int(tab_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
 def delete_record(tab_id: int) -> bool:
     conn = _conn()
     cur = conn.cursor()
