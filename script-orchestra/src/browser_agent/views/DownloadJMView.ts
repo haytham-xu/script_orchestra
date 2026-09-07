@@ -206,8 +206,8 @@ export default defineComponent({
     function statusTagType(status: string): '' | 'success' | 'warning' | 'danger' | 'info' {
       if (status === 'done') return 'success'
       if (status === 'error') return 'danger'
-      if (status === 'captcha_needed') return 'warning'
-      if (status === 'downloading' || status.startsWith('fetching_') || status === 'submitting_captcha') return 'info'
+      if (status === 'captcha_needed' || status === 'manual_queue') return 'warning'
+      if (status === 'captcha_auto' || status === 'downloading' || status.startsWith('fetching_') || status === 'submitting_captcha') return 'info'
       return ''
     }
     function fmtBytes(n: number): string {

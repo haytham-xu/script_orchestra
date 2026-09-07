@@ -5,22 +5,24 @@ backend login is impossible (site uses JS challenges); instead the browser
 extension hands the backend the user's live cookies + User-Agent, so the
 backend is effectively a proxy of the user's already-authed browser.
 
-Flow per source URL:
+V2 two-phase captcha flow:
 
-    source_url  ─▶ extract album_id from /album/<id>/…
-                ─▶ borrow cookies+UA from extension
-                ─▶ GET /album_download/<id>  (the download-prep page)
-                ─▶ parse HTML to get:
-                      * filename base from  <div itemprop="name">…</div>
-                      * captcha image URL   <img id="captcha_image" src=…>
-                      * form action + hidden fields around  <input name="verification">
-                ─▶ GET the captcha image, base64-encode it, stash into job status
-                ─▶ [wait for the user to submit the answer through the UI]
-                ─▶ POST the verification form with the answer
-                ─▶ Response either (a) redirects to the real download URL, or
-                   (b) returns a new captcha (wrong answer → retry)
-                ─▶ Stream the .zip to downloadPath, name = <itemprop=name> + ext
-                ─▶ Ask the extension to close the source tab
+Phase 1 — Auto (Tesseract OCR):
+    For each source URL / chapter, repeat up to _MAX_CAPTCHA_ATTEMPTS times:
+        • Refresh the prep page  (invalidates any other tab's captcha)
+        • Fetch the new captcha image
+        • Run improved-preprocessing + Tesseract; submit result regardless
+        • If server redirects → success, stream download
+        • If server returns a new captcha → retry loop
+    After _MAX_CAPTCHA_ATTEMPTS failures the item is placed in the manual queue
+    and processing continues with the next item.
+
+Phase 2 — Manual (human input):
+    For every item in the manual queue, one at a time:
+        • Refresh the prep page to get a fresh captcha
+        • Show captcha image in the UI; wait for the user to submit an answer
+        • If wrong, loop and show a fresh captcha
+        • If correct, stream download
 
 Only one JM job runs at a time. State is exposed through get_status()
 for the frontend to poll.
@@ -391,11 +393,161 @@ def _close_source_tab(url: str) -> None:
         pass
 
 
-def _process_one(index: int, task: Dict[str, Any], cfg: dict) -> None:
-    """A "task" is one downloadable unit — either a whole single-chapter
-    album or a single chapter of a multi-chapter album. It carries a
-    pre-resolved prep_url plus an optional filename override that lets
-    multi-chapter callers name each output like `<title>_ch_N.zip`.
+# --------------------------------------------------------------------------
+# V2 helpers — shared between auto and manual phases
+
+
+def _fetch_prep_page(
+    index: int, session: requests.Session, prep_url: str,
+) -> Optional[Tuple[Any, dict, str]]:
+    """Fetch the prep page and parse it.
+
+    Returns (response, parsed, filename_base) or None on error (item already
+    marked as error).  Caller passes filename_override separately.
+    """
+    _update_item(index, status="fetching_prep_page")
+    try:
+        r = session.get(prep_url, timeout=_TIMEOUT, allow_redirects=True)
+        r.raise_for_status()
+    except Exception as e:
+        _update_item(index, status="error", message=f"prep page fetch failed: {e}")
+        return None
+
+    if _looks_like_login_page(r.text):
+        _update_item(index, status="error",
+                     message="prep page redirected to login — please log in via your browser first")
+        return None
+
+    parsed = _parse_prep_page(r.text, r.url)
+    if not parsed["captcha_url"] or not parsed["form_action"]:
+        soup = BeautifulSoup(r.text, "html.parser")
+        signals = {
+            "captcha_url": bool(parsed["captcha_url"]),
+            "verification_input": bool(soup.find(
+                "input", attrs={"name": re.compile(r"verification", re.I)})),
+            "logout_marker": _has_logout_marker(r.text),
+            "password_input": bool(soup.find(
+                "input", attrs={"type": re.compile(r"^password$", re.I)})),
+            "form_count": len(soup.find_all("form")),
+            "final_path": urlparse(r.url).path,
+            "body_size": len(r.content),
+        }
+        _update_item(index, status="error",
+                     message=f"couldn't locate captcha image or verification form  {signals}")
+        return None
+
+    aid_hint = urlparse(prep_url).path.rsplit("/", 1)[-1] or "album"
+    filename_base = _sanitize_filename(parsed["filename_base"] or f"album_{aid_hint}")
+    return r, parsed, filename_base
+
+
+def _submit_captcha_answer(
+    index: int, session: requests.Session, prep_url: str,
+    r: Any, parsed: dict, answer: str,
+) -> Optional[Tuple[Optional[str], Any]]:
+    """POST the verification form.
+
+    Returns (download_url_or_None, resp) on success, or None if the item
+    was marked as error.  download_url is None when the server streamed the
+    file directly (handled by caller via resp).
+    """
+    payload = dict(parsed["form_fields"])
+    payload[parsed["verification_field_name"]] = answer
+    payload["download_submit"] = payload.get("download_submit") or "download"
+    _update_item(index, status="submitting_captcha")
+    try:
+        if parsed["form_method"] == "post":
+            resp = session.post(parsed["form_action"], data=payload,
+                                timeout=_TIMEOUT, allow_redirects=False,
+                                headers={"Referer": r.url})
+        else:
+            resp = session.get(parsed["form_action"], params=payload,
+                               timeout=_TIMEOUT, allow_redirects=False,
+                               headers={"Referer": r.url})
+    except Exception as e:
+        _update_item(index, status="error", message=f"submit failed: {e}")
+        return None
+
+    print(
+        f"[download_jm] submit response  status={resp.status_code}  "
+        f"ct={resp.headers.get('Content-Type', '')!r}  "
+        f"location={resp.headers.get('Location', '')!r}  "
+        f"body_size={len(resp.content)}",
+        flush=True,
+    )
+
+    loc = resp.headers.get("Location") or ""
+    if resp.status_code in (301, 302, 303, 307, 308) and loc:
+        return urljoin(resp.url or prep_url, loc), resp
+
+    ct = (resp.headers.get("Content-Type") or "").lower()
+    if resp.status_code == 200 and "html" not in ct:
+        return None, resp  # streamed directly
+
+    return "retry", resp  # wrong captcha or unexpected — signal retry
+
+
+def _do_download(
+    index: int, session: requests.Session, cfg: dict,
+    filename_base: str, source_url: str, close_tab_after: bool,
+    final_download_url: Optional[str], stream_resp: Any,
+) -> None:
+    """Stream the file from either a redirect URL or an already-open response."""
+    _update_item(index, status="downloading")
+    dest_path = os.path.join(cfg["downloadPath"], filename_base + (
+        _ext_from_url(final_download_url) or ".zip"
+        if final_download_url else _ext_from_response(stream_resp)
+    ))
+
+    def _report(done: int, total: int, speed: float) -> None:
+        pct = int(done * 100 / total) if total > 0 else 0
+        _update_item(index, bytes_downloaded=done, bytes_total=total,
+                     speed_bps=speed, progress_percent=pct,
+                     final_path=dest_path)
+
+    try:
+        if final_download_url:
+            _stream_download(session, final_download_url, dest_path,
+                             referer=stream_resp.url if stream_resp else "",
+                             on_progress=_report)
+        else:
+            tmp = dest_path + ".part"
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            bytes_done = 0
+            total = int(stream_resp.headers.get("Content-Length") or 0)
+            with open(tmp, "wb") as f:
+                for chunk in stream_resp.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        bytes_done += len(chunk)
+                        _report(bytes_done, total, 0.0)
+            os.replace(tmp, dest_path)
+    except Exception as e:
+        _update_item(index, status="error", message=f"download failed: {e}")
+        return
+
+    if close_tab_after:
+        _close_source_tab(source_url)
+        _update_item(index, status="done", message="downloaded and tab closed")
+    else:
+        _update_item(index, status="done",
+                     message="downloaded (tab kept open — more chapters queued)")
+
+
+# --------------------------------------------------------------------------
+# V2 Phase 1 — auto captcha (Tesseract, up to _MAX_CAPTCHA_ATTEMPTS each)
+
+
+def _process_auto(index: int, task: Dict[str, Any], cfg: dict) -> bool:
+    """Try to auto-solve the captcha for one task.
+
+    Refreshes the prep page before each attempt so a fresh captcha is fetched
+    (captchas invalidate across tabs on the server).  Runs Tesseract on every
+    attempt, submits the result regardless.
+
+    Returns True when the download completed, False when attempts are exhausted
+    (caller should add to manual queue).  Marks the item as error on hard
+    failures (cookie fetch, login redirect, etc.).
     """
     source_url = task["source_url"]
     prep_url = task["prep_url"]
@@ -409,51 +561,99 @@ def _process_one(index: int, task: Dict[str, Any], cfg: dict) -> None:
     if session is None:
         _update_item(index, status="error",
                      message="extension didn't return cookies — is it installed and enabled?")
-        return
+        return False
 
-    _update_item(index, status="fetching_prep_page")
-    try:
-        r = session.get(prep_url, timeout=_TIMEOUT, allow_redirects=True)
-        r.raise_for_status()
-    except Exception as e:
-        _update_item(index, status="error", message=f"prep page fetch failed: {e}")
-        return
+    for attempt in range(1, _MAX_CAPTCHA_ATTEMPTS + 1):
+        # Refresh the prep page before every attempt — this also invalidates
+        # any captcha that was previously fetched for other tabs.
+        result = _fetch_prep_page(index, session, prep_url)
+        if result is None:
+            return False  # error already set
+        r, parsed, filename_base = result
 
-    if _looks_like_login_page(r.text):
+        if filename_override:
+            filename_base = _sanitize_filename(filename_override)
+        _update_item(index, filename=filename_base, status="captcha_needed")
+
+        # Fetch captcha image.
+        try:
+            img_resp = session.get(parsed["captcha_url"], timeout=_TIMEOUT,
+                                   headers={"Referer": r.url})
+            img_resp.raise_for_status()
+        except Exception as e:
+            _update_item(index, status="error",
+                         message=f"captcha image fetch failed: {e}")
+            return False
+
+        auto_answer, ocr_text = captcha_solver.solve(img_resp.content)
+        if auto_answer is not None:
+            answer = str(auto_answer)
+            _update_item(index, status="captcha_auto",
+                         message=f"attempt {attempt}/{_MAX_CAPTCHA_ATTEMPTS} auto: {answer}  [ocr: {ocr_text}]")
+        else:
+            # OCR couldn't parse — submit empty string to get a fresh captcha
+            # for the next attempt (the server will reject it and return a new one).
+            answer = ""
+            _update_item(index, status="captcha_auto",
+                         message=f"attempt {attempt}/{_MAX_CAPTCHA_ATTEMPTS} OCR failed, skipping")
+
+        submit_result = _submit_captcha_answer(index, session, prep_url, r, parsed, answer)
+        if submit_result is None:
+            return False  # error already set
+
+        dl_url, resp = submit_result
+        if dl_url == "retry":
+            # Wrong answer or unparseable response — loop to refresh + retry.
+            _update_item(index, status="captcha_needed",
+                         message=f"attempt {attempt} wrong/failed, retrying")
+            continue
+
+        # Success — download.
+        _do_download(index, session, cfg, filename_base, source_url, close_tab_after,
+                     final_download_url=dl_url if dl_url else None,
+                     stream_resp=resp)
+        return True
+
+    # All attempts exhausted.
+    _update_item(index, status="manual_queue",
+                 message=f"auto failed after {_MAX_CAPTCHA_ATTEMPTS} attempts — awaiting manual input")
+    return False
+
+
+# --------------------------------------------------------------------------
+# V2 Phase 2 — manual captcha for items that failed auto
+
+
+def _process_manual(index: int, task: Dict[str, Any], cfg: dict) -> None:
+    """Show the captcha to the user and wait for manual input.
+
+    Keeps looping until the user provides a correct answer (the server
+    redirects to the file) or a hard error occurs.  Each loop re-fetches
+    the prep page to get a fresh captcha (the server invalidates old ones).
+    """
+    source_url = task["source_url"]
+    prep_url = task["prep_url"]
+    filename_override = task.get("filename_base_override")
+    close_tab_after = bool(task.get("close_tab_after", True))
+
+    _update_item(index, status="fetching_cookies")
+    session = _get_browser_session(cfg["sourceDomain"])
+    if session is None:
         _update_item(index, status="error",
-                     message="prep page redirected to login — please log in via your browser first")
+                     message="extension didn't return cookies — is it installed and enabled?")
         return
 
-    parsed = _parse_prep_page(r.text, r.url)
-    if not parsed["captcha_url"] or not parsed["form_action"]:
-        soup = BeautifulSoup(r.text, "html.parser")
-        signals = {
-            "captcha_url": bool(parsed["captcha_url"]),
-            "verification_input": bool(soup.find("input", attrs={"name": re.compile(r"verification", re.I)})),
-            "logout_marker": _has_logout_marker(r.text),
-            "password_input": bool(soup.find("input", attrs={"type": re.compile(r"^password$", re.I)})),
-            "form_count": len(soup.find_all("form")),
-            "final_path": urlparse(r.url).path,
-            "body_size": len(r.content),
-        }
-        _update_item(index, status="error",
-                     message=f"couldn't locate captcha image or verification form  {signals}")
-        return
+    while True:
+        result = _fetch_prep_page(index, session, prep_url)
+        if result is None:
+            return
+        r, parsed, filename_base = result
 
-    # Filename: chapter-driven override wins over the prep page's itemprop.
-    if filename_override:
-        filename_base = _sanitize_filename(filename_override)
-    else:
-        aid_hint = urlparse(prep_url).path.rsplit("/", 1)[-1] or "album"
-        filename_base = _sanitize_filename(parsed["filename_base"] or f"album_{aid_hint}")
-    _update_item(index, filename=filename_base, status="captcha_needed")
+        if filename_override:
+            filename_base = _sanitize_filename(filename_override)
+        _update_item(index, filename=filename_base)
 
-    attempts_left = _MAX_CAPTCHA_ATTEMPTS
-    final_download_url: Optional[str] = None
-    auto_tried = False
-
-    while attempts_left > 0:
-        # 1) Grab the current captcha image with the session cookies.
+        # Fetch fresh captcha image.
         try:
             img_resp = session.get(parsed["captcha_url"], timeout=_TIMEOUT,
                                    headers={"Referer": r.url})
@@ -463,146 +663,32 @@ def _process_one(index: int, task: Dict[str, Any], cfg: dict) -> None:
                          message=f"captcha image fetch failed: {e}")
             return
 
-        # 2) On the FIRST attempt, try auto-solve via Tesseract OCR. If it's
-        # wrong the server will hand back a new captcha and we'll fall through
-        # to human input for the retry.
-        auto_answer, ocr_text = (None, "")
-        if not auto_tried:
-            auto_answer, ocr_text = captcha_solver.solve(img_resp.content)
-            auto_tried = True
-
-        if auto_answer is not None:
-            answer = str(auto_answer)
-            _update_item(index, status="captcha_auto",
-                         message=f"auto-solved: {answer}  [ocr: {ocr_text}]")
-        else:
-            _set_captcha_pending(index, img_resp.content, attempts_left)
-            _update_item(index, status="captcha_needed")
-            answer = _wait_for_captcha_answer()
-            _clear_captcha_pending()
-            if answer is None:
-                _update_item(index, status="error",
-                             message="captcha wait timed out — user didn't answer")
-                return
-
-        # 3) POST the verification form.
-        payload = dict(parsed["form_fields"])
-        payload[parsed["verification_field_name"]] = answer
-        payload["download_submit"] = payload.get("download_submit") or "download"
-        _update_item(index, status="submitting_captcha")
-        try:
-            if parsed["form_method"] == "post":
-                resp = session.post(parsed["form_action"], data=payload,
-                                    timeout=_TIMEOUT, allow_redirects=False,
-                                    headers={"Referer": r.url})
-            else:
-                resp = session.get(parsed["form_action"], params=payload,
-                                   timeout=_TIMEOUT, allow_redirects=False,
-                                   headers={"Referer": r.url})
-        except Exception as e:
-            _update_item(index, status="error", message=f"submit failed: {e}")
-            return
-        # Log a compact summary of the submit response so we can diagnose
-        # weird server behaviors (JS redirects, HTML with embedded links,
-        # unexpected status codes).
-        print(
-            f"[download_jm] submit response  status={resp.status_code}  "
-            f"ct={resp.headers.get('Content-Type', '')!r}  "
-            f"location={resp.headers.get('Location', '')!r}  "
-            f"body_size={len(resp.content)}",
-            flush=True,
-        )
-
-        # 4) If the response is a redirect (302) with a URL that looks like a
-        # file/binary target, that's our download.
-        loc = resp.headers.get("Location") or ""
-        if resp.status_code in (301, 302, 303, 307, 308) and loc:
-            final_download_url = urljoin(resp.url or prep_url, loc)
-            break
-        # Alternatively the server may stream the file directly here.
-        ct = (resp.headers.get("Content-Type") or "").lower()
-        if resp.status_code == 200 and ("html" not in ct):
-            # Server streamed the file back. Save straight from this response.
-            # Fall through to a dedicated download branch.
-            final_download_url = None
-            _update_item(index, status="downloading")
-            filename = filename_base + _ext_from_response(resp)
-            dest_path = os.path.join(cfg["downloadPath"], filename)
-
-            def _report(done: int, total: int, speed: float) -> None:
-                pct = int(done * 100 / total) if total > 0 else 0
-                _update_item(index,
-                             bytes_downloaded=done, bytes_total=total,
-                             speed_bps=speed, progress_percent=pct,
-                             final_path=dest_path)
-
-            tmp = dest_path + ".part"
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            try:
-                bytes_done = 0
-                total = int(resp.headers.get("Content-Length") or 0)
-                with open(tmp, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=64 * 1024):
-                        if chunk:
-                            f.write(chunk)
-                            bytes_done += len(chunk)
-                            _report(bytes_done, total, 0.0)
-                os.replace(tmp, dest_path)
-            except Exception as e:
-                _update_item(index, status="error", message=f"download failed: {e}")
-                return
-            if close_tab_after:
-                _close_source_tab(source_url)
-                _update_item(index, status="done", message="downloaded and tab closed")
-            else:
-                _update_item(index, status="done",
-                             message="downloaded (tab kept open — more chapters queued)")
+        # Show captcha to user and wait.
+        _set_captcha_pending(index, img_resp.content, attempts_left=0)
+        _update_item(index, status="captcha_needed",
+                     message="manual input required — please enter the captcha answer")
+        answer = _wait_for_captcha_answer()
+        _clear_captcha_pending()
+        if answer is None:
+            _update_item(index, status="error",
+                         message="captcha wait timed out — user didn't answer")
             return
 
-        # 5) Otherwise the response is HTML — likely the same page re-rendered
-        # with a new captcha (wrong answer). Re-parse and retry.
-        if "html" in ct:
-            new_parsed = _parse_prep_page(resp.text, resp.url or prep_url)
-            if new_parsed["captcha_url"]:
-                parsed = new_parsed
-                attempts_left -= 1
-                _update_item(index, status="captcha_needed",
-                             message=f"captcha wrong, retrying (attempts left: {attempts_left})")
-                continue
-        # Unclear response, bail.
-        _update_item(index, status="error",
-                     message=f"unexpected submit response  status={resp.status_code}  ct={ct}")
+        submit_result = _submit_captcha_answer(index, session, prep_url, r, parsed, answer)
+        if submit_result is None:
+            return
+
+        dl_url, resp = submit_result
+        if dl_url == "retry":
+            # Wrong answer — loop to get a fresh captcha.
+            _update_item(index, status="captcha_needed",
+                         message="wrong answer, please try again")
+            continue
+
+        _do_download(index, session, cfg, filename_base, source_url, close_tab_after,
+                     final_download_url=dl_url if dl_url else None,
+                     stream_resp=resp)
         return
-
-    if not final_download_url:
-        _update_item(index, status="error", message="captcha attempts exhausted")
-        return
-
-    # Follow-through download: we got a redirect URL after solving.
-    _update_item(index, status="downloading")
-    ext = _ext_from_url(final_download_url) or ".zip"
-    filename = filename_base + ext
-    dest_path = os.path.join(cfg["downloadPath"], filename)
-
-    def _report(done: int, total: int, speed: float) -> None:
-        pct = int(done * 100 / total) if total > 0 else 0
-        _update_item(index, bytes_downloaded=done, bytes_total=total,
-                     speed_bps=speed, progress_percent=pct,
-                     final_path=dest_path)
-
-    try:
-        _stream_download(session, final_download_url, dest_path,
-                         referer=r.url, on_progress=_report)
-    except Exception as e:
-        _update_item(index, status="error", message=f"download failed: {e}")
-        return
-
-    if close_tab_after:
-        _close_source_tab(source_url)
-        _update_item(index, status="done", message="downloaded and tab closed")
-    else:
-        _update_item(index, status="done",
-                     message="downloaded (tab kept open — more chapters queued)")
 
 
 def _ext_from_url(url: str) -> str:
@@ -664,14 +750,14 @@ def check_authenticated() -> Dict[str, Any]:
 def _expand_source_urls(source_urls: List[str], source_domain: str) -> List[Dict[str, Any]]:
     """For each source album URL, either produce one task (single-chapter)
     or N tasks (multi-chapter dropdown expanded). Each task carries its own
-    prep_url and optional filename override so `_process_one` doesn't need
+    prep_url and optional filename override so `_process_auto`/`_process_manual` don't need
     to look back at the album page."""
     tasks: List[Dict[str, Any]] = []
     session = _get_browser_session(source_domain)
     for src in source_urls:
         aid = _extract_album_id(src)
         if not aid:
-            # Preserve as a single task; _process_one will error out.
+            # Preserve as a single task; _process_auto will handle the error gracefully.
             tasks.append({"source_url": src, "prep_url": "", "chapter_label": "",
                           "filename_base_override": None, "close_tab_after": True})
             continue
@@ -740,10 +826,18 @@ def start_job(source_urls: List[str]) -> Dict[str, Any]:
         })
 
     def _run():
+        manual_queue: List[Tuple[int, Dict[str, Any]]] = []
         try:
+            # Phase 1: auto-solve all tasks.
             for i, task in enumerate(tasks):
                 try:
-                    _process_one(i, task, cfg)
+                    succeeded = _process_auto(i, task, cfg)
+                    if not succeeded:
+                        status = _job_status["items"][i].get("status", "")
+                        # Only add to manual queue if it genuinely exhausted retries
+                        # (not a hard error like missing cookies or login redirect).
+                        if status == "manual_queue":
+                            manual_queue.append((i, task))
                 except Exception as e:
                     import traceback
                     tb = traceback.format_exc()
@@ -752,6 +846,20 @@ def start_job(source_urls: List[str]) -> Dict[str, Any]:
                     print(f"[download_jm] item {i} crashed:\n{tb}", flush=True)
                 with _lock:
                     _job_status["done"] = i + 1
+
+            # Phase 2: process manual queue one by one.
+            if manual_queue:
+                print(f"[download_jm] Phase 2: {len(manual_queue)} items need manual captcha",
+                      flush=True)
+            for i, task in manual_queue:
+                try:
+                    _process_manual(i, task, cfg)
+                except Exception as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    _update_item(i, status="error",
+                                 message=f"unhandled exception (manual): {e}\n{tb[-1000:]}")
+                    print(f"[download_jm] manual item {i} crashed:\n{tb}", flush=True)
         finally:
             with _lock:
                 _job_status["running"] = False
