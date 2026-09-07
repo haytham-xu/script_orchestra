@@ -87,3 +87,4 @@ faster-whisper==1.1.1
 sounddevice==0.5.0
 # Kokoro TTS (optional, install manually if switching to the kokoro engine):
 # pip install "kokoro>=0.9.4" soundfile
+pytest>=9.0

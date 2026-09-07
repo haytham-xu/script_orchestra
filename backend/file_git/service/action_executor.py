@@ -90,6 +90,8 @@ class ActionExecutor:
                 return self._local_delete(item)
             if action == ActionType.REMOTE_DELETE.value:
                 return self._remote_delete(item)
+            if action == ActionType.REMOTE_TRASH.value:
+                return self._remote_trash(item)
             return ActionOutcome(False, f"unknown action: {action!r}")
         except Exception as exc:
             return ActionOutcome(False, f"{type(exc).__name__}: {exc}")
@@ -173,6 +175,27 @@ class ActionExecutor:
         encoded_path = item["encoded_path"]
         self.storage.delete(self._remote_full(encoded_path))
         return ActionOutcome(True, "removed from cloud")
+
+    def _remote_trash(self, item: QueueItem) -> ActionOutcome:
+        """Move file to .fgit/_trash/<YYYYMMDD>/ on the remote instead of deleting."""
+        from datetime import date
+        encoded_path = item["encoded_path"]
+        today = date.today().strftime("%Y%m%d")
+        filename = encoded_path.split("/")[-1]
+        trash_path = f".fgit/_trash/{today}/{filename}"
+        remote_src = self._remote_full(encoded_path)
+        remote_dst = f"{self.remote_root}/{trash_path}"
+        # Download then re-upload to simulate a move (most cloud APIs lack native move)
+        buf = __import__("io").BytesIO()
+        try:
+            self.storage.download(remote_src, buf)
+        except FileNotFoundError:
+            # File already absent from remote — target state achieved (idempotent).
+            return ActionOutcome(True, "remote file already absent (idempotent)")
+        payload = buf.getvalue()
+        self.storage.upload(__import__("io").BytesIO(payload), remote_dst, len(payload))
+        self.storage.delete(remote_src)
+        return ActionOutcome(True, f"cloud-trashed → {trash_path}")
 
     # ---- misc ---------------------------------------------------------
 

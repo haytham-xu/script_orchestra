@@ -33,6 +33,7 @@ class ActionType(str, Enum):
     DOWNLOAD = "DOWNLOAD"
     LOCAL_DELETE = "LOCAL_DELETE"
     REMOTE_DELETE = "REMOTE_DELETE"
+    REMOTE_TRASH = "REMOTE_TRASH"
 
 
 class Status(str, Enum):

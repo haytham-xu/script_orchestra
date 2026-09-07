@@ -174,6 +174,27 @@ class IndexService:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(index, f, indent=2, ensure_ascii=False)
 
+    @staticmethod
+    def touch_cloud_index_synced_at(repo_root: str) -> None:
+        """Record the current time as the last cloud↔local sync moment.
+
+        Call this after any operation that successfully reconciles the
+        local cloud_index mirror with the actual remote state:
+        push, pull, rebuild-cloud-index, post-manual-upload/download.
+        """
+        from datetime import datetime
+        path = os.path.join(repo_root, ".fgit", "cloud_index_synced_at.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(datetime.now().isoformat(timespec="seconds"))
+
+    @staticmethod
+    def get_cloud_index_synced_at(repo_root: str) -> Optional[str]:
+        path = os.path.join(repo_root, ".fgit", "cloud_index_synced_at.txt")
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip() or None
+
     # ---- cloud_index (de)serialization for transport -----------------
     # ENCRYPTED repos: the JSON is AES-GCM encrypted with the repo key
     # before upload, and decrypted after download. ORIGINAL repos ship

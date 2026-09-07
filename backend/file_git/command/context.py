@@ -18,7 +18,8 @@ from ..repository_manager import RepositoryManager
 from ..settings_manager import SettingsManager
 
 
-CLOUD_INDEX_REMOTE_FILENAME = "cloud_index.json"
+CLOUD_INDEX_REMOTE_FILENAME = ".fgit/cloud_index.json"
+REMOTE_FGIT_PREFIX = ".fgit/"
 
 
 @dataclass
@@ -96,7 +97,8 @@ def _build_storage() -> CloudStorage:
     """
     settings = SettingsManager.get_settings()
     if settings.get("use_mock_baidu", True):
-        mock_root = os.environ.get("FILE_GIT_MOCK_ROOT")
+        mock_root = (settings.get("mock_root") or
+                     os.environ.get("FILE_GIT_MOCK_ROOT"))
         if not mock_root:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             mock_root = os.path.join(base, "mock_cloud_storage")

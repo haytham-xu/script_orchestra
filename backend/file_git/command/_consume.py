@@ -79,6 +79,14 @@ def consume_queue(
                 ctx.repo_root, action_folder,
                 action, middle_path, outcome.detail,
             )
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, middle_path,
+                item.get("mode", "synced"),
+                item.get("status", ""),
+                item.get("in_local", True),
+                item.get("in_remote", False),
+                action, "ok", outcome.detail or "",
+            )
             if action == "UPLOAD":
                 counters.uploaded += 1
             elif action == "DOWNLOAD":
@@ -87,11 +95,21 @@ def consume_queue(
                 counters.local_deleted += 1
             elif action == "REMOTE_DELETE":
                 counters.remote_deleted += 1
+            elif action == "REMOTE_TRASH":
+                counters.remote_deleted += 1
         else:
             QueueService.mark_error(ctx.repo_root, state, item_key, outcome.detail)
             LoggerService.log_error(
                 ctx.repo_root, action_folder,
                 action, middle_path, outcome.detail,
+            )
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, middle_path,
+                item.get("mode", "synced"),
+                item.get("status", ""),
+                item.get("in_local", True),
+                item.get("in_remote", False),
+                action, "error", outcome.detail or "",
             )
             counters.errors += 1
 

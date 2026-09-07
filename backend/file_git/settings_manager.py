@@ -75,6 +75,9 @@ class SettingsManager:
         if 'use_mock_baidu' in settings:
             current['use_mock_baidu'] = settings['use_mock_baidu']
 
+        if 'mock_root' in settings:
+            current['mock_root'] = settings['mock_root']
+
         if 'default_password' in settings:
             current['default_password'] = settings['default_password']
 

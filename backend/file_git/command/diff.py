@@ -1,6 +1,11 @@
 """
 Diff command (REQUIREMENTS §3.7, §3.13, §S7).
 
+DEPRECATED: This command is superseded by the push/pull dry-run endpoints
+which provide the same information with conflict detection. The UI no longer
+exposes this as a standalone action. The backend endpoint is kept for
+backward compatibility but should not be relied upon.
+
 Read-only view of what would happen on the next push:
     * scan local files (does NOT persist to local_index.json)
     * compare against the local cloud_index mirror

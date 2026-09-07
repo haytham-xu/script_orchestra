@@ -1,18 +1,21 @@
 """
 Pre Manual Download — Step 1 (REQUIREMENTS §3.7.5, §S5).
 
-Only acquires the lock. User then downloads files from the cloud APP:
+Acquires the lock and downloads the remote cloud_index so that
+post_manual_download can map encoded_path → middle_path for decryption.
+User then downloads files from the cloud APP:
     * ENCRYPTED: into ``.fgit/buffer/`` preserving the encoded structure
     * ORIGINAL:  directly into the repo at the correct middle_path
 """
 from __future__ import annotations
 
+import io
 import os
 from dataclasses import dataclass
 from typing import Optional
 
 from ..repository_manager import RepositoryManager
-from ..service import LoggerService, QueueService
+from ..service import IndexService, LoggerService, QueueService
 from ..service.queue_service import LockError
 from .context import build_context
 
@@ -37,6 +40,18 @@ def command_pre_manual_download(repo_id: str) -> PreManualDownloadResult:
     buffer_root = os.path.join(ctx.repo_root, ".fgit", "buffer")
 
     RepositoryManager.update_status(ctx.repo_id, "locked")
+
+    # Download cloud_index from remote so post_manual_download can resolve
+    # encoded_path → middle_path (ENCRYPTED) or know what files exist (ORIGINAL).
+    remote_ci_path = ctx.cloud_index_remote_path()
+    if ctx.storage.exists(remote_ci_path):
+        buf = io.BytesIO()
+        ctx.storage.download(remote_ci_path, buf)
+        cloud_index = IndexService.deserialize_cloud_index_after_download(
+            buf.getvalue(), key=ctx.key,
+        )
+        IndexService.save_cloud_index(ctx.repo_root, cloud_index)
+
     LoggerService.log_success(
         ctx.repo_root, action_folder, "MANUAL_DOWNLOAD_PREPARE",
         "-", f"lock acquired for repo mode={ctx.mode}",

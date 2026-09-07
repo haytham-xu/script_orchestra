@@ -1,16 +1,17 @@
 """
-Push command (REQUIREMENTS §3.7.1) — API-driven full-auto upload.
+Push command — API-driven full-auto upload.
 
 Flow:
     1. hook: clean expired trash / action folders
     2. acquire lock (or fail if already locked)
     3. rebuild local_index
-    4. diff local_index vs cloud_index (local mirror)
-    5. enqueue UPLOAD / REMOTE_DELETE items (local is authoritative)
-    6. drain queue via consume_queue
-    7. update cloud_index (remove deleted, upsert modified/added)
-    8. upload cloud_index blob (encrypted when repo is ENCRYPTED)
-    9. archive queue.json into action_folder, release lock
+    4. download latest cloud_index from remote (so two machines can push safely)
+    5. diff local_index vs cloud_index — only synced paths; skip local-only/remote-only
+    6. enqueue UPLOAD / REMOTE_TRASH items
+    7. drain queue via consume_queue
+    8. update cloud_index (remove trashed, upsert modified/added)
+    9. upload cloud_index blob (encrypted when repo is ENCRYPTED)
+   10. archive queue.json into action_folder, release lock
 """
 from __future__ import annotations
 
@@ -35,13 +36,17 @@ class PushResult:
     action_folder: Optional[str] = None
 
 
-def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushResult:
+def command_push(repo_id: str, progress: Optional[ProgressFn] = None,
+                  upload_only: bool = False) -> PushResult:
+    """Push local changes to remote.
+
+    upload_only=True skips REMOTE_TRASH for files not in local_index —
+    useful for "merge upload" scenarios where the caller intentionally
+    has only a subset of remote files locally and must not delete the rest.
+    """
     ctx = build_context(repo_id)
 
-    # Step 1: hook cleanup
-    _run_hook(ctx, progress)
-
-    # Step 2: acquire lock
+    # Step 1: acquire lock
     if progress:
         progress("lock", 0, 0, "acquiring lock")
     try:
@@ -62,8 +67,11 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
             ctx.repo_root, action_folder, "local_index.json", local_index,
         )
 
-        # Step 4: diff vs cloud_index mirror (local is authoritative for push)
-        cloud_index = IndexService.load_cloud_index(ctx.repo_root)
+        # Step 4: download latest cloud_index from remote, then diff
+        if progress:
+            progress("cloud_index", 0, 0, "fetching cloud_index from remote")
+        cloud_index = _download_cloud_index(ctx)
+        IndexService.save_cloud_index(ctx.repo_root, cloud_index)
         QueueService.snapshot_index_into_action(
             ctx.repo_root, action_folder, "cloud_index.json", cloud_index,
         )
@@ -77,34 +85,64 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
 
         # Step 5: enqueue
         state = QueueService.load(ctx.repo_root)
+        cloud_mp_set = {e.get("middle_path", "") for e in cloud_index.values()}
         for entry in diff.added + diff.modified:
-            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+            mp = entry["middle_path"]
+            mode = SyncFilterService.get_mode(filt, mp)
+            in_remote = mp in cloud_mp_set
+            status = SyncFilterService.get_status(filt, mp, True, in_remote)
+            action = ActionType.UPLOAD.value
+            if mode != "synced":
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, True, in_remote, "skip", "ok", "skipped by sync filter",
+                )
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
-                "middle_path": entry["middle_path"],
+                "middle_path": mp,
                 "encoded_path": entry["encoded_path"],
                 "size": entry.get("size", 0),
-                "action": ActionType.UPLOAD.value,
+                "action": action,
             })
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, mp,
+                mode, status, True, in_remote, action,
+            )
+        local_mp_set = {e.get("middle_path", "") for e in local_index.values()}
         for entry in diff.deleted:
-            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+            mp = entry["middle_path"]
+            if upload_only:
+                # Caller asked for upload-only mode: skip REMOTE_TRASH entirely.
+                continue
+            mode = SyncFilterService.get_mode(filt, mp)
+            in_local = mp in local_mp_set
+            status = SyncFilterService.get_status(filt, mp, in_local, True)
+            action = ActionType.REMOTE_TRASH.value
+            if mode != "synced":
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, in_local, True, "skip", "ok", "skipped by sync filter",
+                )
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
-                "middle_path": entry["middle_path"],
+                "middle_path": mp,
                 "encoded_path": entry["encoded_path"],
                 "size": entry.get("size", 0),
-                "action": ActionType.REMOTE_DELETE.value,
+                "action": action,
             })
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, mp,
+                mode, status, in_local, True, action,
+            )
         QueueService.save(ctx.repo_root, state)
 
         if not state.queue:
-            # Nothing to do — still refresh cloud_index blob upload so
-            # the remote is a byte-identical mirror of local intention.
             _upload_cloud_index(ctx, cloud_index)
             QueueService.release(ctx.repo_root)
             RepositoryManager.update_status(ctx.repo_id, "ready")
+            _run_hook(ctx, progress)
             return PushResult(
                 ok=True,
                 message="No changes to push",
@@ -120,7 +158,7 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
         # them in the queue for retry; here we rebuild cloud_index
         # from local_index minus still-pending deletes.)
         new_cloud_index = _rebuild_cloud_index_after_push(
-            ctx, local_index, cloud_index,
+            ctx, local_index, cloud_index, upload_only=upload_only,
         )
         IndexService.save_cloud_index(ctx.repo_root, new_cloud_index)
 
@@ -133,6 +171,7 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None) -> PushRes
         QueueService.release(ctx.repo_root)
         RepositoryManager.update_status(ctx.repo_id, "ready")
         RepositoryManager.update_last_updated(ctx.repo_id)
+        _run_hook(ctx, progress)
 
         summary = (
             f"Push complete: {counters.uploaded} uploaded, "
@@ -173,28 +212,46 @@ def _rebuild_cloud_index_after_push(
     ctx: RepoContext,
     local_index: dict,
     old_cloud_index: dict,
+    upload_only: bool = False,
 ) -> dict:
     """Compute the new cloud_index after a push.
 
-    Strategy: start from ``local_index`` (which represents what the
-    user *intends* to have in the cloud after this push). Anything
-    still stuck in the queue (retry_count > 0) means the corresponding
-    UPLOAD/REMOTE_DELETE didn't succeed — for those we fall back to
-    the ``old_cloud_index`` value to keep cloud_index in sync with
-    what's actually on the cloud.
+    Normal mode: start from ``local_index`` (what the user intends to be on
+    cloud). Failed queue items revert to old_cloud_index values.
+
+    upload_only mode: start from ``old_cloud_index`` (preserve existing
+    remote files) and merge in only the local_index entries that were
+    successfully uploaded. This prevents losing remote-only entries when
+    only a subset of remote files is held locally.
     """
     from ..service.queue_service import QueueService
     state = QueueService.load(ctx.repo_root)
     unfinished_keys = {k for k, v in state.queue.items()}
 
-    new_cloud_index = dict(local_index)  # start from intent
-    for k in unfinished_keys:
-        # For unfinished items, revert to old cloud state
-        if k in old_cloud_index:
-            new_cloud_index[k] = old_cloud_index[k]
-        else:
-            new_cloud_index.pop(k, None)
+    if upload_only:
+        # Base = old cloud state; layer on top whatever local has (uploaded files)
+        new_cloud_index = dict(old_cloud_index)
+        for k, entry in local_index.items():
+            if k not in unfinished_keys:
+                new_cloud_index[k] = entry
+    else:
+        new_cloud_index = dict(local_index)  # start from intent
+        for k in unfinished_keys:
+            # For unfinished items, revert to old cloud state
+            if k in old_cloud_index:
+                new_cloud_index[k] = old_cloud_index[k]
+            else:
+                new_cloud_index.pop(k, None)
     return new_cloud_index
+
+
+def _download_cloud_index(ctx: RepoContext) -> dict:
+    remote = ctx.cloud_index_remote_path()
+    if not ctx.storage.exists(remote):
+        return {}
+    buf = io.BytesIO()
+    ctx.storage.download(remote, buf)
+    return IndexService.deserialize_cloud_index_after_download(buf.getvalue(), key=ctx.key)
 
 
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
@@ -202,6 +259,15 @@ def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
     payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
     stream = io.BytesIO(payload)
     ctx.storage.upload(stream, ctx.cloud_index_remote_path(), len(payload))
+    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
+
+
+def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
+    """Serialize cloud_index (encrypting for ENCRYPTED repos) and upload."""
+    payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
+    stream = io.BytesIO(payload)
+    ctx.storage.upload(stream, ctx.cloud_index_remote_path(), len(payload))
+    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
 
 
 def _run_hook(ctx: RepoContext, progress: Optional[ProgressFn]) -> None:

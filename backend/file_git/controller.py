@@ -57,7 +57,12 @@ def _err(msg: str, status: int = 500) -> tuple:
 class ReposListResource(Resource):
     def get(self):
         try:
-            return _ok({"repos": RepositoryManager.list_repos()})
+            repos = RepositoryManager.list_repos()
+            for repo in repos:
+                repo['cloud_index_synced_at'] = IndexService.get_cloud_index_synced_at(
+                    repo.get('local_path', '')
+                )
+            return _ok({"repos": repos})
         except Exception as exc:
             return _err(str(exc))
 
@@ -209,6 +214,9 @@ class RepoStatusResource(Resource):
                     "pending_count": len(qstate.queue),
                     "pending_upload_count": pending_upload_count,
                 },
+                "cloud_index_synced_at": IndexService.get_cloud_index_synced_at(
+                    repo['local_path']
+                ),
             })
         except Exception as exc:
             return _err(str(exc))
@@ -268,7 +276,8 @@ class RepoConfigResource(Resource):
 class RepoPushResource(Resource):
     def post(self, repo_id):
         try:
-            result = command_push(repo_id)
+            upload_only = (request.json or {}).get("upload_only", False)
+            result = command_push(repo_id, upload_only=upload_only)
             payload = {
                 "message": result.message,
                 "action_folder": result.action_folder,
@@ -607,8 +616,9 @@ class SyncFilterResource(Resource):
             return _err("repo not found", 404)
         try:
             SyncFilterService.refresh_defaults(root)
+            filt = SyncFilterService.load(root)
             return _ok({
-                "filter": SyncFilterService.load(root),
+                "decisions": filt.get("decisions", {}),
                 "children": SyncFilterService.list_children(root, ""),
             })
         except Exception as exc:
@@ -620,11 +630,20 @@ class SyncFilterResource(Resource):
             return _err("repo not found", 404)
         try:
             data = request.get_json() or {}
+            path = data.get("path", "")
+            mode = data.get("mode", "")
+            if not mode:
+                return _err("Missing 'mode' field", 400)
             filt = SyncFilterService.load(root)
-            filt["checked_prefixes"] = data.get("checked_prefixes", filt["checked_prefixes"])
-            filt["unchecked_overrides"] = data.get("unchecked_overrides", filt["unchecked_overrides"])
+            err = SyncFilterService.validate_mode_change(filt, path, mode)
+            if err:
+                return _err(err, 400)
+            SyncFilterService.set_mode(filt, path, mode)
             SyncFilterService.save(root, filt)
-            return _ok({"filter": filt, "message": "Sync filter saved (applies on next push/pull)"})
+            # Return children of the parent so UI can refresh
+            parent = "/".join(path.split("/")[:-1]) if "/" in path else ""
+            children = SyncFilterService.list_children(root, parent)
+            return _ok({"decisions": filt.get("decisions", {}), "children": children})
         except Exception as exc:
             return _err(str(exc))
 
@@ -638,6 +657,136 @@ class SyncFilterChildrenResource(Resource):
         try:
             parent = request.args.get('path', '')
             return _ok({"children": SyncFilterService.list_children(root, parent)})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/sync-filter/apply')
+class SyncFilterApplyResource(Resource):
+    def post(self, repo_id):
+        """Apply sync filter: reconcile local and remote state with current filter decisions."""
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            from .command.apply_filter import command_apply_filter
+            result = command_apply_filter(repo_id)
+            return _ok({
+                "message": result.message,
+                "action_folder": result.action_folder,
+                "counters": {
+                    "uploaded": result.counters.uploaded,
+                    "downloaded": result.counters.downloaded,
+                    "local_deleted": result.counters.local_deleted,
+                    "remote_deleted": result.counters.remote_deleted,
+                    "errors": result.counters.errors,
+                } if result.counters else {},
+            }) if result.ok else _err(result.message)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/push/dry-run')
+class RepoPushDryRunResource(Resource):
+    def get(self, repo_id):
+        """Pre-flight: what would push do, without acquiring lock."""
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            from .service.index_service import IndexService as IS
+            from .service import sync_filter_service as SFS
+            local_index = IS.load_local_index(root)
+            cloud_index = IS.load_cloud_index(root)
+            diff = IS.diff(local_index, cloud_index)
+            filt = SFS.load(root)
+            conflicts = []
+            for entry in diff.added + diff.modified:
+                mp = entry["middle_path"]
+                mode = SFS.get_mode(filt, mp)
+                if mode == "remote-only":
+                    conflicts.append({
+                        "path": mp,
+                        "issue": "remote-only-has-local",
+                        "action": "skip (not pushed — remote-only folder)",
+                    })
+            return _ok({"conflicts": conflicts})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/pull/dry-run')
+class RepoPullDryRunResource(Resource):
+    def get(self, repo_id):
+        """Pre-flight: what would pull do, without acquiring lock."""
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            from .service.index_service import IndexService as IS
+            from .service import sync_filter_service as SFS
+            local_index = IS.load_local_index(root)
+            cloud_index = IS.load_cloud_index(root)
+            diff = IS.diff(cloud_index, local_index)
+            filt = SFS.load(root)
+            conflicts = []
+            # Check remote-only local copies
+            for entry in local_index.values():
+                mp = entry.get("middle_path", "")
+                if not mp:
+                    continue
+                mode = SFS.get_mode(filt, mp)
+                if mode == "remote-only":
+                    conflicts.append({
+                        "path": mp,
+                        "issue": "remote-only-has-local",
+                        "action": "move-local-to-trash",
+                    })
+            # Check synced+modified (both exist, will overwrite local)
+            for entry in diff.modified:
+                mp = entry["middle_path"]
+                mode = SFS.get_mode(filt, mp)
+                if mode == "synced":
+                    conflicts.append({
+                        "path": mp,
+                        "issue": "synced-changed",
+                        "action": "overwrite-local (old copy moved to trash)",
+                    })
+            return _ok({"conflicts": conflicts})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/action-folders')
+class RepoActionFoldersResource(Resource):
+    def get(self, repo_id):
+        """List action folders for a repo, newest-first."""
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            from .service.logger_service import LoggerService
+            folders = LoggerService.list_action_folders(root)
+            return _ok({"folders": folders})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/file-log')
+class RepoFileLogResource(Resource):
+    def get(self, repo_id):
+        """Return file_log.jsonl for a given action_folder (query param)."""
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        from flask import request as freq
+        action_folder = freq.args.get("action_folder", "")
+        if not action_folder:
+            return _err("action_folder query param required", 400)
+        try:
+            from .service.logger_service import LoggerService
+            records = LoggerService.read_file_log(root, action_folder)
+            return _ok({"records": records, "action_folder": action_folder})
         except Exception as exc:
             return _err(str(exc))
 

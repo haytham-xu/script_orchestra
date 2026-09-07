@@ -7,9 +7,11 @@ Flow (symmetric to push):
     3. download remote cloud_index blob → decrypt → update local mirror
     4. rebuild local_index (so LOCAL_DELETE knows which files exist)
     5. diff (remote is authoritative for pull):
-         - only_in_cloud → DOWNLOAD
-         - only_in_local → LOCAL_DELETE
-         - both_diff → DOWNLOAD (overwrite local)
+         - only_in_cloud + mode=synced → DOWNLOAD
+         - only_in_local + mode=synced → LOCAL_DELETE (cloud-authoritative delete)
+         - both_diff + mode=synced → DOWNLOAD (overwrite local, move old to trash)
+         - remote-only + local copy present → move local to trash (conflict clean-up)
+         - local-only or remote-only (no local) → skip
     6. drain queue
     7. rebuild local_index after pull
     8. archive + release lock
@@ -26,12 +28,9 @@ from ..repository_manager import RepositoryManager
 from ..service import IndexService, LoggerService, QueueService
 from ..service import sync_filter_service as SyncFilterService
 from ..service.queue_service import ActionType, LockError
+from ..service.trash_service import TrashService
 from ._consume import ConsumeCounters, ProgressFn, consume_queue
 from .context import RepoContext, build_context
-
-
-class UnsyncedNoBackupError(Exception):
-    """A file was un-checked but has no remote backup — refuse to move it."""
 
 
 @dataclass
@@ -45,8 +44,6 @@ class PullResult:
 def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullResult:
     ctx = build_context(repo_id)
 
-    _run_hook(ctx, progress)
-
     if progress:
         progress("lock", 0, 0, "acquiring lock")
     try:
@@ -57,11 +54,6 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
 
     try:
         RepositoryManager.update_status(ctx.repo_id, "syncing")
-
-        # Step 0: apply sync-filter un-checks — move now-excluded local files
-        # to the unsynced buffer (never delete). Refuses to move a file that
-        # has no remote backup (that would leave only the buffer copy).
-        _apply_unchecks(ctx, progress)
 
         # Step 3: download & decrypt cloud_index blob
         if progress:
@@ -81,45 +73,72 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
             ctx.repo_root, action_folder, "local_index.json", local_index,
         )
 
-        # Step 5: diff (cloud authoritative). Note the argument order —
-        # we compare cloud→local, so "added" here means "in cloud but
-        # not local" → needs DOWNLOAD.
+        # Step 5: diff (cloud authoritative). "added" = in cloud but not local.
         diff = IndexService.diff(cloud_index, local_index)
 
-        # Sync filter: only pull folders the user has checked.
         filt = SyncFilterService.load(ctx.repo_root)
+
+        # Move remote-only local copies to trash before enqueueing (conflict resolution)
+        _move_remote_only_locals_to_trash(ctx, filt, local_index, cloud_index, action_folder, progress)
+
+        local_mp_set = {e.get("middle_path", "") for e in local_index.values()}
+        cloud_mp_set = {e.get("middle_path", "") for e in cloud_index.values()}
 
         state = QueueService.load(ctx.repo_root)
         for entry in diff.added + diff.modified:
-            # Only download files under checked subtrees; never pull back
-            # folders the user chose to keep remote-only.
-            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+            mp = entry["middle_path"]
+            mode = SyncFilterService.get_mode(filt, mp)
+            in_local = mp in local_mp_set
+            status = SyncFilterService.get_status(filt, mp, in_local, True)
+            action = ActionType.DOWNLOAD.value
+            if mode != "synced":
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, in_local, True, "skip", "ok", "skipped by sync filter",
+                )
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
-                "middle_path": entry["middle_path"],
+                "middle_path": mp,
                 "encoded_path": entry["encoded_path"],
                 "size": entry.get("size", 0),
-                "action": ActionType.DOWNLOAD.value,
+                "action": action,
             })
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, mp,
+                mode, status, in_local, True, action,
+            )
         for entry in diff.deleted:
-            # In local but not cloud. Only trash it when the path is still
-            # synced (i.e. cloud-authoritative deletion). Un-checked local
-            # files are handled by the move-to-buffer step below, not here.
-            if not SyncFilterService.is_synced(filt, entry["middle_path"]):
+            # In local but not cloud. Only trash it when synced (cloud-authoritative).
+            mp = entry["middle_path"]
+            mode = SyncFilterService.get_mode(filt, mp)
+            in_remote = mp in cloud_mp_set
+            status = SyncFilterService.get_status(filt, mp, True, in_remote)
+            action = ActionType.LOCAL_DELETE.value
+            if mode != "synced":
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, True, in_remote, "skip", "ok", "skipped by sync filter",
+                )
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
-                "middle_path": entry["middle_path"],
+                "middle_path": mp,
                 "encoded_path": entry["encoded_path"],
                 "size": entry.get("size", 0),
-                "action": ActionType.LOCAL_DELETE.value,
+                "action": action,
             })
+            LoggerService.log_file_state(
+                ctx.repo_root, action_folder, mp,
+                mode, status, True, in_remote, action,
+            )
         QueueService.save(ctx.repo_root, state)
 
         if not state.queue:
             QueueService.release(ctx.repo_root)
             RepositoryManager.update_status(ctx.repo_id, "ready")
+            IndexService.touch_cloud_index_synced_at(ctx.repo_root)
+            _run_hook(ctx, progress)
             return PullResult(
                 ok=True,
                 message="No changes to pull",
@@ -135,6 +154,8 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
         QueueService.release(ctx.repo_root)
         RepositoryManager.update_status(ctx.repo_id, "ready")
         RepositoryManager.update_last_updated(ctx.repo_id)
+        IndexService.touch_cloud_index_synced_at(ctx.repo_root)
+        _run_hook(ctx, progress)
 
         summary = (
             f"Pull complete: {counters.downloaded} downloaded, "
@@ -145,19 +166,6 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
             ok=counters.errors == 0,
             counters=counters,
             message=summary,
-            action_folder=action_folder,
-        )
-
-    except UnsyncedNoBackupError as exc:
-        # Safety refusal: don't leave the repo locked.
-        QueueService.release(ctx.repo_root)
-        RepositoryManager.update_status(ctx.repo_id, "ready")
-        LoggerService.log_error(
-            ctx.repo_root, action_folder, "PULL", "-", f"refused: {exc}"
-        )
-        return PullResult(
-            ok=False,
-            message=str(exc),
             action_folder=action_folder,
         )
 
@@ -177,43 +185,49 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
 # helpers
 # ----------------------------------------------------------------------
 
-def _apply_unchecks(ctx: RepoContext, progress: Optional[ProgressFn]) -> None:
-    """Move local files that are no longer synced into the unsynced buffer.
+def _move_remote_only_locals_to_trash(
+    ctx: RepoContext,
+    filt: dict,
+    local_index: dict,
+    cloud_index: dict,
+    action_folder: str,
+    progress: Optional[ProgressFn],
+) -> None:
+    """Move local files that are in a remote-only folder to local trash.
 
-    Runs before scanning, so the fresh local_index reflects the moves.
-    Refuses (raises UnsyncedNoBackupError) if a file has no remote backup —
-    moving it would leave only the buffer copy, defeating the point.
+    remote-only means the user wants these files to live in the cloud only.
+    If a local copy exists, it's a conflict — we resolve by trashing the
+    local copy (non-destructive). The remote copy is untouched.
     """
-    # First scan the current local index so the filter sees real files.
-    local_index = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
-    IndexService.save_local_index(ctx.repo_root, local_index)
-
-    to_move = SyncFilterService.unsynced_local_files(ctx.repo_root)
-    if not to_move:
-        return
-
-    no_backup = [m["middle_path"] for m in to_move if not m["has_remote_backup"]]
-    if no_backup:
-        preview = ", ".join(no_backup[:5])
-        more = "" if len(no_backup) <= 5 else f" (+{len(no_backup) - 5} more)"
-        raise UnsyncedNoBackupError(
-            f"Refusing to move {len(no_backup)} un-checked file(s) with no remote "
-            f"backup: {preview}{more}. Push them first, or re-check the folder."
-        )
-
-    buffer_root = os.path.join(ctx.repo_root, ".fgit", "buffer", "_unsynced")
+    cloud_middle_paths = {
+        e.get("middle_path", "") for e in cloud_index.values()
+    }
     moved = 0
-    for m in to_move:
-        mp = m["middle_path"]
-        src = os.path.join(ctx.repo_root, *mp.split("/"))
-        if not os.path.exists(src):
+    for entry in local_index.values():
+        mp = entry.get("middle_path", "")
+        if not mp:
             continue
-        dst = os.path.join(buffer_root, *mp.split("/"))
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.move(src, dst)
-        moved += 1
-    if progress:
-        progress("unsync", moved, len(to_move), f"moved {moved} unsynced file(s) to buffer")
+        mode = SyncFilterService.get_mode(filt, mp)
+        if mode == "remote-only":
+            local_path = os.path.join(ctx.repo_root, *mp.split("/"))
+            in_remote = mp in cloud_middle_paths
+            status = SyncFilterService.get_status(filt, mp, True, in_remote)
+            if os.path.exists(local_path):
+                TrashService.move_to_trash(ctx.repo_root, mp)
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, True, in_remote,
+                    "move-local-to-trash", "ok", "conflict: remote-only with local copy",
+                )
+                moved += 1
+            else:
+                LoggerService.log_file_state(
+                    ctx.repo_root, action_folder, mp,
+                    mode, status, False, in_remote,
+                    "skip", "ok", "remote-only, no local copy",
+                )
+    if progress and moved:
+        progress("conflict", moved, moved, f"moved {moved} remote-only local file(s) to trash")
 
 
 def _key_for(entry: dict) -> str:
@@ -224,7 +238,6 @@ def _key_for(entry: dict) -> str:
 def _download_cloud_index(ctx: RepoContext) -> dict:
     remote = ctx.cloud_index_remote_path()
     if not ctx.storage.exists(remote):
-        # First-ever pull — no remote index exists, treat as empty
         return {}
     buf = io.BytesIO()
     ctx.storage.download(remote, buf)
@@ -232,9 +245,9 @@ def _download_cloud_index(ctx: RepoContext) -> dict:
 
 
 def _run_hook(ctx: RepoContext, progress: Optional[ProgressFn]) -> None:
-    from ..service import TrashService
     retention = int(ctx.config.get("hook_retention_days", 7))
     if progress:
         progress("hook", 0, 0, f"cleaning trash/action older than {retention}d")
     TrashService.cleanup_old(ctx.repo_root, retention)
     LoggerService.cleanup_old_actions(ctx.repo_root, retention)
+
