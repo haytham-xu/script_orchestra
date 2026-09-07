@@ -15,10 +15,13 @@ import {
   type CleanupMode,
   type DiffEntry,
   type FileTreeEntry,
+  type FileLogRecord,
   type QueueItem,
   type QueueStatus,
   type RepoConfig,
   type Repository,
+  type SyncFilterChild,
+  type SyncMode,
 } from '../service/FileGitService'
 
 export function useFileGitRepoDetail() {
@@ -29,6 +32,7 @@ export function useFileGitRepoDetail() {
   const repo = ref<Repository | null>(null)
   const queue = ref<QueueStatus | null>(null)
   const config = ref<RepoConfig | null>(null)
+  const cloudIndexSyncedAt = ref<string | null>(null)
 
   const isLoading = ref(false)
   const isBusy = ref(false)              // any single action in flight
@@ -96,82 +100,98 @@ export function useFileGitRepoDetail() {
   })
 
   // ------------------------------------------------------------------
-  // Sync filter (selective sync) tree
+  // Sync filter — 3-mode system (immediate PUT per change)
   // ------------------------------------------------------------------
 
-  // The sync decision, edited locally and PUT on save. The backend resolves
-  // each path by longest-prefix match (parent→child cascade, override wins).
-  const syncDecision = ref<{ checked_prefixes: string[]; unchecked_overrides: string[] }>({
-    checked_prefixes: [],
-    unchecked_overrides: [],
-  })
-  const syncDirty = ref(false)
-
-  // el-tree lazy loader: fetch a node's children from the backend.
-  // Pass the tree instance ref so we can setChecked after resolve.
   const syncTreeRef = ref<any>(null)
+  const syncChildren = ref<SyncFilterChild[]>([])
 
   async function loadSyncChildren(node: any, resolve: (data: any[]) => void) {
     const parentPath = node.level === 0 ? '' : node.data.path
     try {
-      const res = node.level === 0
-        ? await FileGitService.getSyncFilter(repoId.value)
-        : await FileGitService.getSyncFilterChildren(repoId.value, parentPath)
-      if (node.level === 0 && res.success && (res as any).filter) {
-        syncDecision.value = (res as any).filter
-        syncDirty.value = false
+      let children: SyncFilterChild[]
+      if (node.level === 0) {
+        const res = await FileGitService.getSyncFilter(repoId.value)
+        children = res.children || []
+        syncChildren.value = children
+      } else {
+        const res = await FileGitService.getSyncFilterChildren(repoId.value, parentPath)
+        children = res.children || []
       }
-      const children = (res as any).children || []
-      const nodes = children.map((c: any) => ({
+      const nodes = children.map((c) => ({
         label: c.name,
         path: c.path,
+        is_dir: c.is_dir,
+        in_local: c.in_local,
+        in_remote: c.in_remote,
+        mode: c.mode,
+        status: c.status,
+        can_set: c.can_set,
         isLeaf: !c.is_dir,
-        kind: c.kind,
-        synced: c.synced,
-        checked: c.checked,
       }))
       resolve(nodes)
-      // Apply checked state after el-tree has registered the new nodes.
-      // nextTick alone isn't enough for lazy trees — use a short timeout.
-      setTimeout(() => {
-        const tree = syncTreeRef.value
-        if (!tree) return
-        for (const n of nodes) {
-          tree.setChecked(n.path, n.checked, false)
-        }
-      }, 50)
     } catch (e: any) {
       ElMessage.error(e.response?.data?.error || e.message || 'Failed to load sync tree')
       resolve([])
     }
   }
 
-  // Toggle a node's sync decision. Setting checked → add to checked_prefixes
-  // and drop any override; unchecking → add an unchecked_override.
-  function toggleSyncNode(path: string, checked: boolean) {
-    const dec = syncDecision.value
-    const strip = (arr: string[]) => arr.filter((p) => p !== path)
-    if (checked) {
-      dec.checked_prefixes = [...new Set([...strip(dec.checked_prefixes), path])]
-      dec.unchecked_overrides = strip(dec.unchecked_overrides)
-    } else {
-      dec.unchecked_overrides = [...new Set([...strip(dec.unchecked_overrides), path])]
-      dec.checked_prefixes = strip(dec.checked_prefixes)
+  async function setSyncNodeMode(path: string, mode: SyncMode) {
+    try {
+      const res = await FileGitService.setSyncMode(repoId.value, path, mode)
+      if (!res.success) {
+        ElMessage.error(res.error || 'Failed to set mode')
+        return
+      }
+      ElMessage.success(`Set ${path || '(root)'} → ${mode}`)
+      // Reload tree from root (mode changes cascade, so a full refresh is simplest)
+      syncTreeKey.value += 1
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to set mode')
     }
-    syncDirty.value = true
   }
 
-  async function saveSyncFilter() {
+  const syncTreeKey = ref(0)
+
+  // ------------------------------------------------------------------
+  // File Log — per-action structured log viewer
+  // ------------------------------------------------------------------
+
+  const fileLogFolders = ref<string[]>([])
+  const fileLogFolder = ref<string>('')
+  const fileLogRecords = ref<FileLogRecord[]>([])
+  const fileLogLoading = ref(false)
+
+  async function loadFileLogFolders() {
     try {
-      const res = await FileGitService.updateSyncFilter(repoId.value, syncDecision.value)
+      const res = await FileGitService.listActionFolders(repoId.value)
       if (res.success) {
-        syncDirty.value = false
-        ElMessage.success(res.message || 'Sync filter saved (applies on next push/pull)')
+        fileLogFolders.value = res.folders
+        if (res.folders.length > 0 && !fileLogFolder.value) {
+          fileLogFolder.value = res.folders[0]
+          await loadFileLog(res.folders[0])
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  async function loadFileLog(folder: string) {
+    if (!folder) return
+    fileLogLoading.value = true
+    try {
+      const res = await FileGitService.getFileLog(repoId.value, folder)
+      if (res.success) {
+        fileLogRecords.value = res.records
+        fileLogFolder.value = folder
       } else {
-        ElMessage.error(res.error || 'Failed to save sync filter')
+        ElMessage.error(res.error || 'Failed to load file log')
       }
     } catch (e: any) {
-      ElMessage.error(e.response?.data?.error || e.message || 'Failed to save sync filter')
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load file log')
+    } finally {
+      fileLogLoading.value = false
     }
   }
 
@@ -229,6 +249,7 @@ export function useFileGitRepoDetail() {
       if (res.success) {
         repo.value = res.repo
         queue.value = res.queue
+        cloudIndexSyncedAt.value = res.cloud_index_synced_at ?? null
       } else if (res.error) {
         ElMessage.error(res.error)
       }
@@ -315,11 +336,65 @@ export function useFileGitRepoDetail() {
     } finally {
       isBusy.value = false
       await loadStatus()
+      await loadFileLogFolders()
     }
   }
 
-  const push = () => runAction('Push', () => FileGitService.push(repoId.value))
-  const pull = () => runAction('Pull', () => FileGitService.pull(repoId.value))
+  const push = () => _pushWithDryRun()
+  const pull = () => _pullWithDryRun()
+
+  async function _pushWithDryRun() {
+    if (isBusy.value) return
+    isBusy.value = true
+    try {
+      const dr = await FileGitService.pushDryRun(repoId.value)
+      if (dr.success && dr.conflicts.length > 0) {
+        const lines = dr.conflicts.map((c) => `• ${c.path}  [${c.issue}] → ${c.action}`).join('\n')
+        try {
+          await ElMessageBox.confirm(
+            `Push has ${dr.conflicts.length} issue(s):\n\n${lines}\n\nContinue?`,
+            'Push Dry-Run',
+            { confirmButtonText: 'Push anyway', cancelButtonText: 'Cancel', type: 'warning' },
+          )
+        } catch {
+          isBusy.value = false
+          return
+        }
+      }
+    } catch {
+      // dry-run failure is non-fatal — proceed with push
+    } finally {
+      isBusy.value = false
+    }
+    return runAction('Push', () => FileGitService.push(repoId.value))
+  }
+
+  async function _pullWithDryRun() {
+    if (isBusy.value) return
+    isBusy.value = true
+    try {
+      const dr = await FileGitService.pullDryRun(repoId.value)
+      if (dr.success && dr.conflicts.length > 0) {
+        const lines = dr.conflicts.map((c) => `• ${c.path}  [${c.issue}] → ${c.action}`).join('\n')
+        try {
+          await ElMessageBox.confirm(
+            `Pull has ${dr.conflicts.length} issue(s):\n\n${lines}\n\nContinue?`,
+            'Pull Dry-Run',
+            { confirmButtonText: 'Pull anyway', cancelButtonText: 'Cancel', type: 'warning' },
+          )
+        } catch {
+          isBusy.value = false
+          return
+        }
+      }
+    } catch {
+      // dry-run failure is non-fatal — proceed with pull
+    } finally {
+      isBusy.value = false
+    }
+    return runAction('Pull', () => FileGitService.pull(repoId.value))
+  }
+
   const resume = () => runAction('Resume', () => FileGitService.resume(repoId.value))
 
   const manualUpload = () => runAction(
@@ -363,6 +438,11 @@ export function useFileGitRepoDetail() {
   const rebuildLocalIndex = () => runAction(
     'Rebuild Local Index',
     () => FileGitService.rebuildLocalIndex(repoId.value),
+  )
+
+  const applyFilter = () => runAction(
+    'Apply Filter',
+    () => FileGitService.applyFilter(repoId.value),
   )
 
   async function rebuildCloudIndex() {
@@ -480,7 +560,7 @@ export function useFileGitRepoDetail() {
 
   // ------------------------------------------------------------------
 
-  onMounted(() => { loadAll(); loadQueue() })
+  onMounted(() => { loadAll(); loadQueue(); loadFileLogFolders() })
   onUnmounted(stopQueuePoll)
 
   return {
@@ -490,12 +570,12 @@ export function useFileGitRepoDetail() {
     config,
     rootPrefix,
     finalRemotePath,
-    syncDecision,
-    syncDirty,
+    cloudIndexSyncedAt,
     syncTreeRef,
+    syncTreeKey,
+    syncChildren,
     loadSyncChildren,
-    toggleSyncNode,
-    saveSyncFilter,
+    setSyncNodeMode,
     isLoading,
     isBusy,
     isLocked,
@@ -537,6 +617,7 @@ export function useFileGitRepoDetail() {
     runDiff,
     rebuildLocalIndex,
     rebuildCloudIndex,
+    applyFilter,
     cleanup,
     openFolder,
     goBack,
@@ -547,5 +628,11 @@ export function useFileGitRepoDetail() {
     queueItems,
     queueStats,
     loadQueue,
+    fileLogFolders,
+    fileLogFolder,
+    fileLogRecords,
+    fileLogLoading,
+    loadFileLogFolders,
+    loadFileLog,
   }
 }

@@ -9,7 +9,8 @@
         <h1>Settings</h1>
       </div>
       <div class="fg-topbar-right">
-        <el-button :icon="Refresh" size="small" @click="loadAll">Refresh</el-button>
+        <el-button size="small" @click="loadConfig">Discard</el-button>
+        <el-button type="primary" size="small" @click="saveConfig" :loading="isBusy">Save</el-button>
       </div>
     </header>
 
@@ -46,155 +47,70 @@
             <el-input-number v-model="editHookDays" :min="0" :max="365" />
           </el-form-item>
         </el-form>
-        <div class="fg-actions">
-          <el-button type="primary" @click="saveConfig" :loading="isBusy">Save Config</el-button>
-          <el-button @click="loadConfig">Discard</el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Sync Filter</h2>
-        <p class="fg-hint">
-          Choose which folders participate in push/pull. Changes apply on the
-          next push/pull, not immediately. Unchecking a folder moves its local
-          files to the buffer (remote copy is kept). Refresh the remote view
-          with <b>Rebuild Cloud Index</b> below.
-        </p>
-        <el-tree
-          ref="syncTreeRef"
-          :key="repoId"
-          lazy
-          :load="loadSyncChildren"
-          :props="{ label: 'label', isLeaf: 'isLeaf' }"
-          node-key="path"
-          show-checkbox
-          :check-strictly="true"
-          @check-change="(data: any, checked: boolean) => toggleSyncNode(data.path, checked)">
-          <template #default="{ data }">
-            <span class="fg-sync-node" :class="{ 'fg-sync-danger': !data.checked && data.kind === 'local-only' }">
-              <span>{{ data.label }}</span>
-              <el-tag
-                size="small"
-                :type="data.kind === 'both' ? 'success' : data.kind === 'local-only' ? 'info' : 'warning'">
-                {{ data.kind === 'both' ? 'backed up' : data.kind === 'local-only' ? 'local only' : 'remote only' }}
-              </el-tag>
-              <span v-if="!data.checked && data.kind === 'local-only'" class="fg-sync-warn">
-                not backed up — sync will refuse
-              </span>
-            </span>
-          </template>
-        </el-tree>
-        <div class="fg-actions">
-          <el-button type="primary" :disabled="!syncDirty" @click="saveSyncFilter">
-            Save Sync Filter
-          </el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Manual Upload</h2>
-        <p class="fg-hint">
-          For large batches. {{ isEncrypted
-            ? 'Files are encrypted into .fgit/buffer/; drag them into the cloud APP by hand.'
-            : 'Drag source files into the cloud APP directly.' }}
-        </p>
-        <el-form label-position="top" style="margin-bottom: 12px;">
-          <el-form-item label="Subpath (relative, empty = whole repo)">
-            <el-input
-              v-model="manualSubpath"
-              placeholder="e.g. photos/2024"
-              :disabled="isLocked" />
-          </el-form-item>
-        </el-form>
-        <div class="fg-actions">
-          <el-button
-            :icon="Upload"
-            :disabled="!canManualUploadPrepare"
-            @click="manualUpload">
-            Manual Upload — prepare
-          </el-button>
-          <el-button
-            :icon="Check"
-            :disabled="!canPostManualUpload"
-            @click="postManualUpload">
-            Post Manual Upload — confirm
-          </el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Manual Download</h2>
-        <p class="fg-hint">
-          {{ isEncrypted
-            ? 'Download ciphertext from the cloud APP into .fgit/buffer/; the tool decrypts on Post.'
-            : 'Download files from the cloud APP directly into the repo.' }}
-        </p>
-        <div class="fg-actions">
-          <el-button
-            :icon="Download"
-            :disabled="!canPreManualDownload"
-            @click="preManualDownload">
-            Pre Manual Download — acquire lock
-          </el-button>
-          <el-button
-            :icon="Check"
-            :disabled="!canPostManualDownload"
-            @click="postManualDownload">
-            Post Manual Download — decrypt &amp; reconcile
-          </el-button>
-        </div>
-      </section>
-
-      <section class="fg-card">
-        <h2>Diff</h2>
-        <p class="fg-hint">Compare local files against cloud_index mirror. Read-only; safe while locked.</p>
-        <div class="fg-actions">
-          <el-button :icon="View" :disabled="!canDiff" @click="runDiff">Compute Diff</el-button>
-        </div>
-        <div v-if="diffMessage" class="fg-diff-summary">{{ diffMessage }}</div>
-        <div v-if="diffAdded.length || diffModified.length || diffDeleted.length" class="fg-diff-lists">
-          <div v-if="diffAdded.length" class="fg-diff-group">
-            <h3><el-icon><Plus /></el-icon> Added ({{ diffAdded.length }})</h3>
-            <ul>
-              <li v-for="e in diffAdded" :key="'a_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
-          </div>
-          <div v-if="diffModified.length" class="fg-diff-group">
-            <h3><el-icon><Refresh /></el-icon> Modified ({{ diffModified.length }})</h3>
-            <ul>
-              <li v-for="e in diffModified" :key="'m_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
-          </div>
-          <div v-if="diffDeleted.length" class="fg-diff-group">
-            <h3><el-icon><Delete /></el-icon> Deleted ({{ diffDeleted.length }})</h3>
-            <ul>
-              <li v-for="e in diffDeleted" :key="'d_' + e.middle_path" class="mono">
-                {{ e.middle_path }} <span class="fg-size">({{ formatSize(e.size) }})</span>
-              </li>
-            </ul>
-          </div>
-        </div>
       </section>
 
       <section class="fg-card">
         <h2>Index &amp; Cleanup</h2>
-        <div class="fg-actions">
-          <el-button :icon="Refresh" :disabled="!canRebuildLocal" @click="rebuildLocalIndex">
-            Rebuild Local Index
-          </el-button>
-          <el-button :icon="Refresh" :disabled="!canRebuildCloud" @click="rebuildCloudIndex">
-            Rebuild Cloud Index…
-          </el-button>
-          <el-button :icon="Delete" :disabled="!canCleanup" @click="cleanup('expired')">
-            Cleanup Expired
-          </el-button>
-          <el-button :icon="Delete" type="danger" plain :disabled="!canCleanup" @click="cleanup('all')">
-            Cleanup All
-          </el-button>
+        <div class="fg-action-row">
+          <el-button :icon="Refresh" :disabled="!canRebuildLocal" @click="rebuildLocalIndex">Rebuild Local Index</el-button>
+          <el-button :icon="Refresh" :disabled="!canRebuildCloud" @click="rebuildCloudIndex">Rebuild Cloud Index…</el-button>
+          <el-button :icon="Delete" :disabled="!canCleanup" @click="cleanup('expired')">Cleanup Expired</el-button>
+          <el-button :icon="Delete" type="danger" plain :disabled="!canCleanup" @click="cleanup('all')">Cleanup All</el-button>
+        </div>
+      </section>
+
+      <!-- File Log -->
+      <section class="fg-card" v-if="fileLogFolders.length > 0">
+        <div class="fg-files-header">
+          <h2>File Log</h2>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <el-select
+              :model-value="fileLogFolder"
+              size="small"
+              style="width:220px;"
+              @change="(v: string) => loadFileLog(v)">
+              <el-option v-for="f in fileLogFolders" :key="f" :label="f" :value="f" />
+            </el-select>
+            <el-button size="small" :icon="Refresh" @click="loadFileLogFolders">Refresh</el-button>
+          </div>
+        </div>
+        <div v-loading="fileLogLoading">
+          <div v-if="fileLogRecords.length === 0" class="fg-hint" style="margin-top:8px;">
+            No records for this action folder.
+          </div>
+          <el-table
+            v-else
+            :data="fileLogRecords"
+            size="small"
+            style="width:100%;margin-top:8px;"
+            :row-class-name="(row: any) => row.row.result === 'error' ? 'fg-log-error' : ''">
+            <el-table-column prop="path" label="Path" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="action" label="Action" width="150" />
+            <el-table-column prop="mode" label="Mode" width="110" />
+            <el-table-column label="Local" width="65" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.in_local" style="color:#34c759"><Check /></el-icon>
+                <span v-else style="color:#86868b">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Remote" width="70" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.in_remote" style="color:#34c759"><Check /></el-icon>
+                <span v-else style="color:#86868b">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Result" width="80">
+              <template #default="{ row }">
+                <el-tag
+                  size="small"
+                  :type="row.result === 'ok' ? 'success' : row.result === 'error' ? 'danger' : 'info'">
+                  {{ row.result ?? 'pending' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="detail" label="Detail" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="ts" label="Time" width="90" show-overflow-tooltip />
+          </el-table>
         </div>
       </section>
 
@@ -206,8 +122,7 @@
 import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
-  ArrowLeft, Refresh, Upload, Download, Check,
-  View, Plus, Delete,
+  ArrowLeft, Refresh, Check, Delete,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -216,32 +131,19 @@ const route = useRoute()
 const view = useFileGitRepoDetail()
 const {
   repo, config, isLoading, isBusy,
-  isLocked, isEncrypted,
-  canManualUploadPrepare, canPostManualUpload,
-  canPreManualDownload, canPostManualDownload,
-  canDiff, canRebuildLocal, canRebuildCloud, canCleanup,
-  diffAdded, diffModified, diffDeleted, diffMessage,
-  editPassword, editRemotePath, editHookDays, manualSubpath,
+  canRebuildLocal, canRebuildCloud, canCleanup,
+  editPassword, editRemotePath, editHookDays,
   finalRemotePath,
-  repoId, syncDirty, syncTreeRef, loadSyncChildren, toggleSyncNode, saveSyncFilter,
   loadAll, loadConfig,
   saveConfig,
-  manualUpload, postManualUpload,
-  preManualDownload, postManualDownload,
-  runDiff, rebuildLocalIndex, rebuildCloudIndex,
+  rebuildLocalIndex, rebuildCloudIndex,
   cleanup,
+  fileLogFolders, fileLogFolder, fileLogRecords, fileLogLoading,
+  loadFileLogFolders, loadFileLog,
 } = view
 
 function goToDetail() {
   router.push(`/file-git/${route.params.id}`)
-}
-
-function formatSize(n: number) {
-  if (!Number.isFinite(n)) return '?'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
 </script>
 
@@ -268,8 +170,8 @@ function formatSize(n: number) {
 }
 .fg-topbar-left {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  align-items: center;
+  gap: 12px;
 }
 .fg-topbar-left h1 {
   font-size: 17px;
@@ -282,8 +184,6 @@ function formatSize(n: number) {
   gap: 8px;
 }
 .fg-content {
-  max-width: 900px;
-  margin: 0 auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -305,56 +205,20 @@ function formatSize(n: number) {
   color: #86868b;
   margin: 0 0 12px;
 }
-.fg-actions {
+.fg-files-header {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.fg-files-header h2 { margin: 0; }
+:deep(.fg-log-error td) {
+  background: #fff5f5 !important;
+}
+.fg-action-row {
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 8px;
-}
-.fg-sync-node {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.fg-sync-danger { color: #c0392b; }
-.fg-sync-warn {
-  font-size: 11px;
-  color: #c0392b;
-}
-.fg-diff-summary {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: #f5f5f7;
-  border-radius: 8px;
-  font-size: 12px;
-}
-.fg-diff-lists {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.fg-diff-group h3 {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.fg-diff-group ul {
-  margin: 0;
-  padding-left: 20px;
-  max-height: 200px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-.fg-diff-group li { padding: 2px 0; }
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
-}
-.fg-size {
-  color: #86868b;
-  font-size: 11px;
+  margin-top: 8px;
 }
 </style>

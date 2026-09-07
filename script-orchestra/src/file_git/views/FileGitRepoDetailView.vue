@@ -15,9 +15,15 @@
         <el-tag :type="statusColor(repo?.status)" size="small">
           {{ repo?.status ?? 'unknown' }}
         </el-tag>
+        <span v-if="cloudIndexSyncedAt" class="fg-synced-at" :title="'cloud_index last synced: ' + cloudIndexSyncedAt">
+          synced {{ formatBeijingTime(cloudIndexSyncedAt) }}
+        </span>
+        <span v-else class="fg-synced-at fg-synced-never">never synced</span>
         <el-button :icon="FolderOpened" size="small" @click="openFolder">Open Folder</el-button>
+        <el-button :icon="Tools" size="small" @click="goToManual">Manual</el-button>
+        <el-button :icon="Filter" size="small" @click="goToSyncFilter">Sync Filter</el-button>
         <el-button :icon="Setting" size="small" @click="goToSettings">Settings</el-button>
-        <el-button :icon="Refresh" size="small" @click="loadAll">Refresh</el-button>
+        <el-button :icon="QuestionFilled" size="small" @click="docDrawerVisible = true">Doc</el-button>
       </div>
     </header>
 
@@ -51,26 +57,9 @@
     <main class="fg-content">
 
       <section class="fg-card">
-        <h2>Sync</h2>
-        <p class="fg-hint">Fully automated via API. Fast for small changes.</p>
-        <div class="fg-actions">
-          <el-button
-            type="primary"
-            :icon="Upload"
-            :disabled="!canPushPull"
-            @click="push"
-            :loading="isBusy">
-            Push
-          </el-button>
-          <el-button
-            type="primary"
-            plain
-            :icon="Download"
-            :disabled="!canPushPull"
-            @click="pull"
-            :loading="isBusy">
-            Pull
-          </el-button>
+        <div class="fg-action-row">
+          <el-button type="primary" :icon="Upload" :disabled="!canPushPull" @click="push" :loading="isBusy">Push</el-button>
+          <el-button type="primary" plain :icon="Download" :disabled="!canPushPull" @click="pull" :loading="isBusy">Pull</el-button>
         </div>
       </section>
 
@@ -133,20 +122,107 @@
         </el-tree>
       </section>
 
+
     </main>
+
+    <!-- Doc drawer -->
+    <el-drawer v-model="docDrawerVisible" title="How it works" size="600px" direction="rtl">
+      <div class="fg-doc">
+        <section>
+          <h3>Push <span class="fg-doc-sub">local → cloud</span></h3>
+          <ul>
+            <li>Downloads latest <code>cloud_index</code> from remote first</li>
+            <li>Rebuilds <code>local_index</code> by scanning local files</li>
+            <li>Diffs local vs cloud; uploads new/modified files</li>
+            <li>Moves cloud copies of locally-deleted files to remote trash</li>
+            <li>Skips <em>local-only</em> and <em>remote-only</em> paths entirely</li>
+            <li>Rewrites and uploads <code>cloud_index</code></li>
+            <li>Runs hook cleanup at the end</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Pull <span class="fg-doc-sub">cloud → local</span></h3>
+          <ul>
+            <li>Downloads latest <code>cloud_index</code> from remote first</li>
+            <li>Downloads new/modified files from cloud</li>
+            <li>Moves local copies of cloud-deleted files to local trash</li>
+            <li>Moves local copies of <em>remote-only</em> paths to local trash</li>
+            <li>Skips <em>local-only</em> paths entirely</li>
+            <li>Rebuilds <code>local_index</code> after applying changes</li>
+            <li>Runs hook cleanup at the end</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Manual</h3>
+          <p class="fg-doc-p">Use when automated push/pull is too slow or you want to move individual files. You drag files yourself via the cloud app; this tool handles encryption, index tracking, and lock management.</p>
+          <p class="fg-doc-p"><strong>Upload:</strong></p>
+          <ul>
+            <li><em>Prepare</em> — scans the subpath, encrypts files to <code>.fgit/buffer/</code> (encrypted mode) or records them as-is, acquires the lock. Then drag the files into the cloud app by hand.</li>
+            <li><em>Confirm</em> — verifies what actually landed in cloud, updates and uploads <code>cloud_index</code>, releases lock</li>
+          </ul>
+          <p class="fg-doc-p"><strong>Download:</strong></p>
+          <ul>
+            <li><em>Acquire Lock</em> — locks the repo and opens <code>.fgit/buffer/</code> as drop target. Then download files from the cloud app into that folder.</li>
+            <li><em>Decrypt &amp; Reconcile</em> — decrypts buffer files to their correct paths (encrypted mode), rebuilds <code>local_index</code>, updates and uploads <code>cloud_index</code>, releases lock</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Sync Filter</h3>
+          <p class="fg-doc-p"><strong>Modes:</strong></p>
+          <ul>
+            <li><em>synced</em> — included in push &amp; pull (default)</li>
+            <li><em>local-only</em> — never uploaded; push/pull skip it completely</li>
+            <li><em>remote-only</em> — never downloaded; pull skips it; push trashes any local copy</li>
+          </ul>
+          <p class="fg-doc-p"><strong>Status tags (what each mode + file state means):</strong></p>
+          <ul>
+            <li><em>synced</em> + exists in both → <code>synced</code></li>
+            <li><em>synced</em> + local only → <code>pending push</code></li>
+            <li><em>synced</em> + cloud only → <code>pending pull</code></li>
+            <li><em>synced</em> + both but different size → <code>changed</code></li>
+            <li><em>local-only</em> + local only → <code>local-only · not pushed</code></li>
+            <li><em>remote-only</em> + cloud only → <code>remote-only · not pulled</code></li>
+            <li><em>remote-only</em> + local copy exists → <code>conflict — local copy should not exist</code></li>
+          </ul>
+          <p class="fg-doc-p"><strong>Apply:</strong> full idempotent scan — uploads missing synced files, downloads missing synced files, soft-deletes files that are in the wrong place per the current mode</p>
+          <p class="fg-doc-p">Child paths inherit parent mode. Override per folder by selecting a mode in the dropdown (only valid transitions are shown).</p>
+        </section>
+        <section>
+          <h3>Local Index <span class="fg-doc-sub">(Settings)</span></h3>
+          <ul>
+            <li><em>Rebuild Local Index</em> — rescans the local file tree, overwrites <code>.fgit/local_index.json</code>. Push and Pull both do this automatically; only run manually if the index looks stale.</li>
+            <li><em>Rebuild Cloud Index</em> — traverses the entire cloud folder via storage API (slow/expensive for large repos), overwrites the local mirror and uploads the new version. Use when cloud was changed outside this tool.</li>
+            <li><em>Cleanup Expired</em> — removes <code>.fgit/action/</code> and <code>.fgit/trash/</code> folders older than the retention days set in Config</li>
+            <li><em>Cleanup All</em> — removes all action/trash folders regardless of age</li>
+          </ul>
+        </section>
+        <section>
+          <h3>Hook</h3>
+          <ul>
+            <li>Runs automatically at the <strong>end</strong> of every operation (Push, Pull, Apply)</li>
+            <li>Deletes <code>.fgit/action/</code> and <code>.fgit/trash/</code> subfolders older than the retention period</li>
+            <li>Retention days configured in Settings → Config → <em>Auto-cleanup retention</em></li>
+            <li>Set to 0 to clean up everything after each operation; set higher to keep history</li>
+            <li>Hook runs synchronously before the operation returns — no background process</li>
+          </ul>
+        </section>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
-  ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting,
+  ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting, Tools, Filter, QuestionFilled,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
+
+const docDrawerVisible = ref(false)
 
 const view = useFileGitRepoDetail()
 const {
@@ -154,6 +230,7 @@ const {
   isLocked, lockActionType, pendingUploadCount, pendingQueueCount,
   canPushPull, canResume,
   repoId,
+  cloudIndexSyncedAt,
   loadAll,
   push, pull, resume,
   openFolder, goBack,
@@ -163,6 +240,14 @@ const {
 
 function goToSettings() {
   router.push(`/file-git/${route.params.id}/settings`)
+}
+
+function goToManual() {
+  router.push(`/file-git/${route.params.id}/manual`)
+}
+
+function goToSyncFilter() {
+  router.push(`/file-git/${route.params.id}/sync-filter`)
 }
 
 const lockLabel = computed(() => {
@@ -188,6 +273,23 @@ function formatSize(n: number) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
   return `${(n / 1024 ** 3).toFixed(2)} GB`
+}
+
+function formatBeijingTime(iso: string): string {
+  return new Date(iso).toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+}
+
+function formatRelTime(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
 }
 </script>
 
@@ -228,8 +330,7 @@ function formatSize(n: number) {
   gap: 8px;
 }
 .fg-banner {
-  max-width: 900px;
-  margin: 12px auto 0;
+  margin: 12px 24px 0;
   padding: 12px 16px;
   background: #fff8e6;
   border: 1px solid #f5d97e;
@@ -249,8 +350,6 @@ function formatSize(n: number) {
   margin-top: 2px;
 }
 .fg-content {
-  max-width: 900px;
-  margin: 0 auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -276,6 +375,11 @@ function formatSize(n: number) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.fg-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .fg-files-header {
   display: flex;
@@ -309,5 +413,97 @@ function formatSize(n: number) {
   font-size: 11px;
   color: #ff3b30;
   padding: 2px 0;
+}
+:deep(.fg-log-error td) {
+  background: #fff5f5 !important;
+}
+.fg-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.fg-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: #f5f5f7;
+  border-radius: 8px;
+}
+.fg-step-btn {
+  flex-shrink: 0;
+  width: 110px;
+  padding-top: 2px;
+}
+.fg-step-btn .el-button { width: 100%; }
+.fg-step-desc { flex: 1; }
+.fg-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.fg-step-body {
+  font-size: 12px;
+  color: #48484a;
+  line-height: 1.5;
+}
+.fg-step-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #e5e5ea;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 11px;
+}
+.fg-synced-at {
+  font-size: 11px;
+  color: #86868b;
+  white-space: nowrap;
+}
+.fg-synced-never {
+  color: #ff9500;
+}
+.fg-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1d1d1f;
+  padding: 4px 0;
+}
+.fg-doc section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #1d1d1f;
+}
+.fg-doc-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: #86868b;
+  margin-left: 4px;
+}
+.fg-doc ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fg-doc-p {
+  font-size: 13px;
+  color: #3a3a3c;
+  margin: 6px 0 4px;
+}
+.fg-doc li {
+  color: #3a3a3c;
+}
+.fg-doc code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #e5e5ea;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 11px;
 }
 </style>

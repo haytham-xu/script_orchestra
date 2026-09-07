@@ -36,6 +36,8 @@ import AssistantView from '@/assistant/views/AssistantView.vue'
 import FileGitReposView from '@/file_git/views/FileGitReposView.vue'
 import FileGitRepoDetailView from '@/file_git/views/FileGitRepoDetailView.vue'
 import FileGitRepoSettingsView from '@/file_git/views/FileGitRepoSettingsView.vue'
+import FileGitRepoManualView from '@/file_git/views/FileGitRepoManualView.vue'
+import FileGitRepoSyncFilterView from '@/file_git/views/FileGitRepoSyncFilterView.vue'
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
 import ProxyForwardView from '@/proxy_forward/views/ProxyForwardView.vue'
 import RelayProxyView from '@/relay_proxy/views/RelayProxyView.vue'
@@ -248,6 +250,16 @@ const router = createRouter({
       path: '/file-git/:id/settings',
       name: 'file-git-repo-settings',
       component: FileGitRepoSettingsView
+    },
+    {
+      path: '/file-git/:id/manual',
+      name: 'file-git-repo-manual',
+      component: FileGitRepoManualView
+    },
+    {
+      path: '/file-git/:id/sync-filter',
+      name: 'file-git-repo-sync-filter',
+      component: FileGitRepoSyncFilterView
     },
   ],
 })

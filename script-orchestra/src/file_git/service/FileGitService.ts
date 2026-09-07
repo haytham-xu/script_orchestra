@@ -33,6 +33,7 @@ export interface Repository {
   last_updated: string
   initialized: boolean
   status: RepoStatusValue
+  cloud_index_synced_at: string | null
 }
 
 export interface RepoConfig {
@@ -56,6 +57,7 @@ export interface RepoStatusResponse {
   success: boolean
   repo: Repository
   queue: QueueStatus
+  cloud_index_synced_at: string | null
   error?: string
 }
 
@@ -234,15 +236,63 @@ export interface SettingsResponse {
   error?: string
 }
 
-export type SyncFilterKind = 'both' | 'local-only' | 'remote-only'
+export type SyncMode = 'local-only' | 'remote-only' | 'synced'
 
 export interface SyncFilterChild {
   name: string
-  path: string          // middle_path relative to remote_path
+  path: string
   is_dir: boolean
-  kind: SyncFilterKind
-  synced: boolean       // remote has it (backed up)
-  checked: boolean      // current sync decision
+  in_local: boolean
+  in_remote: boolean
+  mode: SyncMode
+  status: string
+  can_set: SyncMode[]
+}
+
+export interface SyncFilterResponse {
+  success: boolean
+  decisions: Record<string, SyncMode>
+  children: SyncFilterChild[]
+  error?: string
+}
+
+export interface DryRunConflict {
+  path: string
+  issue: string
+  action: string
+}
+
+export interface DryRunResponse {
+  success: boolean
+  conflicts: DryRunConflict[]
+  error?: string
+}
+
+// ---- file log -------------------------------------------------------
+
+export interface FileLogRecord {
+  ts: string
+  path: string
+  mode: string
+  status: string
+  in_local: boolean
+  in_remote: boolean
+  action: string
+  result: string | null
+  detail: string
+}
+
+export interface FileLogResponse {
+  success: boolean
+  records: FileLogRecord[]
+  action_folder: string
+  error?: string
+}
+
+export interface ActionFoldersResponse {
+  success: boolean
+  folders: string[]
+  error?: string
 }
 
 // ---------------------------------------------------------------------
@@ -454,12 +504,7 @@ export class FileGitService {
 
   // ---- Sync filter (selective sync) ---------------------------------
 
-  static async getSyncFilter(repoId: string): Promise<{
-    success: boolean
-    filter?: { checked_prefixes: string[]; unchecked_overrides: string[] }
-    children?: SyncFilterChild[]
-    error?: string
-  }> {
+  static async getSyncFilter(repoId: string): Promise<SyncFilterResponse> {
     const { data } = await axios.get(
       `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter`)
     return data
@@ -467,7 +512,7 @@ export class FileGitService {
 
   static async getSyncFilterChildren(repoId: string, path: string): Promise<{
     success: boolean
-    children?: SyncFilterChild[]
+    children: SyncFilterChild[]
     error?: string
   }> {
     const { data } = await axios.get(
@@ -476,14 +521,45 @@ export class FileGitService {
     return data
   }
 
-  static async updateSyncFilter(
+  static async setSyncMode(
     repoId: string,
-    decision: { checked_prefixes: string[]; unchecked_overrides: string[] },
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    path: string,
+    mode: SyncMode,
+  ): Promise<SyncFilterResponse> {
     const { data } = await axios.put(
       `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter`,
-      decision,
+      { path, mode },
       jsonHeaders)
+    return data
+  }
+
+  static async applyFilter(repoId: string): Promise<{ success: boolean; message?: string; error?: string; counters?: Record<string, number> }> {
+    const { data } = await axios.post(
+      `${BACKEND_BASE_URL}${FILE_GIT_ENDPOINT_REPOS}/${repoId}/sync-filter/apply`,
+      {},
+      jsonHeaders)
+    return data
+  }
+
+  static async pushDryRun(repoId: string): Promise<DryRunResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/push/dry-run'))
+    return data
+  }
+
+  static async pullDryRun(repoId: string): Promise<DryRunResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/pull/dry-run'))
+    return data
+  }
+
+  static async listActionFolders(repoId: string): Promise<ActionFoldersResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/action-folders'))
+    return data
+  }
+
+  static async getFileLog(repoId: string, actionFolder: string): Promise<FileLogResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/file-log'), {
+      params: { action_folder: actionFolder },
+    })
     return data
   }
 }

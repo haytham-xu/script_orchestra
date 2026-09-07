@@ -62,6 +62,14 @@
 
             <dt>Updated</dt>
             <dd class="mono">{{ formatTime(repo.last_updated) }}</dd>
+
+            <dt>Synced</dt>
+            <dd>
+              <span v-if="repo.cloud_index_synced_at" class="fg-synced-at">
+                {{ formatBeijingTime(repo.cloud_index_synced_at) }}
+              </span>
+              <span v-else class="fg-synced-never">never</span>
+            </dd>
           </dl>
         </el-card>
       </div>
@@ -151,6 +159,15 @@ function formatTime(iso: string) {
   } catch {
     return iso
   }
+}
+
+function formatBeijingTime(iso: string): string {
+  return new Date(iso).toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
 }
 </script>
 
@@ -269,5 +286,14 @@ function formatTime(iso: string) {
   font-size: 12px;
   color: #86868b;
   margin: 8px 0 0;
+}
+.fg-synced-at {
+  font-size: 11px;
+  color: #48484a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.fg-synced-never {
+  font-size: 11px;
+  color: #ff9500;
 }
 </style>
