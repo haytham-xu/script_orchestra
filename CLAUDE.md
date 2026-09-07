@@ -166,7 +166,12 @@ TEST_REMOTE_ROOT=/apps/sync-assistant/fgit_selftest/e2e_plain \
 
 TEST_REMOTE_ROOT_ENCRYPTED=/apps/sync-assistant/fgit_selftest/e2e_enc \
   pytest backend/file_git/tests/e2e/test_encrypted_real.py -v -s
+
+# step-by-step mode: pauses after each test for manual inspection
+TEST_REMOTE_ROOT=/apps/sync-assistant/fgit_selftest/e2e_plain \
+STEP_PAUSE=1 pytest backend/file_git/tests/e2e/test_plain_real.py -v -s
 ```
+Note: `-s` is required for `STEP_PAUSE=1` so that `input()` is not captured by pytest.
 
 ## Key files
 - Backend: `backend/app.py`, `backend/extensions.py`, `backend/config.py`

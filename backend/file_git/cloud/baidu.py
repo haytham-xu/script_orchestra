@@ -15,7 +15,7 @@ import json
 import time
 import hashlib
 import urllib.parse
-from typing import BinaryIO, Callable, Iterator
+from typing import BinaryIO, Callable, Iterator, Optional
 
 import requests
 
@@ -27,13 +27,29 @@ HEADERS = {"User-Agent": "pan.baidu.com"}
 # Super-VIP accounts allow 32MB chunks; keep a safe default that works for all.
 CHUNK_SIZE = 4 * 1024 * 1024
 
+# Exponential-backoff delays (seconds) for HTTP 429 / 503 rate-limit responses.
+# After all attempts are exhausted, RateLimitError is raised and the queue item
+# is marked as ERROR so the user can inspect and retry manually.
+RETRY_DELAYS = [30, 60, 120, 240, 480, 960, 1920, 3840, 7680, 15360, 30720]
+
+
+class RateLimitError(RuntimeError):
+    """Raised when Baidu API rate-limits us after all retry attempts are exhausted."""
+
 
 class BaiduCloudStorage(CloudStorage):
-    def __init__(self, token_provider: Callable[[], str], root_prefix: str = ""):
+    def __init__(
+        self,
+        token_provider: Callable[[], str],
+        root_prefix: str = "",
+        on_retry: Optional[Callable[[int, int, int], None]] = None,
+    ):
         # token_provider returns a currently-valid access token on each call,
         # so long-running syncs pick up refreshed tokens automatically.
+        # on_retry(attempt, delay_seconds, status_code) is called before each sleep.
         self._token_provider = token_provider
         self.root = (root_prefix or "").rstrip("/")
+        self._on_retry = on_retry
 
     # ---- path helpers -------------------------------------------------
 
@@ -57,11 +73,26 @@ class BaiduCloudStorage(CloudStorage):
 
     def _request(self, url, method, params=None, data=None, files=None):
         params = dict(params or {})
-        params["access_token"] = self._token_provider()
-        resp = requests.request(method, url, params=params, headers=HEADERS,
-                                data=data, files=files, timeout=360)
-        resp.raise_for_status()
-        return resp
+        last_exc: Optional[Exception] = None
+        for attempt, delay in enumerate(RETRY_DELAYS + [None]):
+            params["access_token"] = self._token_provider()
+            try:
+                resp = requests.request(method, url, params=params, headers=HEADERS,
+                                        data=data, files=files, timeout=360)
+                resp.raise_for_status()
+                return resp
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                if status in (429, 503) and delay is not None:
+                    if self._on_retry:
+                        self._on_retry(attempt + 1, delay, status)
+                    time.sleep(delay)
+                    last_exc = exc
+                    continue
+                raise
+        raise RateLimitError(
+            f"Baidu rate-limited after {len(RETRY_DELAYS)} retries"
+        ) from last_exc
 
     def _request_json(self, url, method, params=None, data=None, files=None):
         return self._request(url, method, params, data, files).json()

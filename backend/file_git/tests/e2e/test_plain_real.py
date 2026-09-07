@@ -88,8 +88,14 @@ def real_exists(remote_root: str, relative_path: str) -> bool:
 
 
 def real_cleanup_remote(remote_root: str) -> None:
-    """Cannot auto-clean real Baidu Pan in tests — must be done manually."""
-    pass  # intentional no-op; real cleanup is a manual step
+    """Delete the remote_root folder on Baidu Pan (including all contents)."""
+    from file_git.settings_manager import SettingsManager
+    from file_git.cloud.baidu import BaiduCloudStorage
+
+    token_provider = lambda: SettingsManager.get_baidu_credentials()["access_token"]
+    root_prefix = SettingsManager.get_baidu_root_prefix()
+    storage = BaiduCloudStorage(token_provider, root_prefix=root_prefix)
+    storage.delete(remote_root)
 
 
 # ---------------------------------------------------------------------------
@@ -520,5 +526,8 @@ def cleanup_after_suite():
                 delete(f"/file-git/repos/{repo_id}")
             except Exception:
                 pass
-    # NOTE: files uploaded to real Baidu Pan are NOT auto-deleted.
-    # Clean up TEST_REMOTE_ROOT manually or via the Baidu Pan web UI after running.
+    if S.remote_root:
+        try:
+            real_cleanup_remote(S.remote_root)
+        except Exception:
+            pass

@@ -81,19 +81,14 @@ def _get_storage():
     return BaiduCloudStorage(token_provider, root_prefix=root_prefix)
 
 
-def auto_cleanup_remote(remote_root: str) -> int:
-    """Delete all files under remote_root on Baidu Pan.
+def auto_cleanup_remote(remote_root: str) -> None:
+    """Delete the remote_root folder on Baidu Pan (including all contents).
 
-    Called at the start of T01 so stale files from previous runs do not
-    pollute the cloud listing that later tests assert against.
-    Returns the number of files deleted.
+    Called at the start of T01 to remove stale files from previous runs,
+    and at the end of the suite to clean up after tests.
     """
     storage = _get_storage()
-    count = 0
-    for meta in list(storage.list_files(remote_root)):
-        storage.delete(meta["remote_path"])
-        count += 1
-    return count
+    storage.delete(remote_root)
 
 
 def auto_upload_buffer(repo_root: str, remote_root: str) -> int:
@@ -687,5 +682,8 @@ def cleanup_after_suite():
                 delete(f"/file-git/repos/{repo_id}")
             except Exception:
                 pass
-    # Encrypted files on Baidu Pan under S.remote_root are NOT auto-deleted.
-    # Clean up manually via Baidu Pan web UI after the test run.
+    if S.remote_root:
+        try:
+            auto_cleanup_remote(S.remote_root)
+        except Exception:
+            pass
