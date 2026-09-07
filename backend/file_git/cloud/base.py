@@ -45,3 +45,13 @@ class CloudStorage(ABC):
     @abstractmethod
     def list_files(self, remote_prefix: str) -> Iterator[FileMeta]:
         """Yield metadata for every file under ``remote_prefix`` (recursive)."""
+
+    def to_listing_key(self, remote_path: str) -> str:
+        """Normalise ``remote_path`` to match the ``remote_path`` keys returned
+        by ``list_files`` for this storage backend (after ``.lstrip("/")``).
+
+        The default implementation (used by MockCloudStorage and any backend
+        without a root_prefix) simply strips the leading slash.
+        BaiduCloudStorage overrides this to also strip ``root_prefix``.
+        """
+        return remote_path.lstrip("/")

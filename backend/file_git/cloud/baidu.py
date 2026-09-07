@@ -38,7 +38,12 @@ class BaiduCloudStorage(CloudStorage):
     # ---- path helpers -------------------------------------------------
 
     def _full(self, remote_path: str) -> str:
-        rel = remote_path.replace("\\", "/").lstrip("/")
+        p = remote_path.replace("\\", "/")
+        # If remote_path is already an absolute path that starts with root_prefix,
+        # return it as-is to avoid double-prepending the prefix.
+        if self.root and p.lstrip("/").startswith(self.root.lstrip("/")):
+            return "/" + p.lstrip("/")
+        rel = p.lstrip("/")
         return f"{self.root}/{rel}" if self.root else "/" + rel
 
     def _strip_root(self, full_path: str) -> str:
@@ -46,6 +51,9 @@ class BaiduCloudStorage(CloudStorage):
         if self.root and p.startswith(self.root):
             p = p[len(self.root):]
         return "/" + p.lstrip("/")
+
+    def to_listing_key(self, remote_path: str) -> str:
+        return self._strip_root(self._full(remote_path)).lstrip("/")
 
     def _request(self, url, method, params=None, data=None, files=None):
         params = dict(params or {})
@@ -131,9 +139,16 @@ class BaiduCloudStorage(CloudStorage):
         path = self._full(remote_prefix)
         start, limit = 0, 1000
         while True:
-            res = self._request_json(f"{API}/multimedia", "GET",
-                params={"method": "listall", "path": path, "web": 0,
-                        "recursion": 1, "start": start, "limit": limit})
+            try:
+                res = self._request_json(f"{API}/multimedia", "GET",
+                    params={"method": "listall", "path": path, "web": 0,
+                            "recursion": 1, "start": start, "limit": limit})
+            except requests.HTTPError as exc:
+                # Baidu returns 400 when the directory doesn't exist yet.
+                # Treat as empty listing rather than an error.
+                if exc.response is not None and exc.response.status_code == 400:
+                    return
+                raise
             items = res.get("list", [])
             for it in items:
                 if it.get("isdir"):

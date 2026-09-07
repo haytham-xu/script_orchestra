@@ -64,16 +64,22 @@ def command_post_manual_upload(repo_id: str) -> PostManualUploadResult:
         subpath = pending.get("subpath", "")
 
         # Step 2: fetch cloud listing scoped to remote_root/<encoded_subpath>
+        # Normalize remote_path to strip leading "/" for consistent key lookup
+        # (MockCloudStorage returns paths with a leading "/" while BaiduStorage
+        # may or may not, depending on whether root_prefix has a leading "/").
         remote_scan_prefix = _cloud_prefix(ctx, subpath)
         cloud_listing = {
-            m["remote_path"]: m for m in ctx.storage.list_files(remote_scan_prefix)
+            m["remote_path"].lstrip("/"): m
+            for m in ctx.storage.list_files(remote_scan_prefix)
         }
 
         # Step 3: match pending entries against actual cloud state
         confirmed_entries: List[dict] = []
         missing: List[str] = []
         for entry in entries:
-            expected_remote = _remote_full_for(ctx, entry["encoded_path"])
+            expected_remote = ctx.storage.to_listing_key(
+                _remote_full_for(ctx, entry["encoded_path"])
+            )
             if expected_remote in cloud_listing:
                 cloud_meta = cloud_listing[expected_remote]
                 confirmed_entries.append({
@@ -94,6 +100,13 @@ def command_post_manual_upload(repo_id: str) -> PostManualUploadResult:
 
         QueueService.snapshot_index_into_action(
             ctx.repo_root, action_folder, "cloud_index.json", new_cloud_index,
+        )
+
+        # Step 3c: rebuild local_index to reflect current disk state
+        new_local_index = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
+        IndexService.save_local_index(ctx.repo_root, new_local_index)
+        QueueService.snapshot_index_into_action(
+            ctx.repo_root, action_folder, "local_index.json", new_local_index,
         )
 
         # Step 4: upload cloud_index.json
@@ -210,6 +223,7 @@ def _reconcile_cloud_index(
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
     payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
     ctx.storage.upload(io.BytesIO(payload), ctx.cloud_index_remote_path(), len(payload))
+    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
 
 
 def _clear_buffer_entries(repo_root: str, entries: list) -> None:

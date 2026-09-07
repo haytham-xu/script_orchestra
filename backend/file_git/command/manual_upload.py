@@ -97,7 +97,7 @@ def command_manual_upload(
                 with open(src_full, "rb") as src, open(buf_full, "wb") as dst:
                     enc = AesGcmEncryptStream(src, ctx.key)  # type: ignore[arg-type]
                     shutil.copyfileobj(enc, dst)
-                record["buffer_path"] = os.path.relpath(buf_full, ctx.repo_root)
+                record["buffer_path"] = os.path.relpath(buf_full, ctx.repo_root).replace("\\", "/")
 
             entries.append(record)
 

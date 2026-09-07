@@ -196,24 +196,35 @@ def _rebuild_cloud_index_from_scan(ctx: RepoContext) -> dict:
     new_index: dict = {}
     for meta in ctx.storage.list_files(ctx.remote_root):
         remote_path = meta["remote_path"]
-        # Strip remote_root prefix + optional leading /
-        relative = remote_path[len(ctx.remote_root):].lstrip("/")
-        if not relative or relative == "cloud_index.json":
+        # Strip remote_root prefix + optional leading / (normalize both sides
+        # to avoid mismatches when storage returns paths with a leading "/" but
+        # ctx.remote_root was stored without one).
+        # Use to_listing_key so root_prefix-stripping backends (Baidu) are
+        # handled the same way as the listing output.
+        norm_path = remote_path.lstrip("/")
+        norm_root = ctx.storage.to_listing_key(ctx.remote_root).rstrip("/")
+        relative = norm_path[len(norm_root):].lstrip("/") if norm_root and norm_path.startswith(norm_root) else norm_path
+        if not relative or relative.startswith(".fgit/"):
             continue
 
         if ctx.mode == "ENCRYPTED":
             middle_path = reverse.get(relative)
             if middle_path is None:
                 middle_path = f"UNKNOWN_{hashlib.md5(relative.encode()).hexdigest()[:8]}"
+            # Use the plaintext size from old_index if available; fall back to
+            # cloud size (ciphertext) only when no prior record exists.
+            old_entry = old_index.get(hashlib.md5(middle_path.encode("utf-8")).hexdigest())
+            size = old_entry["size"] if old_entry else meta["size"]
         else:
             middle_path = relative
+            size = meta["size"]
 
         encoded_path = relative
         key = hashlib.md5(middle_path.encode("utf-8")).hexdigest()
         new_index[key] = {
             "middle_path": middle_path,
             "encoded_path": encoded_path,
-            "size": meta["size"],
+            "size": size,
         }
 
     return new_index
@@ -222,3 +233,4 @@ def _rebuild_cloud_index_from_scan(ctx: RepoContext) -> dict:
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
     payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
     ctx.storage.upload(io.BytesIO(payload), ctx.cloud_index_remote_path(), len(payload))
+    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
