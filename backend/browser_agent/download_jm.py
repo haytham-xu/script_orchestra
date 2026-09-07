@@ -463,19 +463,18 @@ def _process_one(index: int, task: Dict[str, Any], cfg: dict) -> None:
                          message=f"captcha image fetch failed: {e}")
             return
 
-        # 2) On the FIRST attempt, try auto-solve. If it's wrong the server
-        # will hand back a new captcha and we'll fall through to human
-        # input for the retry.
-        auto_answer, per_glyph = (None, [])
+        # 2) On the FIRST attempt, try auto-solve via Tesseract OCR. If it's
+        # wrong the server will hand back a new captcha and we'll fall through
+        # to human input for the retry.
+        auto_answer, ocr_text = (None, "")
         if not auto_tried:
-            auto_answer, per_glyph = captcha_solver.solve(img_resp.content)
+            auto_answer, ocr_text = captcha_solver.solve(img_resp.content)
             auto_tried = True
 
         if auto_answer is not None:
             answer = str(auto_answer)
-            glyph_summary = " ".join(f"{c}({s:.2f})" for c, s in per_glyph)
             _update_item(index, status="captcha_auto",
-                         message=f"auto-solved: {answer}  [{glyph_summary}]")
+                         message=f"auto-solved: {answer}  [ocr: {ocr_text}]")
         else:
             _set_captcha_pending(index, img_resp.content, attempts_left)
             _update_item(index, status="captcha_needed")
@@ -485,12 +484,6 @@ def _process_one(index: int, task: Dict[str, Any], cfg: dict) -> None:
                 _update_item(index, status="error",
                              message="captcha wait timed out — user didn't answer")
                 return
-            # Stash raw image + answer for later manual labeling so the
-            # template set can grow over time.
-            try:
-                captcha_solver.stash_training_sample(img_resp.content, answer)
-            except Exception:
-                pass
 
         # 3) POST the verification form.
         payload = dict(parsed["form_fields"])

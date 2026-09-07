@@ -351,27 +351,4 @@ export async function jmSubmitCaptcha(answer: string): Promise<{ ok?: boolean; e
 }
 
 // --- Captcha trainer ------------------------------------------------------
-
-export interface TrainingSample {
-  filename: string
-  image_base64: string
-  answer_hint: string
-  glyph_count: number
-}
-export interface TrainingList {
-  samples: TrainingSample[]
-  template_counts: Record<string, number>
-}
-export async function fetchTrainingList(): Promise<TrainingList> {
-  return getRequest<TrainingList>(`${BROWSER_AGENT_ENDPOINT}/captcha-training/list`)
-}
-export async function saveTrainingLabel(filename: string, expression: string): Promise<{
-  saved?: number; glyph_count?: number; expected_glyph_count?: number; error?: string
-}> {
-  return postRequest(`${BROWSER_AGENT_ENDPOINT}/captcha-training/save`, {},
-                     { filename, expression })
-}
-export async function deleteTrainingSample(filename: string): Promise<{ deleted?: boolean; error?: string }> {
-  return postRequest(`${BROWSER_AGENT_ENDPOINT}/captcha-training/delete`, {},
-                     { filename })
-}
+// REMOVED: template-matching training pipeline deleted.

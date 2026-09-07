@@ -571,35 +571,3 @@ class DownloadJMSubmitCaptchaResource(Resource):
 
 # --- Captcha training (feeds the template solver) ---------------------------
 
-@ns.route("/captcha-training/list")
-class CaptchaTrainingListResource(Resource):
-    def get(self):
-        return {
-            "samples": captcha_solver.list_training_samples(),
-            "template_counts": captcha_solver.get_templates_summary(),
-        }, 200
-
-
-@ns.route("/captcha-training/save")
-class CaptchaTrainingSaveResource(Resource):
-    def post(self):
-        data = request.json or {}
-        filename = (data.get("filename") or "").strip()
-        expression = (data.get("expression") or "").strip()
-        if not filename or not expression:
-            return {"error": "filename and expression required"}, 400
-        result = captcha_solver.label_and_learn(filename, expression)
-        if "error" in result:
-            return result, 400
-        return result, 200
-
-
-@ns.route("/captcha-training/delete")
-class CaptchaTrainingDeleteResource(Resource):
-    def post(self):
-        data = request.json or {}
-        filename = (data.get("filename") or "").strip()
-        if not filename:
-            return {"error": "filename required"}, 400
-        ok = captcha_solver.delete_training_sample(filename)
-        return ({"deleted": True} if ok else {"error": "not found"}), (200 if ok else 404)

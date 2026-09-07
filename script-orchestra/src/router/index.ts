@@ -24,7 +24,6 @@ import TabsView from '@/browser_agent/views/TabsView.vue'
 import TabDedupView from '@/browser_agent/views/TabDedupView.vue'
 import DownloadSSMHView from '@/browser_agent/views/DownloadSSMHView.vue'
 import DownloadJMView from '@/browser_agent/views/DownloadJMView.vue'
-import CaptchaTrainerView from '@/browser_agent/views/CaptchaTrainerView.vue'
 import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
 import KnowledgeVaultView from '@/knowledge_vault/views/KnowledgeVaultView.vue'
 import TranslatorView from '@/translator/views/TranslatorView.vue'
@@ -168,11 +167,6 @@ const router = createRouter({
       path: '/browser-agent/download-jm',
       name: 'browser-agent-download-jm',
       component: DownloadJMView
-    },
-    {
-      path: '/browser-agent/captcha-trainer',
-      name: 'browser-agent-captcha-trainer',
-      component: CaptchaTrainerView
     },
     {
       path: '/browser-agent',

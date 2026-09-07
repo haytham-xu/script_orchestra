@@ -62,18 +62,6 @@ const TOOLS: Tool[] = [
         <rect x="12" y="52" width="40" height="6" rx="2" fill="#fbcfe8"/>
       </svg>`,
   },
-  {
-    key: 'captcha-trainer',
-    name: 'Captcha Trainer',
-    path: '/browser-agent/captcha-trainer',
-    icon: `
-      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-        <rect x="4" y="4" width="56" height="56" rx="14" fill="#f97316"/>
-        <text x="18" y="28" fill="#fff" font-family="monospace" font-size="16" font-weight="bold">7+2</text>
-        <path d="M12 36h40" stroke="#fed7aa" stroke-width="2"/>
-        <path d="M22 44l6 6 14-14" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      </svg>`,
-  },
 ]
 
 export default defineComponent({
