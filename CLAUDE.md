@@ -132,6 +132,42 @@ AI-organized personal knowledge store. **Two layers**: raw fragments are the app
   `app.py` warns on unrestored config snapshots at startup.
 - **Unit**: Vitest configured but sparse. Backend has ad-hoc `test_*.py` scripts, no formal pytest suite.
 
+### Backend pytest E2E convention
+
+Each tool that has backend E2E tests follows this layout:
+
+```
+backend/<tool>/tests/e2e/
+  conftest.py         # pytest fixtures (storage mode, remote root)
+  helpers.py          # shared HTTP helpers, mock cloud helpers
+  test_<suite>.py     # test files
+  test_data/          # ← gitignored (**/test_data/); runtime files go here
+    mock_cloud/       # MockCloudStorage root (auto-created by conftest)
+```
+
+Rules:
+- **test_data/ is gitignored** via `**/test_data/` in `.gitignore`. Never commit runtime files.
+- Mock cloud root defaults to `tests/e2e/test_data/mock_cloud/` (no env needed).
+  Override with `FILE_GIT_MOCK_ROOT=<path>` env when required.
+- `pytest.ini` `testpaths` lists `backend/<tool>/tests/e2e` (space-separated when multiple tools have tests).
+- `pythonpath` must include both `backend` and `backend/<tool>/tests/e2e` so that
+  `from file_git.xxx import` and `from helpers import` both resolve.
+- Shared-state `State` classes must use property guards (assert non-empty) on paths used by
+  later tests, so skipping T01 fails loudly instead of writing files to cwd.
+
+Run example (file_git):
+```bash
+# mock suites (no env needed)
+pytest backend/file_git/tests/e2e/test_plain.py backend/file_git/tests/e2e/test_encrypted.py -v
+
+# real-Baidu suites
+TEST_REMOTE_ROOT=/apps/sync-assistant/fgit_selftest/e2e_plain \
+  pytest backend/file_git/tests/e2e/test_plain_real.py -v -s
+
+TEST_REMOTE_ROOT_ENCRYPTED=/apps/sync-assistant/fgit_selftest/e2e_enc \
+  pytest backend/file_git/tests/e2e/test_encrypted_real.py -v -s
+```
+
 ## Key files
 - Backend: `backend/app.py`, `backend/extensions.py`, `backend/config.py`
 - Frontend entry/router: `src/main.ts`, `src/router/index.ts`, `vite.config.ts`
