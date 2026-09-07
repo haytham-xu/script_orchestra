@@ -19,7 +19,6 @@ import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
 import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
-import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
 import BrowserAgentHubView from '@/browser_agent/views/BrowserAgentHubView.vue'
 import TabsView from '@/browser_agent/views/TabsView.vue'
 import TabDedupView from '@/browser_agent/views/TabDedupView.vue'
@@ -174,11 +173,6 @@ const router = createRouter({
       path: '/browser-agent/captcha-trainer',
       name: 'browser-agent-captcha-trainer',
       component: CaptchaTrainerView
-    },
-    {
-      path: '/browser-agent/downloads',
-      name: 'browser-agent-downloads',
-      component: BrowserAgentView
     },
     {
       path: '/browser-agent',

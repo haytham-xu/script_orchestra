@@ -37,6 +37,7 @@ def _as_bool(value, default=False):
 
 @ns.route("/tabs")
 class TabsResource(Resource):
+    # DEPRECATED: used by the old Download Queue UI (BrowserAgentView). No longer called.
     def post(self):
         data = request.json or {}
         tabs = data.get("tabs", [])
@@ -48,12 +49,14 @@ class TabsResource(Resource):
 
 @ns.route("/tasks")
 class TasksResource(Resource):
+    # DEPRECATED: used by the old Download Queue UI (BrowserAgentView). No longer called.
     def get(self):
         return {"tasks": [t.to_dict() for t in repository.get_all()]}, 200
 
 
 @ns.route("/tasks/<int:task_id>/retry")
 class TaskRetryResource(Resource):
+    # DEPRECATED: used by the old Download Queue UI (BrowserAgentView). No longer called.
     def post(self, task_id):
         tab = repository.get_by_id(task_id)
         if tab is None:
@@ -66,6 +69,7 @@ class TaskRetryResource(Resource):
 
 @ns.route("/tasks/<int:task_id>")
 class TaskResource(Resource):
+    # DEPRECATED: used by the old Download Queue UI (BrowserAgentView). No longer called.
     def delete(self, task_id):
         if repository.get_by_id(task_id) is None:
             return {"error": "task not found"}, 404

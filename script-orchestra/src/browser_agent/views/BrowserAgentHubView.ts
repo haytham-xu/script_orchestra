@@ -74,18 +74,6 @@ const TOOLS: Tool[] = [
         <path d="M22 44l6 6 14-14" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       </svg>`,
   },
-  {
-    key: 'downloads',
-    name: 'Download Queue',
-    path: '/browser-agent/downloads',
-    icon: `
-      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-        <rect x="4" y="4" width="56" height="56" rx="14" fill="#0284c7"/>
-        <path d="M32 14v24" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
-        <path d="M22 30l10 10 10-10" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-        <rect x="14" y="44" width="36" height="6" rx="2" fill="#bae6fd"/>
-      </svg>`,
-  },
 ]
 
 export default defineComponent({
