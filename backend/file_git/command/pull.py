@@ -170,6 +170,7 @@ def command_pull(repo_id: str, progress: Optional[ProgressFn] = None) -> PullRes
         )
 
     except Exception as exc:
+        QueueService.release(ctx.repo_root)
         RepositoryManager.update_status(ctx.repo_id, "error")
         LoggerService.log_error(
             ctx.repo_root, action_folder, "PULL", "-", f"aborted: {exc}"
@@ -209,10 +210,19 @@ def _move_remote_only_locals_to_trash(
             continue
         mode = SyncFilterService.get_mode(filt, mp)
         if mode == "remote-only":
-            local_path = os.path.join(ctx.repo_root, *mp.split("/"))
             in_remote = mp in cloud_middle_paths
+            local_path = os.path.join(ctx.repo_root, *mp.split("/"))
             status = SyncFilterService.get_status(filt, mp, True, in_remote)
             if os.path.exists(local_path):
+                if not in_remote:
+                    # No remote copy exists — trashing the only copy would cause
+                    # data loss.  Skip and leave the user to decide.
+                    LoggerService.log_file_state(
+                        ctx.repo_root, action_folder, mp,
+                        mode, status, True, False,
+                        "skip", "ok", "remote-only but no remote backup — skipped to prevent data loss",
+                    )
+                    continue
                 TrashService.move_to_trash(ctx.repo_root, mp)
                 LoggerService.log_file_state(
                     ctx.repo_root, action_folder, mp,

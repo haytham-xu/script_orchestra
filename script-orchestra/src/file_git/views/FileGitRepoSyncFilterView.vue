@@ -9,6 +9,7 @@
         <h1>Sync Filter</h1>
       </div>
       <div class="fg-topbar-right">
+        <ProgressPopover v-model:visible="progressVisible" :items="progressItems" :count="progressActiveCount" />
         <el-button type="primary" :icon="Check" size="small" :loading="isBusy" @click="applyFilter">Apply</el-button>
       </div>
     </header>
@@ -59,6 +60,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import { ArrowLeft, Check } from '@element-plus/icons-vue'
 import type { SyncMode } from '../service/FileGitService'
+import ProgressPopover from '../components/ProgressPopover.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -68,6 +70,7 @@ const {
   repo, isLoading, isBusy,
   syncTreeRef, syncTreeKey, loadSyncChildren, setSyncNodeMode,
   applyFilter,
+  progressItems, progressVisible, progressActiveCount,
 } = view
 
 function goToDetail() {

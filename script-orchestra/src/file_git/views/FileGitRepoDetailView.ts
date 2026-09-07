@@ -23,6 +23,14 @@ import {
   type SyncFilterChild,
   type SyncMode,
 } from '../service/FileGitService'
+import { fileGitWS } from '../service/FileGitWebSocket'
+
+export interface ProgressItem {
+  path: string
+  action: string
+  status: 'pending' | 'active' | 'done' | 'error'
+  detail: string
+}
 
 export function useFileGitRepoDetail() {
   const route = useRoute()
@@ -36,6 +44,12 @@ export function useFileGitRepoDetail() {
 
   const isLoading = ref(false)
   const isBusy = ref(false)              // any single action in flight
+
+  // Progress tracking (WebSocket-driven per-file progress)
+  const progressItems = ref<ProgressItem[]>([])
+  const progressVisible = ref(false)
+  const progressHasError = computed(() => progressItems.value.some(i => i.status === 'error'))
+  const progressActiveCount = computed(() => progressItems.value.filter(i => i.status === 'active').length)
 
   // Diff panel state
   const diffAdded = ref<DiffEntry[]>([])
@@ -343,6 +357,48 @@ export function useFileGitRepoDetail() {
   const push = () => _pushWithDryRun()
   const pull = () => _pullWithDryRun()
 
+  function startProgressTracking(operation: string) {
+    progressItems.value = []
+    fileGitWS.connect()
+    fileGitWS.onProgress(repoId.value, (evt) => {
+      progressVisible.value = true
+      if (evt.phase === 'queue') {
+        // message format: "ACTION path/to/file"
+        const spaceIdx = evt.message.indexOf(' ')
+        const action = spaceIdx > -1 ? evt.message.slice(0, spaceIdx) : evt.message
+        const path = spaceIdx > -1 ? evt.message.slice(spaceIdx + 1) : ''
+        const existing = progressItems.value.find(i => i.path === path)
+        if (existing) {
+          existing.status = 'active'
+          existing.detail = action
+        } else {
+          progressItems.value.push({ path, action, status: 'active', detail: '' })
+        }
+      } else {
+        // phase-level event (lock, scan, cloud_index, hook)
+        const label = `(${evt.phase})`
+        const existing = progressItems.value.find(i => i.path === label)
+        if (existing) {
+          existing.status = 'active'
+          existing.detail = evt.message
+        } else {
+          progressItems.value.push({ path: label, action: operation, status: 'active', detail: evt.message })
+        }
+      }
+    })
+    fileGitWS.onStatus(repoId.value, (evt) => {
+      // Only update visual state — runAction's finally handles isBusy and data reload
+      progressItems.value.forEach(i => {
+        if (i.status === 'active') i.status = evt.status === 'error' ? 'error' : 'done'
+      })
+    })
+  }
+
+  function _finishProgressTracking() {
+    fileGitWS.off(repoId.value)
+    progressItems.value.forEach(i => { if (i.status === 'active') i.status = 'done' })
+  }
+
   async function _pushWithDryRun() {
     if (isBusy.value) return
     isBusy.value = true
@@ -366,7 +422,8 @@ export function useFileGitRepoDetail() {
     } finally {
       isBusy.value = false
     }
-    return runAction('Push', () => FileGitService.push(repoId.value))
+    startProgressTracking('push')
+    return runAction('Push', () => FileGitService.push(repoId.value), _finishProgressTracking)
   }
 
   async function _pullWithDryRun() {
@@ -392,7 +449,8 @@ export function useFileGitRepoDetail() {
     } finally {
       isBusy.value = false
     }
-    return runAction('Pull', () => FileGitService.pull(repoId.value))
+    startProgressTracking('pull')
+    return runAction('Pull', () => FileGitService.pull(repoId.value), _finishProgressTracking)
   }
 
   const resume = () => runAction('Resume', () => FileGitService.resume(repoId.value))
@@ -440,10 +498,10 @@ export function useFileGitRepoDetail() {
     () => FileGitService.rebuildLocalIndex(repoId.value),
   )
 
-  const applyFilter = () => runAction(
-    'Apply Filter',
-    () => FileGitService.applyFilter(repoId.value),
-  )
+  const applyFilter = () => {
+    startProgressTracking('apply_filter')
+    return runAction('Apply Filter', () => FileGitService.applyFilter(repoId.value), _finishProgressTracking)
+  }
 
   async function rebuildCloudIndex() {
     if (isBusy.value) return
@@ -561,7 +619,7 @@ export function useFileGitRepoDetail() {
   // ------------------------------------------------------------------
 
   onMounted(() => { loadAll(); loadQueue(); loadFileLogFolders() })
-  onUnmounted(stopQueuePoll)
+  onUnmounted(() => { stopQueuePoll(); fileGitWS.off(repoId.value) })
 
   return {
     repoId,
@@ -583,6 +641,10 @@ export function useFileGitRepoDetail() {
     pendingUploadCount,
     pendingQueueCount,
     isEncrypted,
+    progressItems,
+    progressVisible,
+    progressHasError,
+    progressActiveCount,
     canPushPull,
     canResume,
     canManualUploadPrepare,

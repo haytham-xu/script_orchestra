@@ -123,6 +123,8 @@ def validate_mode_change(filt: dict, middle_path: str, new_mode: str) -> Optiona
         if parent_mode in ("local-only", "remote-only"):
             return f"Cannot set synced under a {parent_mode} parent"
     elif new_mode == "local-only":
+        if parent_mode == "synced":
+            return "Cannot set local-only under a synced parent"
         if parent_mode == "remote-only":
             return "Cannot set local-only under a remote-only parent"
     elif new_mode == "remote-only":

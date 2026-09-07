@@ -194,6 +194,7 @@ def command_apply_filter(
         )
 
     except Exception as exc:
+        QueueService.release(ctx.repo_root)
         RepositoryManager.update_status(ctx.repo_id, "error")
         LoggerService.log_error(
             ctx.repo_root, action_folder, "APPLY_FILTER", "-", f"aborted: {exc}"

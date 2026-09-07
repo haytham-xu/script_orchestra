@@ -216,8 +216,10 @@ def _rebuild_cloud_index_after_push(
 ) -> dict:
     """Compute the new cloud_index after a push.
 
-    Normal mode: start from ``local_index`` (what the user intends to be on
-    cloud). Failed queue items revert to old_cloud_index values.
+    Normal mode: start from ``local_index`` entries that are synced (skip
+    local-only — their bytes were never uploaded so they must not appear in
+    cloud_index, which would confuse other machines into trying to download
+    them). Failed queue items revert to old_cloud_index values.
 
     upload_only mode: start from ``old_cloud_index`` (preserve existing
     remote files) and merge in only the local_index entries that were
@@ -225,6 +227,8 @@ def _rebuild_cloud_index_after_push(
     only a subset of remote files is held locally.
     """
     from ..service.queue_service import QueueService
+    from ..service import sync_filter_service as SyncFilterService
+    filt = SyncFilterService.load(ctx.repo_root)
     state = QueueService.load(ctx.repo_root)
     unfinished_keys = {k for k, v in state.queue.items()}
 
@@ -235,13 +239,17 @@ def _rebuild_cloud_index_after_push(
             if k not in unfinished_keys:
                 new_cloud_index[k] = entry
     else:
-        new_cloud_index = dict(local_index)  # start from intent
-        for k in unfinished_keys:
-            # For unfinished items, revert to old cloud state
-            if k in old_cloud_index:
-                new_cloud_index[k] = old_cloud_index[k]
+        new_cloud_index = {}
+        for k, entry in local_index.items():
+            mp = entry.get("middle_path", "")
+            if SyncFilterService.get_mode(filt, mp) == "local-only":
+                continue  # never expose local-only files in cloud_index
+            if k in unfinished_keys:
+                if k in old_cloud_index:
+                    new_cloud_index[k] = old_cloud_index[k]
+                # else: new file that failed to upload — omit from cloud_index
             else:
-                new_cloud_index.pop(k, None)
+                new_cloud_index[k] = entry
     return new_cloud_index
 
 
@@ -252,14 +260,6 @@ def _download_cloud_index(ctx: RepoContext) -> dict:
     buf = io.BytesIO()
     ctx.storage.download(remote, buf)
     return IndexService.deserialize_cloud_index_after_download(buf.getvalue(), key=ctx.key)
-
-
-def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
-    """Serialize cloud_index (encrypting for ENCRYPTED repos) and upload."""
-    payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
-    stream = io.BytesIO(payload)
-    ctx.storage.upload(stream, ctx.cloud_index_remote_path(), len(payload))
-    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
 
 
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:

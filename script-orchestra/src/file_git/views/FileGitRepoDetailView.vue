@@ -60,6 +60,7 @@
         <div class="fg-action-row">
           <el-button type="primary" :icon="Upload" :disabled="!canPushPull" @click="push" :loading="isBusy">Push</el-button>
           <el-button type="primary" plain :icon="Download" :disabled="!canPushPull" @click="pull" :loading="isBusy">Pull</el-button>
+          <ProgressPopover v-model:visible="progressVisible" :items="progressItems" :count="progressActiveCount" />
         </div>
       </section>
 
@@ -218,6 +219,7 @@ import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
   ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting, Tools, Filter, QuestionFilled,
 } from '@element-plus/icons-vue'
+import ProgressPopover from '../components/ProgressPopover.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -236,6 +238,7 @@ const {
   openFolder, goBack,
   fileTreeKey, filesLoading, loadFileTreeChildren, refreshFileTree,
   queueItems, queueStats, loadQueue,
+  progressItems, progressVisible, progressActiveCount,
 } = view
 
 function goToSettings() {

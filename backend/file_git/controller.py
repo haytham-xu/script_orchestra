@@ -41,6 +41,7 @@ from .service import sync_filter_service as SyncFilterService
 from .service.index_service import IndexService
 from .settings_manager import SettingsManager
 from . import baidu_oauth
+from .websocket_service import emit_progress, emit_status
 
 ns = Namespace("")
 
@@ -277,7 +278,10 @@ class RepoPushResource(Resource):
     def post(self, repo_id):
         try:
             upload_only = (request.json or {}).get("upload_only", False)
-            result = command_push(repo_id, upload_only=upload_only)
+            def _progress(phase, current, total, message):
+                emit_progress(repo_id, 'push', phase, current, total, message)
+            result = command_push(repo_id, progress=_progress, upload_only=upload_only)
+            emit_status(repo_id, 'done' if result.ok else 'error', result.message)
             payload = {
                 "message": result.message,
                 "action_folder": result.action_folder,
@@ -299,7 +303,10 @@ class RepoPushResource(Resource):
 class RepoPullResource(Resource):
     def post(self, repo_id):
         try:
-            result = command_pull(repo_id)
+            def _progress(phase, current, total, message):
+                emit_progress(repo_id, 'pull', phase, current, total, message)
+            result = command_pull(repo_id, progress=_progress)
+            emit_status(repo_id, 'done' if result.ok else 'error', result.message)
             payload = {
                 "message": result.message,
                 "action_folder": result.action_folder,
@@ -670,7 +677,10 @@ class SyncFilterApplyResource(Resource):
             return _err("repo not found", 404)
         try:
             from .command.apply_filter import command_apply_filter
-            result = command_apply_filter(repo_id)
+            def _progress(phase, current, total, message):
+                emit_progress(repo_id, 'apply_filter', phase, current, total, message)
+            result = command_apply_filter(repo_id, progress=_progress)
+            emit_status(repo_id, 'done' if result.ok else 'error', result.message)
             return _ok({
                 "message": result.message,
                 "action_folder": result.action_folder,
