@@ -1,5 +1,5 @@
 import { defineComponent, ref, reactive, computed, onMounted, watch, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import { getSettings, updateSettings } from '@/browser_agent/service/BrowserAgentService'
@@ -143,6 +143,7 @@ export default defineComponent({
   components: { Setting },
   setup() {
     const router = useRouter()
+    const route = useRoute()
 
     // Settings drawer (tabArchive config)
     const TAB_ARCHIVE_DEFAULTS: TabArchiveSettings = {
@@ -187,7 +188,15 @@ export default defineComponent({
 
     const loading = ref(false)
     const busy = ref(false)
-    const activePane = ref<Pane>('live')
+    const activePane = computed<Pane>({
+      get() {
+        const q = route.query.tab
+        return (q === 'archive' || q === 'live') ? q : 'live'
+      },
+      set(val: Pane) {
+        router.replace({ query: { ...route.query, tab: val } })
+      },
+    })
     const search = ref('')
 
     const liveRows = ref<TabArchiveLiveCard[]>([])
