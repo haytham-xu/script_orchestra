@@ -10,7 +10,7 @@
           Send current tabs
         </el-button>
         <el-button :icon="Refresh" @click="load" :loading="loading">Refresh</el-button>
-        <el-button :icon="Setting" @click="goToSettings">Settings</el-button>
+        <el-button :icon="Setting" @click="openSettings">Settings</el-button>
       </div>
     </header>
 
@@ -58,6 +58,52 @@
       </el-table>
     </main>
   </div>
+
+  <!-- Global settings drawer -->
+  <el-drawer v-model="settingsOpen" title="Download Queue Settings" size="520px" direction="rtl">
+    <div class="ba-settings">
+      <div class="ba-set-row">
+        <label>Download directory</label>
+        <el-input v-model="settingsCfg.downloadDir" placeholder="/absolute/path/to/downloads" spellcheck="false" />
+      </div>
+      <div class="ba-set-row">
+        <label>Max retries</label>
+        <el-input-number v-model="settingsCfg.maxRetries" :min="0" :max="20" />
+      </div>
+      <div class="ba-set-row">
+        <label>Poll interval (sec)</label>
+        <el-input-number v-model="settingsCfg.pollIntervalSec" :min="5" :max="3600" :step="5" />
+      </div>
+      <div class="ba-set-row">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <label>Site rules</label>
+          <el-button size="small" :icon="Plus" @click="addRule">Add rule</el-button>
+        </div>
+        <div v-for="(rule, i) in settingsCfg.siteRules" :key="i" class="ba-rule-block">
+          <div class="ba-rule-row">
+            <span class="ba-rule-label">Domains</span>
+            <el-input size="small" :model-value="domainsText(rule)"
+              @update:model-value="v => setDomainsText(rule, v)"
+              placeholder="foo.com, bar.com" spellcheck="false" />
+            <el-button size="small" type="danger" :icon="Delete" @click="removeRule(i)" />
+          </div>
+          <div class="ba-rule-row">
+            <span class="ba-rule-label">Overview URI</span>
+            <el-input size="small" v-model="rule.overviewUriFormat" spellcheck="false" />
+          </div>
+          <div class="ba-rule-row">
+            <span class="ba-rule-label">Download URI</span>
+            <el-input size="small" v-model="rule.downloadUriFormat" spellcheck="false" />
+          </div>
+          <div class="ba-rule-row">
+            <span class="ba-rule-label">Link regex</span>
+            <el-input size="small" v-model="rule.downloadLinkRegex" spellcheck="false" />
+          </div>
+        </div>
+      </div>
+      <el-button type="primary" :loading="settingsSaving" @click="saveSettings" style="margin-top:8px">Save</el-button>
+    </div>
+  </el-drawer>
 </template>
 
 <script lang="ts" src="@/browser_agent/views/BrowserAgentView.ts"></script>
@@ -87,4 +133,11 @@
 .ba-topbar-right { display: flex; gap: 8px; }
 .ba-content { max-width: 1100px; margin: 0 auto; padding: 24px; }
 .ba-hint { font-size: 13px; color: #86868b; max-width: 420px; text-align: center; }
+.ba-settings { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.ba-set-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.ba-set-row label { font-weight: 500; color: #1d1d1f; }
+.ba-rule-block { border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; margin-bottom: 8px; background: #f8fafc; }
+.ba-rule-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ba-rule-row:last-child { margin-bottom: 0; }
+.ba-rule-label { flex: none; width: 90px; font-size: 12px; color: #475569; font-weight: 500; }
 </style>

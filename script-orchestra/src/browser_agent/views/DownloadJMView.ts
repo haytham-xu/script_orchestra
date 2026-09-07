@@ -1,8 +1,9 @@
-﻿import { defineComponent, ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+﻿import { defineComponent, ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Setting } from '@element-plus/icons-vue'
 import {
-  getSettings,
+  getSettings, updateSettings,
   jmCheckAuth, jmScan, jmExecute, jmStatus, jmSubmitCaptcha,
   type JMCandidate, type JMItem, type JMCaptchaPending,
 } from '@/browser_agent/service/BrowserAgentService'
@@ -10,6 +11,7 @@ import type { DownloadJMConfig } from '@/browser_agent/service/Model'
 
 export default defineComponent({
   name: 'DownloadJMView',
+  components: { Setting },
   setup() {
     const router = useRouter()
 
@@ -18,6 +20,31 @@ export default defineComponent({
       const c = cfg.value
       return !!(c && c.sourceDomain?.trim() && c.downloadPath.trim())
     })
+
+    // Settings drawer
+    const settingsOpen = ref(false)
+    const settingsCfg = reactive<DownloadJMConfig>({ sourceDomain: '', downloadPath: '' })
+    const settingsSaving = ref(false)
+
+    async function openSettings() {
+      const s = await getSettings()
+      const c = s.downloadJM || { sourceDomain: '', downloadPath: '' }
+      Object.assign(settingsCfg, c)
+      settingsOpen.value = true
+    }
+    async function saveSettings() {
+      settingsSaving.value = true
+      try {
+        await updateSettings({ downloadJM: { ...settingsCfg } })
+        cfg.value = { ...settingsCfg }
+        settingsOpen.value = false
+        ElMessage.success('Settings saved')
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e?.message || 'Failed to save')
+      } finally {
+        settingsSaving.value = false
+      }
+    }
 
     const authStatus = ref<string>('unknown')   // 'unknown' | 'ok' | 'needs_login' | 'error'
     const authMsg = ref<string>('')
@@ -217,6 +244,8 @@ export default defineComponent({
       jobRunning, jobItems, jobDone, jobTotal,
       captchaPending, captchaAnswer, captchaSubmitting, submitCaptcha,
       doScan, execute, statusTagType, fmtBytes, fmtSpeed,
+      settingsOpen, settingsCfg, settingsSaving, openSettings, saveSettings,
+      Setting,
       goBack: () => router.push('/browser-agent'),
     }
   }

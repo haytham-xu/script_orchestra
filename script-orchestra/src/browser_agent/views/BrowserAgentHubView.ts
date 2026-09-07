@@ -86,22 +86,6 @@ const TOOLS: Tool[] = [
         <rect x="14" y="44" width="36" height="6" rx="2" fill="#bae6fd"/>
       </svg>`,
   },
-  {
-    key: 'settings',
-    name: 'Settings',
-    path: '/browser-agent/settings',
-    icon: `
-      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-        <rect x="4" y="4" width="56" height="56" rx="14" fill="#64748b"/>
-        <circle cx="32" cy="32" r="8" fill="none" stroke="#fff" stroke-width="4"/>
-        <g stroke="#fff" stroke-width="4" stroke-linecap="round">
-          <path d="M32 12v6"/><path d="M32 46v6"/>
-          <path d="M12 32h6"/><path d="M46 32h6"/>
-          <path d="M18 18l4 4"/><path d="M42 42l4 4"/>
-          <path d="M46 18l-4 4"/><path d="M22 42l-4 4"/>
-        </g>
-      </svg>`,
-  },
 ]
 
 export default defineComponent({

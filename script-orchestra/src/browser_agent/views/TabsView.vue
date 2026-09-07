@@ -10,6 +10,7 @@
         placeholder="Search title, URL, labels, and comment"
       />
       <el-button :loading="loading" @click="loadSnapshot">Refresh</el-button>
+      <el-button :icon="Setting" size="small" @click="openSettings">Settings</el-button>
     </div>
 
     <div class="tabs-summary">
@@ -424,6 +425,48 @@
       </template>
     </el-dialog>
   </div>
+
+  <!-- Tab Archive Settings drawer -->
+  <el-drawer v-model="settingsOpen" title="Tab Archive Settings" size="480px" direction="rtl">
+    <div class="tabs-settings">
+      <div class="tabs-set-row">
+        <label>Safe archive — exclude domains</label>
+        <el-input type="textarea" :rows="4"
+          :model-value="archiveExcludeDomainsText()"
+          @update:model-value="setArchiveExcludeDomainsText"
+          placeholder="one per line, e.g. docs.google.com" spellcheck="false" />
+      </div>
+      <div class="tabs-set-row">
+        <label>Safe archive — exclude keywords</label>
+        <el-input type="textarea" :rows="3"
+          :model-value="archiveExcludeKeywordsText()"
+          @update:model-value="setArchiveExcludeKeywordsText"
+          placeholder="one per line, e.g. localhost" spellcheck="false" />
+      </div>
+      <div class="tabs-set-row">
+        <label>Semantic embed model</label>
+        <el-input v-model="settingsCfg.embedModel"
+          placeholder="e.g. all-MiniLM-L6-v2" spellcheck="false" />
+      </div>
+      <div class="tabs-set-row">
+        <label>Semantic top-K</label>
+        <el-input-number v-model="settingsCfg.semanticTopK" :min="10" :max="1000" :step="10" />
+      </div>
+      <div class="tabs-set-row">
+        <label>Heat thresholds (high / medium / low)</label>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <el-input-number v-model="settingsCfg.heatThresholds.high" :min="0" :step="0.5" style="width:110px" />
+          <el-input-number v-model="settingsCfg.heatThresholds.medium" :min="0" :step="0.5" style="width:110px" />
+          <el-input-number v-model="settingsCfg.heatThresholds.low" :min="0" :step="0.1" style="width:110px" />
+        </div>
+      </div>
+      <div class="tabs-set-row">
+        <label>Health check timeout (sec)</label>
+        <el-input-number v-model="settingsCfg.healthCheckTimeoutSec" :min="1" :max="60" />
+      </div>
+      <el-button type="primary" :loading="settingsSaving" @click="saveSettings" style="margin-top:8px">Save</el-button>
+    </div>
+  </el-drawer>
 </template>
 
 <script lang="ts" src="@/browser_agent/views/TabsView.ts"></script>
@@ -714,4 +757,7 @@
     font-size: 12px;
   }
 }
+.tabs-settings { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.tabs-set-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.tabs-set-row label { font-weight: 500; color: #1d1d1f; }
 </style>

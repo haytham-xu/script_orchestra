@@ -20,7 +20,6 @@ import UnzipView from '@/unzip/views/UnzipView.vue'
 import ClipboardShareView from '@/clipboard_share/views/ClipboardShareView.vue'
 import CaffeinateView from '@/caffeinate/views/CaffeinateView.vue'
 import BrowserAgentView from '@/browser_agent/views/BrowserAgentView.vue'
-import BrowserAgentSettingsView from '@/browser_agent/views/SettingsView.vue'
 import BrowserAgentHubView from '@/browser_agent/views/BrowserAgentHubView.vue'
 import TabsView from '@/browser_agent/views/TabsView.vue'
 import TabDedupView from '@/browser_agent/views/TabDedupView.vue'
@@ -150,11 +149,6 @@ const router = createRouter({
       path: '/caffeinate',
       name: 'caffeinate',
       component: CaffeinateView
-    },
-    {
-      path: '/browser-agent/settings',
-      name: 'browser-agent-settings',
-      component: BrowserAgentSettingsView
     },
     {
       path: '/browser-agent/tabs',

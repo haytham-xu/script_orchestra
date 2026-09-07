@@ -4,15 +4,14 @@
       <el-button type="default" size="small" @click="goBack">← Browser Agent</el-button>
       <h2 class="dt2-title">Download JM</h2>
       <div class="dt2-header-actions">
-        <el-button size="small" @click="$router.push('/browser-agent/settings')">Settings</el-button>
+        <el-button :icon="Setting" size="small" @click="openSettings">Settings</el-button>
       </div>
     </div>
 
     <div v-if="!configReady" class="dt2-config-missing">
       <el-alert type="warning" show-icon :closable="false">
         <template #title>Download JM is not configured yet</template>
-        Go to
-        <el-button link @click="$router.push('/browser-agent/settings')">Settings</el-button>
+        Click <el-button link @click="openSettings">Settings</el-button>
         and fill in source domain + download path. This tool requires you to be
         <strong>already logged in to the site in your browser</strong>.
       </el-alert>
@@ -142,6 +141,23 @@
       </el-card>
     </template>
   </div>
+
+  <!-- Settings drawer -->
+  <el-drawer v-model="settingsOpen" title="Download JM Settings" size="480px" direction="rtl">
+    <div class="dt2-settings">
+      <div class="dt2-set-row">
+        <label>Source domain</label>
+        <el-input v-model="settingsCfg.sourceDomain"
+          placeholder="e.g. example.com  (single host, no scheme)" spellcheck="false" />
+      </div>
+      <div class="dt2-set-row">
+        <label>Download path</label>
+        <el-input v-model="settingsCfg.downloadPath"
+          placeholder="/absolute/path/to/output" spellcheck="false" />
+      </div>
+      <el-button type="primary" :loading="settingsSaving" @click="saveSettings" style="margin-top:8px">Save</el-button>
+    </div>
+  </el-drawer>
 </template>
 
 <script lang="ts" src="@/browser_agent/views/DownloadJMView.ts"></script>
@@ -160,6 +176,9 @@
 .dt2-config-missing { margin-bottom: 20px; }
 .dt2-auth-msg { margin-left: 10px; color: #475569; font-size: 13px; }
 .dt2-attempts { color: #b45309; font-size: 12px; font-weight: 400; }
+.dt2-settings { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.dt2-set-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.dt2-set-row label { font-weight: 500; color: #1d1d1f; }
 
 .dt2-hint { color: #64748b; font-size: 13px; }
 .dt2-hint code {

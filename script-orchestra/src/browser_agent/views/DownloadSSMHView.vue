@@ -4,15 +4,14 @@
       <el-button type="default" size="small" @click="goBack">← Browser Agent</el-button>
       <h2 class="dt1-title">Download SSMH</h2>
       <div class="dt1-header-actions">
-        <el-button size="small" @click="$router.push('/browser-agent/settings')">Settings</el-button>
+        <el-button :icon="Setting" size="small" @click="openSettings">Settings</el-button>
       </div>
     </div>
 
     <div v-if="!configReady" class="dt1-config-missing">
       <el-alert type="warning" show-icon :closable="false">
         <template #title>Download SSMH is not configured yet</template>
-        Go to
-        <el-button link @click="$router.push('/browser-agent/settings')">Settings</el-button>
+        Click <el-button link @click="openSettings">Settings</el-button>
         and fill in source domains, download domains, link label, and download path.
       </el-alert>
     </div>
@@ -100,6 +99,37 @@
       </div>
     </el-card>
   </div>
+
+  <!-- Settings drawer -->
+  <el-drawer v-model="settingsOpen" title="Download SSMH Settings" size="480px" direction="rtl">
+    <div class="dt1-settings">
+      <div class="dt1-set-row">
+        <label>Source domains</label>
+        <el-input type="textarea" :rows="3"
+          :model-value="ssmhSourcesText()"
+          @update:model-value="setSsmhSourcesText"
+          placeholder="one per line, e.g. foo.com" spellcheck="false" />
+      </div>
+      <div class="dt1-set-row">
+        <label>Download domains</label>
+        <el-input type="textarea" :rows="3"
+          :model-value="ssmhDownloadsText()"
+          @update:model-value="setSsmhDownloadsText"
+          placeholder="one per line, e.g. cdn.foo.com" spellcheck="false" />
+      </div>
+      <div class="dt1-set-row">
+        <label>Link label</label>
+        <el-input v-model="settingsCfg.linkLabel"
+          placeholder="visible text of the anchor to pick" spellcheck="false" />
+      </div>
+      <div class="dt1-set-row">
+        <label>Download path</label>
+        <el-input v-model="settingsCfg.downloadPath"
+          placeholder="/absolute/path/to/output" spellcheck="false" />
+      </div>
+      <el-button type="primary" :loading="settingsSaving" @click="saveSettings" style="margin-top:8px">Save</el-button>
+    </div>
+  </el-drawer>
 </template>
 
 <script lang="ts" src="@/browser_agent/views/DownloadSSMHView.ts"></script>
@@ -174,4 +204,7 @@
   flex: none; font-family: monospace; font-size: 11px; color: #475569;
   min-width: 90px; text-align: right;
 }
+.dt1-settings { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.dt1-set-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.dt1-set-row label { font-weight: 500; color: #1d1d1f; }
 </style>

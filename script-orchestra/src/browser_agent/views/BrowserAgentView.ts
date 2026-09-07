@@ -1,22 +1,64 @@
-import { defineComponent, ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { defineComponent, ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Setting, Refresh, RefreshLeft, Delete } from '@element-plus/icons-vue'
-import { getTasks, retryTask, deleteTask, listTabs, sendTabsToDownloadQueue } from '../service/BrowserAgentService'
+import { Setting, Refresh, RefreshLeft, Delete, Plus } from '@element-plus/icons-vue'
+import { getTasks, retryTask, deleteTask, listTabs, sendTabsToDownloadQueue, getSettings, updateSettings } from '../service/BrowserAgentService'
 import { getWebSocketService } from '../service/websocket'
-import { BrowserTaskStatus, type BrowserTask, type ProgressEvent } from '../service/Model'
+import { BrowserTaskStatus, type BrowserTask, type ProgressEvent, type SiteRule } from '../service/Model'
 
 export default defineComponent({
   name: 'BrowserAgentView',
-  components: { Setting, Refresh, RefreshLeft, Delete },
+  components: { Setting, Refresh, RefreshLeft, Delete, Plus },
   setup() {
-    const router = useRouter()
     const tasks = ref<BrowserTask[]>([])
     const loading = ref(false)
     const sending = ref(false)
-    // Live progress per task id, overlaid on the table.
     const liveProgress = ref<Record<number, number>>({})
     const ws = getWebSocketService()
+
+    // Global settings drawer (downloadDir, maxRetries, pollIntervalSec, siteRules)
+    const settingsOpen = ref(false)
+    const settingsCfg = reactive({
+      downloadDir: '',
+      maxRetries: 3,
+      pollIntervalSec: 60,
+      siteRules: [] as SiteRule[],
+    })
+    const settingsSaving = ref(false)
+
+    function domainsText(rule: SiteRule): string { return rule.coverDomains.join(', ') }
+    function setDomainsText(rule: SiteRule, text: string) {
+      rule.coverDomains = text.split(',').map(s => s.trim()).filter(Boolean)
+    }
+    function addRule() {
+      settingsCfg.siteRules.push({ coverDomains: [], overviewUriFormat: '', downloadUriFormat: '', downloadLinkRegex: '' } as SiteRule)
+    }
+    function removeRule(i: number) { settingsCfg.siteRules.splice(i, 1) }
+
+    async function openSettings() {
+      const s = await getSettings()
+      settingsCfg.downloadDir = s.downloadDir || ''
+      settingsCfg.maxRetries = s.maxRetries ?? 3
+      settingsCfg.pollIntervalSec = s.pollIntervalSec ?? 60
+      settingsCfg.siteRules = JSON.parse(JSON.stringify(s.siteRules || []))
+      settingsOpen.value = true
+    }
+    async function saveSettings() {
+      settingsSaving.value = true
+      try {
+        await updateSettings({
+          downloadDir: settingsCfg.downloadDir,
+          maxRetries: settingsCfg.maxRetries,
+          pollIntervalSec: settingsCfg.pollIntervalSec,
+          siteRules: JSON.parse(JSON.stringify(settingsCfg.siteRules)),
+        })
+        settingsOpen.value = false
+        ElMessage.success('Settings saved')
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e?.message || 'Failed to save')
+      } finally {
+        settingsSaving.value = false
+      }
+    }
 
     async function load() {
       loading.value = true
@@ -103,11 +145,14 @@ export default defineComponent({
       tasks, loading, sending, liveProgress,
       load, onRetry, onDelete, statusTag,
       onSendCurrentTabs,
-      goToSettings: () => router.push('/browser-agent/settings'),
+      settingsOpen, settingsCfg, settingsSaving,
+      openSettings, saveSettings,
+      domainsText, setDomainsText, addRule, removeRule,
       Setting,
       Refresh,
       RefreshLeft,
       Delete,
+      Plus,
       BrowserTaskStatus,
     }
   },

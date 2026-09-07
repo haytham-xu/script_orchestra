@@ -1,8 +1,9 @@
-﻿import { defineComponent, ref, computed, onMounted, onBeforeUnmount } from 'vue'
+﻿import { defineComponent, ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Setting } from '@element-plus/icons-vue'
 import {
-  getSettings,
+  getSettings, updateSettings,
   ssmhScan, ssmhExecute, ssmhStatus,
   type SSMHCandidate, type SSMHItem,
 } from '@/browser_agent/service/BrowserAgentService'
@@ -10,16 +11,50 @@ import type { DownloadSSMHConfig } from '@/browser_agent/service/Model'
 
 export default defineComponent({
   name: 'DownloadSSMHView',
+  components: { Setting },
   setup() {
     const router = useRouter()
 
-    // Live config read from settings. `null` while loading; a non-null but
-    // partially-empty object means the user hasn't finished configuring yet.
+    // Live config read from settings.
     const cfg = ref<DownloadSSMHConfig | null>(null)
     const configReady = computed(() => {
       const c = cfg.value
       return !!(c && c.sourceDomains?.length && c.downloadDomains?.length && c.downloadPath.trim())
     })
+
+    // Settings drawer
+    const settingsOpen = ref(false)
+    const settingsCfg = reactive<DownloadSSMHConfig>({ sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' })
+    const settingsSaving = ref(false)
+
+    function ssmhSourcesText() { return settingsCfg.sourceDomains.join('\n') }
+    function setSsmhSourcesText(text: string) {
+      settingsCfg.sourceDomains = text.split('\n').map(s => s.trim()).filter(Boolean)
+    }
+    function ssmhDownloadsText() { return settingsCfg.downloadDomains.join('\n') }
+    function setSsmhDownloadsText(text: string) {
+      settingsCfg.downloadDomains = text.split('\n').map(s => s.trim()).filter(Boolean)
+    }
+
+    async function openSettings() {
+      const s = await getSettings()
+      const c = s.downloadSSMH || { sourceDomains: [], downloadDomains: [], downloadPath: '', linkLabel: '' }
+      Object.assign(settingsCfg, c)
+      settingsOpen.value = true
+    }
+    async function saveSettings() {
+      settingsSaving.value = true
+      try {
+        await updateSettings({ downloadSSMH: { ...settingsCfg } })
+        cfg.value = { ...settingsCfg }
+        settingsOpen.value = false
+        ElMessage.success('Settings saved')
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e?.message || 'Failed to save')
+      } finally {
+        settingsSaving.value = false
+      }
+    }
 
     const candidates = ref<SSMHCandidate[]>([])
     const selectedUrls = ref<Set<string>>(new Set())
@@ -162,6 +197,10 @@ export default defineComponent({
       jobRunning, jobItems, jobDone, jobTotal,
       doScan, execute, statusTagType,
       fmtBytes, fmtSpeed,
+      settingsOpen, settingsCfg, settingsSaving,
+      openSettings, saveSettings,
+      ssmhSourcesText, setSsmhSourcesText, ssmhDownloadsText, setSsmhDownloadsText,
+      Setting,
       goBack: () => router.push('/browser-agent'),
     }
   }

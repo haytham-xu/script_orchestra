@@ -1,6 +1,9 @@
-import { defineComponent, ref, computed, onMounted, watch, onUnmounted } from 'vue'
+import { defineComponent, ref, reactive, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Setting } from '@element-plus/icons-vue'
+import { getSettings, updateSettings } from '@/browser_agent/service/BrowserAgentService'
+import type { TabArchiveSettings } from '@/browser_agent/service/Model'
 import {
   closeTabs,
   groupTabsByDomain,
@@ -137,8 +140,50 @@ function buildRestoreFailureSummary(rows: TabArchiveRestoreResultRow[]): {
 
 export default defineComponent({
   name: 'TabsView',
+  components: { Setting },
   setup() {
     const router = useRouter()
+
+    // Settings drawer (tabArchive config)
+    const TAB_ARCHIVE_DEFAULTS: TabArchiveSettings = {
+      safeExcludeDomains: [],
+      safeExcludeKeywords: [],
+      embedModel: '',
+      semanticTopK: 120,
+      heatThresholds: { high: 4, medium: 2, low: 0.8 },
+      healthCheckTimeoutSec: 4,
+    }
+    const settingsOpen = ref(false)
+    const settingsCfg = reactive<TabArchiveSettings>(JSON.parse(JSON.stringify(TAB_ARCHIVE_DEFAULTS)))
+    const settingsSaving = ref(false)
+
+    function archiveExcludeDomainsText() { return settingsCfg.safeExcludeDomains.join('\n') }
+    function setArchiveExcludeDomainsText(text: string) {
+      settingsCfg.safeExcludeDomains = text.split('\n').map(s => s.trim().toLowerCase()).filter(Boolean)
+    }
+    function archiveExcludeKeywordsText() { return settingsCfg.safeExcludeKeywords.join('\n') }
+    function setArchiveExcludeKeywordsText(text: string) {
+      settingsCfg.safeExcludeKeywords = text.split('\n').map(s => s.trim().toLowerCase()).filter(Boolean)
+    }
+
+    async function openSettings() {
+      const s = await getSettings()
+      const c = s.tabArchive || TAB_ARCHIVE_DEFAULTS
+      Object.assign(settingsCfg, JSON.parse(JSON.stringify(c)))
+      settingsOpen.value = true
+    }
+    async function saveSettings() {
+      settingsSaving.value = true
+      try {
+        await updateSettings({ tabArchive: JSON.parse(JSON.stringify(settingsCfg)) })
+        settingsOpen.value = false
+        ElMessage.success('Settings saved')
+      } catch (e: any) {
+        ElMessage.error(e?.response?.data?.error || e?.message || 'Failed to save')
+      } finally {
+        settingsSaving.value = false
+      }
+    }
 
     const loading = ref(false)
     const busy = ref(false)
@@ -1125,6 +1170,12 @@ export default defineComponent({
       openReplaceUrlDialog,
       previewReplaceUrl,
       applyReplaceUrl,
+
+      settingsOpen, settingsCfg, settingsSaving,
+      openSettings, saveSettings,
+      archiveExcludeDomainsText, setArchiveExcludeDomainsText,
+      archiveExcludeKeywordsText, setArchiveExcludeKeywordsText,
+      Setting,
     }
   },
 })
