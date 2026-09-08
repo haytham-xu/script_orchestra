@@ -67,12 +67,14 @@ try:
     from claude_bridge.blueprint import blueprint as claude_bridge_blueprint
     from claude_bridge import websocket_service as cb_websocket
     from claude_bridge.session_manager import get_manager as get_claude_bridge_manager
+    from claude_bridge import repository as claude_bridge_repo
     _claude_bridge_available = True
 except ImportError as _cb_err:
     print(f"[App] claude_bridge disabled: {_cb_err}", flush=True)
     claude_bridge_blueprint = None
     cb_websocket = None
     get_claude_bridge_manager = None
+    claude_bridge_repo = None
     _claude_bridge_available = False
 
 import manga_viewer.controller
@@ -211,6 +213,10 @@ def create_app() -> Flask:
 
     # Initialize translator DB.
     translator_repo.init_db()
+
+    # Initialize claude_bridge message history DB (only when the module loaded).
+    if claude_bridge_repo is not None:
+        claude_bridge_repo.init_db()
 
     return app, socketio
 

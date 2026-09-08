@@ -121,7 +121,7 @@ import { ref, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ClaudeBridgeWebSocket, type CbEvent } from '../service/websocket'
-import { getConfig, createSession, closeSession, checkAuth, type ModelAlias } from '../service/api'
+import { getConfig, createSession, getSessions, getSessionMessages, checkAuth, type ModelAlias } from '../service/api'
 
 interface TimelineItem {
   kind: 'user' | 'assistant' | 'thinking' | 'tool_use' | 'tool_result' | 'result' | 'error'
@@ -191,6 +191,20 @@ async function init() {
   ws.connect(tokenArg())
   ws.onEvent(onEvent)
   setTimeout(() => { connected.value = true }, 300)
+
+  // Recover existing session: if there is already a ready session, reuse it.
+  try {
+    const sessions = await getSessions(tokenArg())
+    const ready = sessions.find(s => s.ready)
+    if (ready) {
+      sessionId.value = ready.session_id
+      cwd.value = ready.cwd
+      model.value = ready.model
+      await loadHistory(ready.session_id)
+    }
+  } catch {
+    // non-fatal — start fresh if we can't recover
+  }
 }
 
 function saveToken() {
@@ -218,9 +232,20 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (sessionId.value) closeSession(sessionId.value, tokenArg()).catch(() => {})
   ws.disconnect()
 })
+
+async function loadHistory(sid: string) {
+  try {
+    const messages = await getSessionMessages(sid, tokenArg())
+    timeline.splice(0)
+    for (const m of messages) {
+      onEvent(m as CbEvent)
+    }
+  } catch {
+    // non-fatal
+  }
+}
 
 async function startSession() {
   starting.value = true

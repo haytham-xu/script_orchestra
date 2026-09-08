@@ -54,6 +54,32 @@ def _err(msg: str, status: int = 500) -> tuple:
     return {"success": False, "error": msg}, status
 
 
+
+@ns.route('/file-git/status')
+class GlobalStatusResource(Resource):
+    def get(self):
+        """Global running state — used by Dashboard status bar.
+
+        Returns running=True if any repo has queue.lock=True.
+        """
+        try:
+            repos = RepositoryManager.list_repos()
+            locked = []
+            for repo in repos:
+                local_path = repo.get('local_path', '')
+                if not local_path:
+                    continue
+                try:
+                    state = QueueService.load(local_path)
+                    if state.lock:
+                        locked.append({'id': repo['id'], 'name': repo.get('name', repo['id'])})
+                except Exception:
+                    pass
+            return _ok({'running': len(locked) > 0, 'locked_repos': locked})
+        except Exception as exc:
+            return _err(str(exc))
+
+
 @ns.route('/file-git/repos')
 class ReposListResource(Resource):
     def get(self):

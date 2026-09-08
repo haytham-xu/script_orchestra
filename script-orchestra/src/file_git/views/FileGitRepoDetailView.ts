@@ -618,7 +618,15 @@ export function useFileGitRepoDetail() {
 
   // ------------------------------------------------------------------
 
-  onMounted(() => { loadAll(); loadQueue(); loadFileLogFolders() })
+  onMounted(() => {
+    loadAll().then(() => {
+      if (queue.value?.lock === true) {
+        startProgressTracking(queue.value.action_type ?? 'operation')
+      }
+    })
+    loadQueue()
+    loadFileLogFolders()
+  })
   onUnmounted(() => { stopQueuePoll(); fileGitWS.off(repoId.value) })
 
   return {

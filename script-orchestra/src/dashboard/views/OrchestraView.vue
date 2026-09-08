@@ -1,5 +1,18 @@
 <template>
   <div class="lp">
+    <!-- Mac-style status bar: shows tools with active tasks -->
+    <div v-if="runningKeys.length" class="lp-statusbar">
+      <div
+        v-for="key in runningKeys"
+        :key="key"
+        class="lp-statusbar-item"
+        :title="toolOf(key)?.name"
+        @click="goTo(toolOf(key)?.path)">
+        <span class="lp-statusbar-icon" v-html="toolIcons[key]"></span>
+        <span class="lp-statusbar-name">{{ toolOf(key)?.name }}</span>
+      </div>
+    </div>
+
     <div class="lp-grid" @dragover.prevent @drop="onGridDrop">
       <div
         v-for="(cell, index) in cells"
@@ -101,4 +114,21 @@
   border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff; cursor: pointer;
   font-size: 14px; line-height: 20px; opacity: 0; transition: opacity 0.15s; }
 .lp-cell:hover .lp-folder-remove { opacity: 1; }
+
+.lp-statusbar {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  margin-bottom: 24px; padding: 8px 14px;
+  background: rgba(255,255,255,0.72); backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,0,0,0.08); border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+}
+.lp-statusbar-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 10px; cursor: pointer;
+  transition: background 0.15s;
+}
+.lp-statusbar-item:hover { background: rgba(10,132,255,0.1); }
+.lp-statusbar-icon { width: 22px; height: 22px; flex-shrink: 0; }
+.lp-statusbar-icon :deep(svg) { width: 100%; height: 100%; display: block; }
+.lp-statusbar-name { font-size: 13px; font-weight: 600; color: #303133; white-space: nowrap; }
 </style>

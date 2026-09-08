@@ -38,6 +38,14 @@ from claude_agent_sdk import (
 )
 
 from . import config
+from . import repository
+
+
+# Message types that are worth persisting (excludes transient status events).
+_PERSIST_TYPES = {
+    "assistant_text", "thinking", "tool_use", "tool_result",
+    "permission_request", "result", "user_message",
+}
 
 
 def _permission_summary(tool_name: str, tool_input: dict) -> str:
@@ -160,6 +168,11 @@ class AgentSession:
 
     def _emit(self, payload: dict):
         payload = {"session_id": self.id, **payload}
+        if payload.get("type") in _PERSIST_TYPES:
+            try:
+                repository.save_message(self.id, payload)
+            except Exception as exc:
+                print(f"[claude_bridge] history save failed: {exc}")
         try:
             self._broadcaster(payload)
         except Exception as exc:  # never let a broadcast error kill the loop

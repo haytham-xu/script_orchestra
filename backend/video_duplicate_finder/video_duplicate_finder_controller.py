@@ -58,6 +58,7 @@ VIDEO_EXTS = (
 # ---------------------------------------------------------------------------
 
 _workflow = None  # type: ignore[var-annotated]
+_running_phase: str = ""  # non-empty while a phase is executing
 
 
 def get_workflow():
@@ -153,6 +154,16 @@ class HealthResource(Resource):
         }
 
 
+@ns.route('/status')
+class StatusResource(Resource):
+    def get(self):
+        """Running state — used by Dashboard status bar."""
+        return {
+            'running': bool(_running_phase),
+            'phase': _running_phase,
+        }
+
+
 # ---------------------------------------------------------------------------
 # /phase1/refresh — scan FS, sync DB, compute N-frame signatures
 # ---------------------------------------------------------------------------
@@ -213,7 +224,9 @@ class Phase1RefreshResource(Resource):
             emit_progress(scan_id, current, total, message)
 
         # Call workflow
+        global _running_phase
         try:
+            _running_phase = "phase1"
             workflow = get_workflow()
             print(f"[Phase 1 API] workflow id={id(workflow)} pre-run "
                   f"stop_event={workflow._stop_event.is_set()}")
@@ -231,6 +244,8 @@ class Phase1RefreshResource(Resource):
             import traceback; traceback.print_exc()
             emit_error(scan_id, str(e))
             return {'error': str(e), 'scan_id': scan_id}, 500
+        finally:
+            _running_phase = ""
 
         result['scan_id'] = scan_id
 
@@ -331,6 +346,8 @@ class Phase2BuildResource(Resource):
             emit_progress(scan_id, current, total, message)
 
         try:
+            global _running_phase
+            _running_phase = "phase2"
             workflow = get_workflow()
             print(f"[Phase 2 API] workflow id={id(workflow)} pre-run "
                   f"stop_event={workflow._stop_event.is_set()}")
@@ -345,6 +362,8 @@ class Phase2BuildResource(Resource):
             import traceback; traceback.print_exc()
             emit_error(scan_id, str(e))
             return {'error': str(e), 'scan_id': scan_id}, 500
+        finally:
+            _running_phase = ""
 
         result['scan_id'] = scan_id
         result['threshold_distance'] = threshold_distance
@@ -421,6 +440,8 @@ class Phase25MaterializeResource(Resource):
             emit_progress(scan_id, current, total, message)
 
         try:
+            global _running_phase
+            _running_phase = "phase2.5"
             wf = get_workflow()
             result = wf.phase2_5_materialize_groups(
                 threshold_percent=threshold_percent,
@@ -434,6 +455,8 @@ class Phase25MaterializeResource(Resource):
             import traceback; traceback.print_exc()
             emit_error(scan_id, str(e))
             return {'error': str(e), 'scan_id': scan_id}, 500
+        finally:
+            _running_phase = ""
 
         result['scan_id'] = scan_id
 

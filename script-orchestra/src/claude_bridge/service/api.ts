@@ -67,6 +67,20 @@ export async function closeSession(sessionId: string, token?: string): Promise<v
   })
 }
 
+export async function getSessions(token?: string): Promise<SessionInfo[]> {
+  const res = await fetch(`${BASE_URL}/sessions`, { headers: authHeaders(token) })
+  if (!res.ok) throw new Error('Failed to fetch sessions')
+  const data = await res.json()
+  return data.sessions || []
+}
+
+export async function getSessionMessages(sessionId: string, token?: string): Promise<{ type: string; [key: string]: unknown }[]> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/messages`, { headers: authHeaders(token) })
+  if (!res.ok) throw new Error('Failed to fetch messages')
+  const data = await res.json()
+  return data.messages || []
+}
+
 export interface PtyInfo {
   pty_id: string
   cwd: string

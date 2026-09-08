@@ -8,6 +8,7 @@ from flask import request
 from . import config
 from .auth import require_token, auth_enabled
 from .session_manager import get_manager
+from . import repository
 
 ns = Namespace("")
 
@@ -56,7 +57,17 @@ class SessionResource(Resource):
     def delete(self, session_id):
         if not get_manager().close_session(session_id):
             return {"error": "session not found"}, 404
+        repository.delete_session(session_id)
         return {"message": "closed"}, 200
+
+
+@ns.route("/sessions/<string:session_id>/messages")
+class SessionMessagesResource(Resource):
+    @require_token
+    def get(self, session_id):
+        """Return persisted message history for a session."""
+        messages = repository.get_messages(session_id)
+        return {"session_id": session_id, "messages": messages}, 200
 
 
 @ns.route("/pty/sessions")

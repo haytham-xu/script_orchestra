@@ -213,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -281,6 +281,25 @@ const saving = ref(false)
 const starting = ref(false)
 const stopping = ref(false)
 const probing = ref(false)
+
+let _pollTimer: ReturnType<typeof setInterval> | null = null
+
+function _startPoll() {
+  if (_pollTimer) return
+  _pollTimer = setInterval(async () => {
+    try {
+      const s = await getStatus()
+      status.value = s
+      if (!s.running) _stopPoll()
+    } catch {
+      // ignore transient errors
+    }
+  }, 3000)
+}
+
+function _stopPoll() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null }
+}
 
 function getErrorMessage(error: any, fallback: string): string {
   return error?.response?.data?.error || error?.response?.data?.message || error?.message || fallback
@@ -394,6 +413,7 @@ async function handleStart(): Promise<void> {
     status.value = await startRelay()
     historyEntries.value = await getHistory(300)
     ElMessage.success('Relay started')
+    _startPoll()
   } catch (error: any) {
     ElMessage.error(getErrorMessage(error, 'Failed to start relay'))
   } finally {
@@ -407,6 +427,7 @@ async function handleStop(): Promise<void> {
     status.value = await stopRelay()
     historyEntries.value = await getHistory(300)
     ElMessage.success('Relay stopped')
+    _stopPoll()
   } catch (error: any) {
     ElMessage.error(getErrorMessage(error, 'Failed to stop relay'))
   } finally {
@@ -448,6 +469,11 @@ function goBack(): void {
 
 onMounted(async () => {
   await refreshAll()
+  if (status.value.running) _startPoll()
+})
+
+onUnmounted(() => {
+  _stopPoll()
 })
 </script>
 
