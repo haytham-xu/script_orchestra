@@ -188,4 +188,13 @@ export const toolIcons: Record<string, string> = {
       <circle cx="47" cy="43" r="9" fill="#7c3aed" stroke="#ede9fe" stroke-width="2"/>
       <path d="M43.5 43l2.5 2.5 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </svg>`,
+  'loans-calc': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0369a1"/>
+      <rect x="14" y="16" width="36" height="28" rx="4" fill="#fff"/>
+      <path d="M20 26h24M20 33h16" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="32" y="53" font-size="9" font-weight="700" fill="#bae6fd" text-anchor="middle" font-family="sans-serif">LOAN</text>
+      <circle cx="44" cy="33" r="7" fill="#0ea5e9"/>
+      <text x="44" y="36.5" font-size="9" font-weight="700" fill="#fff" text-anchor="middle" font-family="sans-serif">¥</text>
+    </svg>`,
 }

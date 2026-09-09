@@ -41,3 +41,5 @@ export const RELAY_PROXY_ENDPOINT = '/relay-proxy'
 export const DASHBOARD_ENDPOINT = '/dashboard'
 
 export const CLEAN_KEYWORD_ENDPOINT = '/clean-keyword'
+
+export const LOANS_CALC_ENDPOINT = '/loans-calc'

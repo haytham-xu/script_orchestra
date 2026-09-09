@@ -72,6 +72,9 @@ from dashboard.blueprint import blueprint as dashboard_blueprint
 from clean_keyword.blueprint import blueprint as clean_keyword_blueprint
 from clean_keyword import repository as clean_keyword_repo
 
+# Import loans_calc tool
+from loans_calc.blueprint import blueprint as loans_calc_blueprint
+
 # Import claude_bridge tool (remote Claude Code agent). It depends on the
 # Unix-only `pty`/`termios` stack, so on Windows we skip the import instead
 # of failing the whole app.
@@ -170,6 +173,9 @@ def create_app() -> Flask:
 
     # Register clean_keyword blueprint
     app.register_blueprint(clean_keyword_blueprint)
+
+    # Register loans_calc blueprint
+    app.register_blueprint(loans_calc_blueprint)
 
     # Register claude_bridge blueprint (only if the Unix-only deps loaded)
     if _claude_bridge_available:
