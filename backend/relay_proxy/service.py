@@ -391,7 +391,19 @@ class RelayProxyService:
                 bind_port = listener_settings['bind_port']
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind((bind_host, bind_port))
+                try:
+                    sock.bind((bind_host, bind_port))
+                except OSError as bind_exc:
+                    import errno as _errno
+                    if bind_exc.errno == _errno.EADDRNOTAVAIL and bind_host not in ('', '0.0.0.0'):
+                        # Saved IP is no longer assigned to this machine — fall back to all interfaces.
+                        sock.bind(('0.0.0.0', bind_port))
+                        self._append_history(
+                            'warning', 'start',
+                            f'{listener_name}: {bind_host} not available, bound to 0.0.0.0:{bind_port}',
+                        )
+                    else:
+                        raise
                 sock.listen(settings['limits']['max_connections'])
                 sock.settimeout(1.0)
                 prepared[listener_name] = sock
