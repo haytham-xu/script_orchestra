@@ -98,7 +98,7 @@
                     class="lp-info-select"
                     :style="{ color: statusColor(tool.key) }"
                     :value="metaOf(tool.key).status || ''"
-                    @change="setMetaStatus(tool.key, ($event.target as any).value)">
+                    @change="setMetaStatus(tool.key, $event.target.value)">
                     <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value" :style="{ color: opt.color }">
                       {{ opt.label }}
                     </option>
@@ -111,7 +111,7 @@
                     type="text"
                     placeholder="Add comment…"
                     :value="metaOf(tool.key).comment || ''"
-                    @change="setMetaComment(tool.key, ($event.target as any).value)"
+                    @change="setMetaComment(tool.key, $event.target.value)"
                   />
                 </td>
               </tr>
