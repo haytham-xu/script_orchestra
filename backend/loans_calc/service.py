@@ -174,3 +174,88 @@ def calc_prepay_simulation(
         'savings': savings,
         'finished_at_period': natural_period,
     }
+
+
+# ---------------------------------------------------------------------------
+# Income tax calculator (China progressive tax with cumulative method)
+# ---------------------------------------------------------------------------
+
+TAX_BRACKETS = [
+    (0,       36000,   0.03,  0),
+    (36000,   144000,  0.10,  2520),
+    (144000,  300000,  0.20,  16920),
+    (300000,  420000,  0.25,  31920),
+    (420000,  660000,  0.30,  52920),
+    (660000,  960000,  0.35,  85920),
+    (960000,  float('inf'), 0.45, 181920),
+]
+
+
+def _tax_for_cumulative(cumulative_taxable: float, cumulative_tax_paid: float):
+    for low, high, rate, quick in TAX_BRACKETS:
+        if cumulative_taxable <= high:
+            tax = _round2(cumulative_taxable * rate - quick - cumulative_tax_paid)
+            return max(tax, 0), rate
+    return 0, 0
+
+
+def calc_bonus_tax(bonus: float) -> dict:
+    if bonus <= 0:
+        return {'tax': 0, 'rate': 0, 'net': 0}
+    avg = bonus / 12
+    for low, high, rate, quick in TAX_BRACKETS:
+        if avg <= high:
+            tax = _round2(bonus * rate - quick)
+            return {'tax': max(tax, 0), 'rate': rate, 'net': _round2(bonus - max(tax, 0))}
+    return {'tax': 0, 'rate': 0, 'net': bonus}
+
+
+def calc_income_tax(
+    monthly_salaries: list,          # 12 floats
+    monthly_social_insurance: list,  # 12 floats (deducted before tax)
+    monthly_post_deductions: list,   # 12 floats (deducted after tax, e.g. housing fund employee portion)
+    threshold: float = 5000,
+    bonus: float = 0,
+) -> dict:
+    rows = []
+    cumulative_taxable = 0.0
+    cumulative_tax = 0.0
+    total_salary = 0.0
+    total_tax = 0.0
+    total_net = 0.0
+
+    months_cn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+    for i in range(12):
+        salary = _round2(monthly_salaries[i])
+        si = _round2(monthly_social_insurance[i])
+        post = _round2(monthly_post_deductions[i])
+        taxable = _round2(max(salary - si - threshold, 0))
+        cumulative_taxable = _round2(cumulative_taxable + taxable)
+        tax, rate = _tax_for_cumulative(cumulative_taxable, cumulative_tax)
+        cumulative_tax = _round2(cumulative_tax + tax)
+        net = _round2(salary - si - tax - post)
+        total_salary = _round2(total_salary + salary)
+        total_tax = _round2(total_tax + tax)
+        total_net = _round2(total_net + net)
+        rows.append({
+            'month': months_cn[i],
+            'salary': salary,
+            'social_insurance': si,
+            'taxable': taxable,
+            'rate': round(rate * 100, 0),
+            'tax': tax,
+            'post_deductions': post,
+            'net_income': net,
+        })
+
+    bonus_result = calc_bonus_tax(bonus)
+
+    return {
+        'rows': rows,
+        'total_salary': total_salary,
+        'total_tax': total_tax,
+        'total_net': total_net,
+        'bonus': bonus_result,
+        'annual_net_with_bonus': _round2(total_net + bonus - bonus_result['tax']),
+    }

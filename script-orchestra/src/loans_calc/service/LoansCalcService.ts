@@ -61,3 +61,33 @@ export async function fetchCompare(params: {
 }): Promise<CompareResult> {
   return await postRequest(`${BASE}/compare`, {}, params) as any
 }
+
+export interface TaxRow {
+  month: string
+  salary: number
+  social_insurance: number
+  taxable: number
+  rate: number
+  tax: number
+  post_deductions: number
+  net_income: number
+}
+
+export interface TaxResult {
+  rows: TaxRow[]
+  total_salary: number
+  total_tax: number
+  total_net: number
+  bonus: { tax: number; rate: number; net: number }
+  annual_net_with_bonus: number
+}
+
+export async function fetchTax(params: {
+  monthly_salaries: number[]
+  monthly_social_insurance: number[]
+  monthly_post_deductions: number[]
+  threshold: number
+  bonus: number
+}): Promise<TaxResult> {
+  return await postRequest(`${BASE}/tax`, {}, params) as any
+}

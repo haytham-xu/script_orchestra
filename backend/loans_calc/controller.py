@@ -90,3 +90,27 @@ class Compare(Resource):
             'prepay_equal_payment': sim_ep,
             'prepay_equal_principal': sim_ej,
         }, 200
+
+
+_tax_req = ns.model('TaxRequest', {
+    'monthly_salaries': fields.List(fields.Float, required=True, description='12 monthly salaries'),
+    'monthly_social_insurance': fields.List(fields.Float, required=True),
+    'monthly_post_deductions': fields.List(fields.Float, required=True),
+    'threshold': fields.Float(required=False, default=5000),
+    'bonus': fields.Float(required=False, default=0),
+})
+
+
+@ns.route('/tax')
+class TaxCalc(Resource):
+    @ns.expect(_tax_req)
+    def post(self):
+        body = request.get_json()
+        result = svc.calc_income_tax(
+            monthly_salaries=body['monthly_salaries'],
+            monthly_social_insurance=body['monthly_social_insurance'],
+            monthly_post_deductions=body['monthly_post_deductions'],
+            threshold=float(body.get('threshold', 5000)),
+            bonus=float(body.get('bonus', 0)),
+        )
+        return result, 200
