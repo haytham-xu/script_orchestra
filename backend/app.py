@@ -80,6 +80,7 @@ except ImportError as _cb_err:
 import manga_viewer.controller
 import manga_viewer.settings_controller
 from manga_viewer.cypress_test_support import register_cypress_test_support
+from manga_viewer import queue_store as manga_viewer_queue_store
 
 import pdf_converter.controller
 
@@ -213,6 +214,9 @@ def create_app() -> Flask:
 
     # Initialize translator DB.
     translator_repo.init_db()
+
+    # Initialize manga_viewer queue DBs.
+    manga_viewer_queue_store.init_db()
 
     # Initialize claude_bridge message history DB (only when the module loaded).
     if claude_bridge_repo is not None:

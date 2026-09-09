@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import type { FolderModel } from '../service/Model'
 import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, RefreshLeft, Folder, EditPen, Star, StarFilled } from '@element-plus/icons-vue'
-import { openFolder, fetchSettings, updateFolderModels, incReadCount, resetReadCount } from '@/manga_viwer/service/Service'
+import { openFolder, fetchSettings, updateFolderModels, incReadCount, resetReadCount, addToReadQueue, addToSnoozeQueue } from '@/manga_viwer/service/Service'
 import * as pdfjsLib from 'pdfjs-dist'
 // Import worker as URL
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -50,7 +50,37 @@ export default defineComponent({
       router.push('/manga-viewer/import')
     }
 
-    // Random功能 (removed, now in separate view)
+    function goToReadQueue() {
+      router.push('/manga-viewer/read-queue')
+    }
+
+    function goToSnoozeQueue() {
+      router.push('/manga-viewer/snooze-queue')
+    }
+
+    // Track which folder IDs are in each queue (for button state)
+    const readQueueIds = ref<Set<string>>(new Set())
+    const snoozeQueueIds = ref<Set<string>>(new Set())
+
+    async function handleSaveForLater(folderId: string) {
+      try {
+        await addToReadQueue(folderId)
+        readQueueIds.value = new Set([...readQueueIds.value, folderId])
+        ElMessage.success('Saved for later')
+      } catch {
+        ElMessage.error('Failed to save')
+      }
+    }
+
+    async function handleSnooze(folderId: string) {
+      try {
+        await addToSnoozeQueue(folderId)
+        snoozeQueueIds.value = new Set([...snoozeQueueIds.value, folderId])
+        ElMessage.success('Snoozed for 1 week')
+      } catch {
+        ElMessage.error('Failed to snooze')
+      }
+    }
     // -------------------------------------------------------------------------------------------------------
 
     // Lazy load on scroll
@@ -695,6 +725,8 @@ export default defineComponent({
       goToSettings,
       goToBatch,
       goToImport,
+      goToReadQueue,
+      goToSnoozeQueue,
       // Search with Hot Tags
       searchTokens,
       searchInput,
@@ -752,6 +784,11 @@ export default defineComponent({
       // Open Folder
       handleOpenFolder,
       handleResetReadCount,
+      // Queue actions
+      readQueueIds,
+      snoozeQueueIds,
+      handleSaveForLater,
+      handleSnooze,
       // Icons
       Delete,
       RefreshLeft,

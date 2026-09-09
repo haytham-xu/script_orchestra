@@ -14,6 +14,8 @@
           <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>
           -->
           <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
+          <el-button type="default" size="small" @click="goToReadQueue">🔖 Read Queue</el-button>
+          <el-button type="default" size="small" @click="goToSnoozeQueue">💤 Snooze</el-button>
         </div>
         <div class="search-tags">
           <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
@@ -149,6 +151,24 @@
                 @keyup.enter="handleTagInputConfirm(f, 'custom')" @blur="handleTagInputConfirm(f, 'custom')" />
               <span v-else class="tag placeholder" @click="showTagInput(f, 'custom')">+</span>
             </div>
+          </div>
+
+          <!-- Floating queue actions — bottom-right of line-left -->
+          <div class="line-left-actions">
+            <button
+              class="ql-btn ql-save"
+              :class="{ active: readQueueIds.has(f.id) }"
+              :title="readQueueIds.has(f.id) ? 'Already in read queue' : 'Save for later'"
+              @click.stop="handleSaveForLater(f.id)">
+              🔖
+            </button>
+            <button
+              class="ql-btn ql-snooze"
+              :class="{ active: snoozeQueueIds.has(f.id) }"
+              :title="snoozeQueueIds.has(f.id) ? 'Already snoozed' : 'Snooze for 1 week'"
+              @click.stop="handleSnooze(f.id)">
+              💤
+            </button>
           </div>
         </div>
 
@@ -584,5 +604,41 @@
 }
 .reset-read-btn:hover {
   color: #F56C6C;
+}
+
+/* Queue floating action buttons */
+.line-left-actions {
+  display: none;
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  flex-direction: row;
+  gap: 6px;
+  z-index: 10;
+}
+.folder-line:hover .line-left-actions {
+  display: flex;
+}
+.ql-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 15px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.14);
+  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  opacity: 0.75;
+  line-height: 1;
+}
+.ql-btn:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+  background: #fff;
+}
+.ql-btn.active {
+  opacity: 1;
+  background: #ecf5ff;
+  box-shadow: 0 1px 6px rgba(64, 158, 255, 0.25);
 }
 </style>

@@ -8,6 +8,7 @@ import traceback
 from extensions import restx_api
 from manga_viewer.repository import Repository
 from manga_viewer.settings_manager import settings_manager
+from manga_viewer import queue_store
 from urllib.parse import unquote
 from natsort import natsorted
 import uuid
@@ -60,7 +61,9 @@ class MangaIndexRandomResource(Resource):
         count = request.args.get('count', default=default_count, type=int)
 
         Repository.load_index()
-        all_folders = list(Repository.manga_index.folders.values())
+        snoozed = set(queue_store.sq_active_ids())
+        all_folders = [f for f in Repository.manga_index.folders.values()
+                       if f.id not in snoozed]
 
         # Limit count to available folders
         count = min(count, len(all_folders))
@@ -765,6 +768,70 @@ class ImportDeleteResource(Resource):
 
         except Exception as e:
             return {"error": f"Failed to import folder: {str(e)}"}, 500
+
+
+# ── Read Queue ────────────────────────────────────────────────────────────────
+
+@api.route("/manga-viewer/read-queue")
+class ReadQueueResource(Resource):
+    def get(self):
+        entries = queue_store.rq_list()
+        ids = {e["folder_id"] for e in entries}
+        Repository.load_index()
+        folders = {fid: Repository.manga_index.folders[fid].to_dict()
+                   for fid in ids if fid in Repository.manga_index.folders}
+        return {"entries": entries, "folders": folders}, 200
+
+    def post(self):
+        data = request.json or {}
+        folder_id = (data.get("folder_id") or "").strip()
+        if not folder_id:
+            return {"error": "folder_id required"}, 400
+        entry = queue_store.rq_add(folder_id)
+        return {"entry": entry}, 200
+
+
+@api.route("/manga-viewer/read-queue/<string:folder_id>")
+class ReadQueueItemResource(Resource):
+    def delete(self, folder_id: str):
+        queue_store.rq_remove(folder_id)
+        return "", 204
+
+
+# ── Snooze Queue ──────────────────────────────────────────────────────────────
+
+@api.route("/manga-viewer/snooze-queue")
+class SnoozeQueueResource(Resource):
+    def get(self):
+        entries = queue_store.sq_list()
+        ids = {e["folder_id"] for e in entries}
+        Repository.load_index()
+        folders = {fid: Repository.manga_index.folders[fid].to_dict()
+                   for fid in ids if fid in Repository.manga_index.folders}
+        return {"entries": entries, "folders": folders}, 200
+
+    def post(self):
+        data = request.json or {}
+        folder_id = (data.get("folder_id") or "").strip()
+        days = int(data.get("days", 7))
+        if not folder_id:
+            return {"error": "folder_id required"}, 400
+        entry = queue_store.sq_add(folder_id, days)
+        return {"entry": entry}, 200
+
+
+@api.route("/manga-viewer/snooze-queue/<string:folder_id>")
+class SnoozeQueueItemResource(Resource):
+    def delete(self, folder_id: str):
+        queue_store.sq_remove(folder_id)
+        return "", 204
+
+
+@api.route("/manga-viewer/snooze-queue/cleanup")
+class SnoozeQueueCleanupResource(Resource):
+    def post(self):
+        deleted = queue_store.sq_cleanup()
+        return {"deleted": deleted}, 200
 
 
 restx_api.add_namespace(api)
