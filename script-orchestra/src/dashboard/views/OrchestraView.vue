@@ -1,5 +1,12 @@
 <template>
   <div class="lp">
+    <!-- Top-right info button -->
+    <button class="lp-info-btn" title="Tool registry" @click="infoPanelOpen = true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+    </button>
+
     <!-- Mac-style status bar: shows tools with active tasks -->
     <div v-if="runningKeys.length" class="lp-statusbar">
       <div
@@ -7,7 +14,7 @@
         :key="key"
         class="lp-statusbar-item"
         :title="toolOf(key)?.name"
-        @click="goTo(toolOf(key)?.path)">
+        @click="goTo(toolOf(key)?.path, key)">
         <span class="lp-statusbar-icon" v-html="toolIcons[key]"></span>
         <span class="lp-statusbar-name">{{ toolOf(key)?.name }}</span>
       </div>
@@ -28,7 +35,7 @@
         <!-- tool -->
         <div v-if="cell.type === 'tool'" class="lp-item"
              :data-testid="toolOf(cell.key)?.testid"
-             @click="goTo(toolOf(cell.key)?.path)">
+             @click="goTo(toolOf(cell.key)?.path, cell.key)">
           <div class="lp-icon" v-html="toolIcons[cell.key]"></div>
           <div class="lp-name">{{ toolOf(cell.key)?.name }}</div>
         </div>
@@ -52,13 +59,64 @@
         </div>
         <div class="lp-folder-grid">
           <div v-for="k in openFolder.keys" :key="k" class="lp-cell">
-            <div class="lp-item" @click="goTo(toolOf(k)?.path)">
+            <div class="lp-item" @click="goTo(toolOf(k)?.path, k)">
               <div class="lp-icon" v-html="toolIcons[k]"></div>
               <div class="lp-name">{{ toolOf(k)?.name }}</div>
             </div>
             <button class="lp-folder-remove" title="Move out of folder"
                     @click.stop="removeFromFolder(openFolder, k)">×</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info panel overlay -->
+    <div v-if="infoPanelOpen" class="lp-overlay" @click.self="infoPanelOpen = false">
+      <div class="lp-info-panel">
+        <div class="lp-info-head">
+          <span class="lp-info-title">Tool Registry</span>
+          <button class="lp-info-close" @click="infoPanelOpen = false">×</button>
+        </div>
+        <div class="lp-info-table-wrap">
+          <table class="lp-info-table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Status</th>
+                <th>Last Opened</th>
+                <th>Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tool in TOOLS" :key="tool.key">
+                <td class="lp-info-name" @click="goTo(tool.path, tool.key); infoPanelOpen = false">
+                  <span class="lp-info-icon" v-html="toolIcons[tool.key]"></span>
+                  {{ tool.name }}
+                </td>
+                <td>
+                  <select
+                    class="lp-info-select"
+                    :style="{ color: statusColor(tool.key) }"
+                    :value="metaOf(tool.key).status || ''"
+                    @change="setMetaStatus(tool.key, ($event.target as HTMLSelectElement).value as any)">
+                    <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value" :style="{ color: opt.color }">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </td>
+                <td class="lp-info-ts">{{ metaOf(tool.key).last_opened || '—' }}</td>
+                <td>
+                  <input
+                    class="lp-info-comment"
+                    type="text"
+                    placeholder="Add comment…"
+                    :value="metaOf(tool.key).comment || ''"
+                    @change="setMetaComment(tool.key, ($event.target as HTMLInputElement).value)"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -131,4 +189,69 @@
 .lp-statusbar-icon { width: 22px; height: 22px; flex-shrink: 0; }
 .lp-statusbar-icon :deep(svg) { width: 100%; height: 100%; display: block; }
 .lp-statusbar-name { font-size: 13px; font-weight: 600; color: #303133; white-space: nowrap; }
+
+/* Info button — fixed top-right */
+.lp-info-btn {
+  position: fixed; top: 18px; right: 22px; z-index: 100;
+  width: 36px; height: 36px; border: none; border-radius: 50%;
+  background: rgba(255,255,255,0.85); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.12); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: #606266; transition: background 0.15s, color 0.15s;
+}
+.lp-info-btn:hover { background: #fff; color: #409eff; }
+.lp-info-btn svg { width: 18px; height: 18px; }
+
+/* Info panel */
+.lp-info-panel {
+  background: rgba(255,255,255,0.96); border-radius: 20px;
+  width: min(960px, 92vw); max-height: 82vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.22);
+  overflow: hidden;
+}
+.lp-info-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px 16px; border-bottom: 1px solid #ebeef5; flex-shrink: 0;
+}
+.lp-info-title { font-size: 18px; font-weight: 700; }
+.lp-info-close {
+  border: none; background: none; cursor: pointer; font-size: 22px;
+  color: #909399; line-height: 1; padding: 0 4px;
+}
+.lp-info-close:hover { color: #303133; }
+.lp-info-table-wrap { overflow-y: auto; flex: 1; }
+.lp-info-table {
+  width: 100%; border-collapse: collapse; font-size: 14px;
+}
+.lp-info-table th {
+  position: sticky; top: 0; background: #f5f7fa;
+  padding: 10px 14px; text-align: left; font-size: 12px;
+  color: #909399; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; border-bottom: 1px solid #ebeef5;
+}
+.lp-info-table td { padding: 10px 14px; border-bottom: 1px solid #f2f3f5; vertical-align: middle; }
+.lp-info-table tr:last-child td { border-bottom: none; }
+.lp-info-table tr:hover td { background: #fafafa; }
+.lp-info-name {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-weight: 600; white-space: nowrap;
+}
+.lp-info-name:hover { color: #409eff; }
+.lp-info-icon { width: 24px; height: 24px; flex-shrink: 0; }
+.lp-info-icon :deep(svg) { width: 100%; height: 100%; display: block; }
+.lp-info-ts { font-size: 12px; color: #909399; white-space: nowrap; }
+.lp-info-select {
+  border: 1px solid #dcdfe6; border-radius: 6px; padding: 4px 8px;
+  font-size: 13px; font-weight: 600; background: #fff; cursor: pointer;
+  outline: none;
+}
+.lp-info-select:focus { border-color: #409eff; }
+.lp-info-comment {
+  width: 100%; min-width: 180px; border: 1px solid #dcdfe6; border-radius: 6px;
+  padding: 5px 9px; font-size: 13px; outline: none; box-sizing: border-box;
+  color: #303133; background: #fff;
+}
+.lp-info-comment:focus { border-color: #409eff; }
+.lp-info-comment::placeholder { color: #c0c4cc; }
 </style>

@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { toolIcons } from '../icons/toolIcons'
 import * as api from '../service/DashboardService'
-import type { LayoutItem, FolderItem } from '../service/DashboardService'
+import type { LayoutItem, FolderItem, ToolMeta, ToolStatus } from '../service/DashboardService'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
 
 // Code-defined tool registry — the source of truth for what tools exist.
@@ -111,6 +111,56 @@ export default defineComponent({
     const runningKeys = ref<string[]>([])
     let statusTimer: ReturnType<typeof setInterval> | null = null
 
+    // Info panel
+    const infoPanelOpen = ref(false)
+    const toolMeta = ref<Record<string, ToolMeta>>({})
+    const metaSaveTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
+    async function loadToolMeta() {
+      try { toolMeta.value = await api.getToolMeta() } catch { /* non-fatal */ }
+    }
+
+    function metaOf(key: string): ToolMeta {
+      return toolMeta.value[key] || {}
+    }
+
+    function onMetaChange(key: string) {
+      if (metaSaveTimers[key]) clearTimeout(metaSaveTimers[key])
+      metaSaveTimers[key] = setTimeout(async () => {
+        try { toolMeta.value = await api.patchToolMeta(key, toolMeta.value[key] || {}) } catch { /* best-effort */ }
+      }, 600)
+    }
+
+    function setMetaStatus(key: string, status: ToolStatus | '') {
+      if (!toolMeta.value[key]) toolMeta.value[key] = {}
+      toolMeta.value[key].status = status as ToolStatus || undefined
+      onMetaChange(key)
+    }
+
+    function setMetaComment(key: string, comment: string) {
+      if (!toolMeta.value[key]) toolMeta.value[key] = {}
+      toolMeta.value[key].comment = comment
+      onMetaChange(key)
+    }
+
+    const STATUS_OPTIONS: { value: ToolStatus | ''; label: string; color: string }[] = [
+      { value: '',                    label: '—',          color: '#909399' },
+      { value: 'normal',              label: '正常',        color: '#67c23a' },
+      { value: 'needs_improvement',   label: '需改进',      color: '#e6a23c' },
+      { value: 'pending_verification',label: '待实际验证',  color: '#409eff' },
+      { value: 'deprecated',          label: '废弃',        color: '#f56c6c' },
+    ]
+
+    function statusLabel(key: string): string {
+      const s = metaOf(key).status || ''
+      return STATUS_OPTIONS.find(o => o.value === s)?.label ?? '—'
+    }
+
+    function statusColor(key: string): string {
+      const s = metaOf(key).status || ''
+      return STATUS_OPTIONS.find(o => o.value === s)?.color ?? '#909399'
+    }
+
     async function pollStatus() {
       const results = await Promise.allSettled(
         STATUS_CHECKS.map(async (check) => {
@@ -152,8 +202,14 @@ export default defineComponent({
     }
     watch(cells, persist, { deep: true })
 
-    function goTo(path?: string) {
+    function goTo(path?: string, key?: string) {
       if (dragKey.value) return          // don't navigate on drag release
+      if (key) {
+        const now = new Date().toLocaleString()
+        if (!toolMeta.value[key]) toolMeta.value[key] = {}
+        toolMeta.value[key].last_opened = now
+        api.patchToolMeta(key, { last_opened: now }).catch(() => {})
+      }
       if (path) router.push(path)
     }
 
@@ -238,6 +294,7 @@ export default defineComponent({
 
     onMounted(() => {
       load()
+      loadToolMeta()
       pollStatus()
       statusTimer = setInterval(pollStatus, 5000)
     })
@@ -252,6 +309,8 @@ export default defineComponent({
       openFolderId, openFolder, openFolderView, closeFolder,
       renameFolder, removeFromFolder,
       runningKeys,
+      infoPanelOpen, toolMeta, metaOf, STATUS_OPTIONS, TOOLS,
+      statusLabel, statusColor, setMetaStatus, setMetaComment,
     }
   },
 })
