@@ -144,11 +144,12 @@ export default defineComponent({
     }
 
     const STATUS_OPTIONS: { value: ToolStatus | ''; label: string; color: string }[] = [
-      { value: '',                    label: '—',          color: '#909399' },
-      { value: 'normal',              label: '正常',        color: '#67c23a' },
-      { value: 'needs_improvement',   label: '需改进',      color: '#e6a23c' },
-      { value: 'pending_verification',label: '待实际验证',  color: '#409eff' },
-      { value: 'deprecated',          label: '废弃',        color: '#f56c6c' },
+      { value: '',                     label: '—',                   color: '#909399' },
+      { value: 'normal',               label: 'Normal',              color: '#67c23a' },
+      { value: 'needs_improvement',    label: 'Needs Improvement',   color: '#e6a23c' },
+      { value: 'pending_verification', label: 'Pending Verification',color: '#409eff' },
+      { value: 'in_progress',          label: 'In Progress',         color: '#9b59b6' },
+      { value: 'deprecated',           label: 'Deprecated',          color: '#f56c6c' },
     ]
 
     function statusLabel(key: string): string {

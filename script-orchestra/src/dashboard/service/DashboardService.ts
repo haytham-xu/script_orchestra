@@ -16,7 +16,7 @@ export async function saveLayout(items: LayoutItem[]): Promise<{ items: LayoutIt
   return (await putRequest<{ layout: { items: LayoutItem[] } }>(`${B}/layout`, {}, { items })).layout
 }
 
-export type ToolStatus = 'normal' | 'needs_improvement' | 'pending_verification' | 'deprecated'
+export type ToolStatus = 'normal' | 'needs_improvement' | 'pending_verification' | 'deprecated' | 'in_progress'
 
 export interface ToolMeta {
   status?: ToolStatus

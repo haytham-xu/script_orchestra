@@ -12,7 +12,7 @@ from typing import Any, Dict
 _DIR = os.path.dirname(os.path.abspath(__file__))
 _META_FILE = os.path.join(_DIR, "tool_meta.json")
 
-VALID_STATUSES = {"normal", "needs_improvement", "pending_verification", "deprecated"}
+VALID_STATUSES = {"normal", "needs_improvement", "pending_verification", "deprecated", "in_progress"}
 
 
 def load_meta() -> Dict[str, Any]:
