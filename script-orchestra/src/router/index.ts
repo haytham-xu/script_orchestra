@@ -41,6 +41,7 @@ import FileGitRepoSyncFilterView from '@/file_git/views/FileGitRepoSyncFilterVie
 import FileGitSettingsView from '@/file_git/views/FileGitSettingsView.vue'
 import ProxyForwardView from '@/proxy_forward/views/ProxyForwardView.vue'
 import RelayProxyView from '@/relay_proxy/views/RelayProxyView.vue'
+import CleanKeywordView from '@/clean_keyword/views/CleanKeywordView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -230,6 +231,11 @@ const router = createRouter({
       path: '/relay-proxy',
       name: 'relay-proxy',
       component: RelayProxyView
+    },
+    {
+      path: '/clean-keyword',
+      name: 'clean-keyword',
+      component: CleanKeywordView
     },
     {
       path: '/file-git',

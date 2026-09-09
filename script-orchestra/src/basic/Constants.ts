@@ -39,3 +39,5 @@ export const PROXY_FORWARD_ENDPOINT = '/proxy-forward'
 export const RELAY_PROXY_ENDPOINT = '/relay-proxy'
 
 export const DASHBOARD_ENDPOINT = '/dashboard'
+
+export const CLEAN_KEYWORD_ENDPOINT = '/clean-keyword'

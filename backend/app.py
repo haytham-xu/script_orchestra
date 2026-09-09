@@ -68,6 +68,10 @@ from relay_proxy.blueprint import blueprint as relay_proxy_blueprint
 # Import dashboard layout module (Launchpad-style layout persistence)
 from dashboard.blueprint import blueprint as dashboard_blueprint
 
+# Import clean_keyword tool
+from clean_keyword.blueprint import blueprint as clean_keyword_blueprint
+from clean_keyword import repository as clean_keyword_repo
+
 # Import claude_bridge tool (remote Claude Code agent). It depends on the
 # Unix-only `pty`/`termios` stack, so on Windows we skip the import instead
 # of failing the whole app.
@@ -164,6 +168,9 @@ def create_app() -> Flask:
     # Register dashboard layout blueprint
     app.register_blueprint(dashboard_blueprint)
 
+    # Register clean_keyword blueprint
+    app.register_blueprint(clean_keyword_blueprint)
+
     # Register claude_bridge blueprint (only if the Unix-only deps loaded)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
@@ -225,6 +232,9 @@ def create_app() -> Flask:
 
     # Initialize manga_viewer queue DBs.
     manga_viewer_queue_store.init_db()
+
+    # Initialize clean_keyword DB.
+    clean_keyword_repo.init_db()
 
     # Initialize claude_bridge message history DB (only when the module loaded).
     if claude_bridge_repo is not None:

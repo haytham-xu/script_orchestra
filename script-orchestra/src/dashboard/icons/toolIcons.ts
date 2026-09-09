@@ -179,4 +179,13 @@ export const toolIcons: Record<string, string> = {
       <path d="M28 22h8M36 22h4M32 28v8" stroke="#99e9f2" stroke-width="2.6" stroke-linecap="round"/>
       <path d="M32 34h10M22 22h6" stroke="#99e9f2" stroke-width="2.6" stroke-linecap="round"/>
     </svg>`,
+  'clean-keyword': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#7c3aed"/>
+      <rect x="14" y="20" width="36" height="5" rx="2.5" fill="#ede9fe"/>
+      <rect x="14" y="30" width="28" height="5" rx="2.5" fill="#c4b5fd"/>
+      <rect x="14" y="40" width="20" height="5" rx="2.5" fill="#a78bfa"/>
+      <circle cx="47" cy="43" r="9" fill="#7c3aed" stroke="#ede9fe" stroke-width="2"/>
+      <path d="M43.5 43l2.5 2.5 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>`,
 }
