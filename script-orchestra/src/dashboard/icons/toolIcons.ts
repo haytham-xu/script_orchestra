@@ -197,4 +197,12 @@ export const toolIcons: Record<string, string> = {
       <circle cx="44" cy="33" r="7" fill="#0ea5e9"/>
       <text x="44" y="36.5" font-size="9" font-weight="700" fill="#fff" text-anchor="middle" font-family="sans-serif">¥</text>
     </svg>`,
+  'compress-image': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#059669"/>
+      <rect x="14" y="16" width="36" height="28" rx="3" fill="#fff"/>
+      <circle cx="24" cy="26" r="4" fill="#fbbf24"/>
+      <path d="M18 40l9-11 7 8 5-5 7 8H18z" fill="#059669"/>
+      <path d="M38 46l-5-5-5 5M33 41v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`,
 }

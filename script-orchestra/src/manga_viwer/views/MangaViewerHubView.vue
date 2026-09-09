@@ -132,6 +132,19 @@ const tools = [
       <path d="M43.5 43l2.5 2.5 4-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </svg>`,
   },
+  {
+    key: 'compress-image',
+    name: 'Compress Image',
+    desc: 'Shrink JPG/PNG files to a target size',
+    path: '/compress-image',
+    icon: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#059669"/>
+      <rect x="14" y="16" width="36" height="28" rx="3" fill="#fff"/>
+      <circle cx="24" cy="26" r="4" fill="#fbbf24"/>
+      <path d="M18 40l9-11 7 8 5-5 7 8H18z" fill="#059669"/>
+      <path d="M38 46l-5-5-5 5M33 41v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`,
+  },
 ]
 </script>
 
