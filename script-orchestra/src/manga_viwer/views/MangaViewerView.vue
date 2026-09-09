@@ -9,13 +9,8 @@
           <el-button type="primary" size="small" @click="goToRandom">🎲 Random</el-button>
           -->
           <el-button size="small" @click="goBack">← Home</el-button>
-          <el-button type="success" size="small" @click="goToBatch">🛠️ Batch</el-button>
-          <!-- DEPRECATED: Import page hidden for now (kept, not removed).
-          <el-button type="info" size="small" @click="goToImport">📥 Import</el-button>
-          -->
+          <el-button type="success" size="small" @click="goToBatch">🛠️ Tools</el-button>
           <el-button type="default" size="small" @click="goToSettings">⚙️ Settings</el-button>
-          <el-button type="default" size="small" @click="goToReadQueue">🔖 Read Queue</el-button>
-          <el-button type="default" size="small" @click="goToSnoozeQueue">💤 Snooze</el-button>
         </div>
         <div class="search-tags">
           <el-tag v-for="(t, i) in searchTokens" :key="t + i" closable @close="removeSearchToken(i)">{{ t }}</el-tag>
@@ -39,171 +34,30 @@
     </div>
 
     <div class="folder-list">
-      <div v-for="f in pagedFolders" :key="f.id" class="folder-line" :class="{ 'marked-for-deletion': store.deleteIdSet.has(f.id) }">
-        <!-- Folder Line - Left -->
-        <div class="line-left">
-
-          <!-- FolderName with Delete Icon -->
-          <div class="name-row">
-            <div v-if="editingNameFlag === f.id" class="edit-inline">
-              <el-input :ref="setActiveInput" v-model="editValue.name" size="small" @keyup.enter="commitEdit('name', f)"
-                @blur="commitEdit('name', f)" />
-            </div>
-            <div v-else class="name-cell" :title="f.name">{{ f.name }}</div>
-
-            <!-- Action icons - Right of Name -->
-            <div class="delete-icon-wrapper">
-              <el-button
-                :icon="EditPen"
-                circle
-                size="small"
-                type="default"
-                @click.stop="startEdit(f)"
-                title="Edit name"
-              />
-              <el-button
-                :icon="f.favorite ? StarFilled : Star"
-                circle
-                size="small"
-                :type="f.favorite ? 'warning' : 'default'"
-                @click.stop="toggleFavorite(f)"
-                :title="f.favorite ? 'Unfavorite' : 'Favorite'"
-              />
-              <el-button
-                :icon="Folder"
-                circle
-                size="small"
-                type="default"
-                @click.stop="handleOpenFolder(f.id)"
-                title="Open Folder"
-              />
-              <el-button
-                v-if="!store.deleteIdSet.has(f.id)"
-                :icon="Delete"
-                circle
-                size="small"
-                type="danger"
-                @click.stop="markForDeletion(f.id)"
-                title="标记删除"
-              />
-              <el-button
-                v-else
-                :icon="RefreshLeft"
-                circle
-                size="small"
-                type="info"
-                @click.stop="unmarkForDeletion(f.id)"
-                title="取消删除"
-              />
-            </div>
-          </div>
-
-          <div class="tags-row">
-            <!-- size / number -->
-            <div class="tags-group"><span class="label">Size:</span> <span class="label">{{ Math.round(f.size / 1024/ 1024) }} MB</span></div>
-            <div class="tags-group"><span class="label">Number:</span> <span class="label">{{ f.number }}</span></div>
-            <div class="tags-group">
-              <span class="label">Read:</span>
-              <span class="label read-count" :class="{ zero: !(f.read_count) }">{{ f.read_count ?? 0 }}</span>
-              <el-button
-                v-if="(f.read_count ?? 0) > 0"
-                size="small"
-                text
-                class="reset-read-btn"
-                title="Reset read count to 0"
-                @click.stop="handleResetReadCount(f)"
-              >↺</el-button>
-            </div>
-
-            <!-- mosaic -->
-            <div class="tags-group">
-              <span class="label">Mosaic:</span>
-              <el-radio-group v-model="f.tags.mosaic" @change="commitEdit('mosaic', f)">
-                <el-radio size="small" label="None">None</el-radio>
-                <el-radio size="small" label="Light">Light</el-radio>
-                <el-radio size="small" label="Heavy">Heavy</el-radio>
-              </el-radio-group>
-            </div>
-
-            <!-- category_main (options from settings.categories.main) -->
-            <div class="tags-group">
-              <span class="label">Category Main:</span>
-              <el-radio-group v-model="f.tags.category_main" @change="commitEdit('category_main', f)">
-                <el-radio v-for="c in mainCategories" :key="c.key" size="small" :label="c.key">{{ c.key }}</el-radio>
-              </el-radio-group>
-            </div>
-
-            <!-- category_sub (options from settings.categories.sub) -->
-            <div class="tags-group">
-              <span class="label">Category Sub:</span>
-              <el-radio-group v-model="f.tags.category_sub" @change="commitEdit('category_sub', f)">
-                <el-radio v-for="c in subCategories" :key="c.key" size="small" :label="c.key">{{ c.key }}</el-radio>
-              </el-radio-group>
-            </div>
-
-            <!-- Custom (auth / name / others tag groups removed — unused) -->
-            <div class="tags-group">
-              <span class="label">Custom:</span>
-              <el-tag type="warning" v-for="(t, i) in f.tags.custom" :key="f.id + 'custom' + i" closable
-                @close="removeTag(f, 'custom', i)">{{ t }}</el-tag>
-              <el-input v-if="isTagInputVisible(f, 'custom')" :ref="setTagInputRef(f.id, 'custom')"
-                v-model="tagInputValues[f.id].custom" size="small" class="tag-input"
-                @keyup.enter="handleTagInputConfirm(f, 'custom')" @blur="handleTagInputConfirm(f, 'custom')" />
-              <span v-else class="tag placeholder" @click="showTagInput(f, 'custom')">+</span>
-            </div>
-          </div>
-
-          <!-- Floating queue actions — bottom-right of line-left -->
-          <div class="line-left-actions">
-            <button
-              class="ql-btn ql-save"
-              :class="{ active: readQueueIds.has(f.id) }"
-              :title="readQueueIds.has(f.id) ? 'Already in read queue' : 'Save for later'"
-              @click.stop="handleSaveForLater(f.id)">
-              🔖
-            </button>
-            <button
-              class="ql-btn ql-snooze"
-              :class="{ active: snoozeQueueIds.has(f.id) }"
-              :title="snoozeQueueIds.has(f.id) ? 'Already snoozed' : 'Snooze for 1 week'"
-              @click.stop="handleSnooze(f.id)">
-              💤
-            </button>
-          </div>
-        </div>
-
-        <!-- Preview -->
-        <div class="line-right" @click="openModal(f)">
-          <div v-if="previewImages(f).length" class="thumbs">
-            <div v-for="(img, i) in previewImages(f)" :key="img + i" class="thumb" :title="img">
-              <img :src="getPreviewSrc(img)" v-if="getPreviewSrc(img)" />
-            </div>
-          </div>
-          <div v-else class="no-thumb">无图片预览</div>
-        </div>
-      </div>
-
+      <FolderLine
+        v-for="f in pagedFolders"
+        :key="f.id"
+        :folder="f"
+        :editingNameId="editingNameFlag"
+        :editValue="editValue"
+        :mainCategories="mainCategories"
+        :subCategories="subCategories"
+        :isMarkedForDeletion="store.deleteIdSet.has(f.id)"
+        :isInReadQueue="readQueueIds.has(f.id)"
+        :isInSnoozeQueue="snoozeQueueIds.has(f.id)"
+        @start-edit="startEdit"
+        @commit-edit="commitEdit"
+        @toggle-favorite="toggleFavorite"
+        @open-folder="handleOpenFolder"
+        @mark-delete="markForDeletion"
+        @unmark-delete="unmarkForDeletion"
+        @reset-read-count="handleResetReadCount"
+        @confirm-tag="handleTagInputConfirm"
+        @remove-tag="removeTag"
+        @save-for-later="handleSaveForLater"
+        @snooze="handleSnooze"
+      />
     </div>
-
-    <el-dialog v-model="dialogVisible" :show-close="false" :close-on-click-modal="true" :close-on-press-escape="false"
-      width="800px" :title="dialogFolder?.name || ''" destroy-on-close class="manga-center-dialog" top="0vh">
-      <div class="dialog-body">
-        <template v-for="(p, i) in dialogFiles" :key="p + i">
-          <div v-if="isImage(p)" class="media-item">
-            <img :src="p" :alt="p" />
-          </div>
-          <div v-else-if="isPdf(p)" v-for="(pageUrl, pageIdx) in pdfPages[p]" :key="p + '-page-' + pageIdx" class="media-item">
-            <img :src="pageUrl" :alt="`${p} - Page ${pageIdx + 1}`" />
-          </div>
-          <div v-else-if="isVideo(p)" class="media-item">
-            <video :src="p" controls preload="metadata"></video>
-          </div>
-          <div v-else class="media-item">
-            <div class="unknown">{{ p }}</div>
-          </div>
-        </template>
-      </div>
-    </el-dialog>
   </div>
 </template>
 

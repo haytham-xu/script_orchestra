@@ -10,14 +10,10 @@ import { BACKEND_BASE_URL } from '@/basic/Constants'
 // key matches the slug used in toolIcons. Layout only references these keys.
 export interface Tool { key: string; name: string; path: string; testid?: string }
 const TOOLS: Tool[] = [
-  { key: 'manga-classifier',       name: 'Manga Classifier',       path: '/manga-classifier' },
-  { key: 'photo-classifier',       name: 'Photo Classifier',       path: '/photo-classifier' },
   { key: 'manga-viewer',           name: 'Manga Viewer',           path: '/manga-viewer' },
+  { key: 'photo-classifier',       name: 'Photo Classifier',       path: '/photo-classifier' },
   { key: 'roadmap',                name: 'Roadmap',                path: '/roadmap' },
   { key: 'pdf-converter',          name: 'PDF Converter',          path: '/pdf-converter' },
-  { key: 'unzip',                  name: 'Unzip',                  path: '/unzip' },
-  { key: 'duplicate-finder',       name: 'Duplicate Finder',       path: '/duplicate-finder', testid: 'duplicate-finder' },
-  { key: 'video-duplicate-finder', name: 'Video Duplicate Finder', path: '/video-duplicate-finder', testid: 'video-duplicate-finder' },
   { key: 'clipboard-share',        name: 'Clipboard Share',        path: '/clipboard-share' },
   { key: 'caffeinate',             name: 'Caffeinate',             path: '/caffeinate' },
   { key: 'browser-agent',          name: 'Browser Agent',          path: '/browser-agent' },

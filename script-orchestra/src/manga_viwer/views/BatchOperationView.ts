@@ -35,7 +35,7 @@ export default defineComponent({
 
     // Navigation
     function goBack() {
-      router.push('/manga-viewer')
+      router.push('/manga-viewer/batch')
     }
 
     // Search

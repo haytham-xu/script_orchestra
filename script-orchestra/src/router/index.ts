@@ -13,6 +13,7 @@ import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import MangaViewerRandomView from '@/manga_viwer/views/RandomView.vue'
 import MangaViewerSettingsView from '@/manga_viwer/views/SettingsView.vue'
 import MangaViewerBatchView from '@/manga_viwer/views/BatchOperationView.vue'
+import MangaViewerHubView from '@/manga_viwer/views/MangaViewerHubView.vue'
 import MangaImportView from '@/manga_viwer/views/MangaImportView.vue'
 import ReadQueueView from '@/manga_viwer/views/ReadQueueView.vue'
 import SnoozeQueueView from '@/manga_viwer/views/SnoozeQueueView.vue'
@@ -106,6 +107,11 @@ const router = createRouter({
     {
       path: '/manga-viewer/batch',
       name: 'manga-viewer-batch',
+      component: MangaViewerHubView
+    },
+    {
+      path: '/manga-viewer/batch/edit',
+      name: 'manga-viewer-batch-edit',
       component: MangaViewerBatchView
     },
     {

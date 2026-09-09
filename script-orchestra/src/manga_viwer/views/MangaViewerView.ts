@@ -5,6 +5,7 @@ import type { FolderModel } from '../service/Model'
 import { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, RefreshLeft, Folder, EditPen, Star, StarFilled } from '@element-plus/icons-vue'
 import { openFolder, fetchSettings, updateFolderModels, incReadCount, resetReadCount, addToReadQueue, addToSnoozeQueue } from '@/manga_viwer/service/Service'
+import FolderLine from '@/manga_viwer/components/FolderLine.vue'
 import * as pdfjsLib from 'pdfjs-dist'
 // Import worker as URL
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -14,7 +15,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 export default defineComponent({
   name: 'MangaViewerView',
-  components: { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup },
+  components: { ElInput, ElTag, ElSwitch, ElRadio, ElRadioGroup, FolderLine },
   setup() {
     console.log('[MangaViewer] Component setup started')
 
