@@ -41,7 +41,7 @@ interface StatusCheck {
 }
 
 const STATUS_CHECKS: StatusCheck[] = [
-  { key: 'caffeinate',             url: `${BACKEND_BASE_URL}/caffeinate/status`,                      isRunning: (d) => !!d?.running },
+  { key: 'caffeinate',             url: `${BACKEND_BASE_URL}/caffeinate/caffeinate/status`,              isRunning: (d) => !!d?.running },
   { key: 'proxy-forward',          url: `${BACKEND_BASE_URL}/proxy-forward/status`,                   isRunning: (d) => !!d?.running },
   { key: 'relay-proxy',            url: `${BACKEND_BASE_URL}/relay-proxy/status`,                     isRunning: (d) => !!d?.running },
   { key: 'browser-agent',          url: `${BACKEND_BASE_URL}/browser-agent/download-jm/status`,       isRunning: (d) => !!d?.running },
