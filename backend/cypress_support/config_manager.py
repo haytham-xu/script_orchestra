@@ -17,11 +17,11 @@ class ConfigManager:
     # Tool configuration mapping
     TOOL_CONFIG_MAP = {
         'photo_classifier': {
-            'settings_path': 'photo_classifier/user_settings.json',
+            'settings_path': 'photo_classifier/settings.json',
             'snapshot_name': '.cypress_snapshot.json'
         },
         'manga_viewer': {
-            'settings_path': 'manga_viewer/manga_viewer_settings.json',
+            'settings_path': 'manga_viewer/settings.json',
             'snapshot_name': '.cypress_snapshot.json'
         },
         'duplicate_finder': {

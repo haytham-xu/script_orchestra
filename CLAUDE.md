@@ -46,6 +46,14 @@ Newest modules (`memory_curve`, `knowledge_vault`) are the cleanest templates. A
 - `settings_manager.py` — JSON `settings.json` with `DEFAULT_SETTINGS`, `load/save`, `validate_and_normalize`.
 - `websocket_service.py` — `emit_progress` / broadcast helpers, guarded by `SOCKETIO_AVAILABLE`.
 
+### Conventions: settings & DB files
+- **Settings**: every tool's runtime config file is named exactly **`settings.json`** inside its module dir.
+  Never use `user_settings.json`, `<tool>_settings.json`, or any other variant.
+  The `.gitignore` rule `backend/**/settings.json` covers all of them automatically.
+- **SQLite DB**: every tool's DB file lives inside its module dir. Name it `<tool_name>.db` or a clear
+  semantic name (e.g. `queues.db`, `phash_cache.db`). The `.gitignore` rule `**/*.db` covers all of them.
+  Never commit a `.db` file. Never merge tool DBs together — each tool owns its own file.
+
 ---
 
 ## Frontend architecture (`script-orchestra/src/`)
@@ -178,3 +186,16 @@ Note: `-s` is required for `STEP_PAUSE=1` so that `input()` is not captured by p
 - Frontend entry/router: `src/main.ts`, `src/router/index.ts`, `vite.config.ts`
 - Frontend shared: `src/basic/{RequestService,Constants}.ts`
 - Dashboard: `src/dashboard/views/OrchestraView.vue`, `src/dashboard/icons/toolIcons.ts`
+
+---
+
+## Commit rules
+
+- **No Chinese** in any committed file — source code, comments, strings, or docs. Chinese is only
+  allowed in gitignored local files (e.g. `DESIGN.md`, local notes). Before committing, scan changed
+  files for Chinese characters and remove or translate to English.
+- **No secrets** — no API keys, tokens, passwords, or personal info in committed code. Use environment
+  variables or gitignored config files.
+- **No hardcoded network addresses** — no IPs, domains, or ports baked into code. Inject via env vars
+  or runtime config. Exception: `127.0.0.1:50001` in `Constants.ts` (local dev default only).
+- **Persist new packages** — after `pip install <pkg>`, add `<pkg>==<version>` to `requirements.txt`.

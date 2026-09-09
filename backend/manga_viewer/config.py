@@ -2,7 +2,7 @@
 Manga Viewer Configuration
 
 Tool-specific configuration file for manga viewer module.
-All user settings are managed through manga_viewer_settings.json
+All user settings are managed through settings.json
 """
 from . import settings_manager
 

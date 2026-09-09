@@ -19,7 +19,7 @@ const BRIDGE_CAPABILITIES = [
 // (fetch counts as activity), reducing the window Chrome can suspend us in.
 // Alarm fallback below still catches the case when the worker is fully
 // evicted despite this.
-const POLL_INTERVAL_MS = 200;
+const POLL_INTERVAL_MS = 2000;
 
 async function executeCommand(cmd) {
   try {

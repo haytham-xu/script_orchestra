@@ -10,7 +10,7 @@ class SettingsManager:
             # Default settings file location
             self.settings_file = os.path.join(
                 os.path.dirname(__file__),
-                'manga_viewer_settings.json'
+                'settings.json'
             )
         else:
             self.settings_file = settings_file

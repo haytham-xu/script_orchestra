@@ -2,7 +2,7 @@
 Photo Classifier Configuration
 
 Independent configuration file for photo classifier module.
-All user settings are managed through user_settings.json
+All user settings are managed through settings.json
 """
 from . import settings_manager
 

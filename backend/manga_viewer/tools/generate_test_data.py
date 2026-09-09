@@ -32,7 +32,7 @@ TEST_ROOT = os.path.join(MODULE_DIR, "test", "test_data")
 # root_path for the viewer = the category tree root
 ROOT = os.path.join(TEST_ROOT, "library")
 DELETE_DIR = os.path.join(TEST_ROOT, "to_del")
-SETTINGS_FILE = os.path.join(MODULE_DIR, "manga_viewer_settings.json")
+SETTINGS_FILE = os.path.join(MODULE_DIR, "settings.json")
 
 HOST_URL = "http://127.0.0.1:50001"
 TOTAL_IN_TREE = 16        # manga inside the category tree

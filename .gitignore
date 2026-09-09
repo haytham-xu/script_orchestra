@@ -9,48 +9,45 @@ venv
 /.claude
 buffer/
 
-# Unzip local password config
-backend/unzip/config_local.py
-backend/file_git/repos.json
-backend/file_git/settings.json
-backend/photo_classifier/user_settings.json
-backend/photo_classifier/.thumbnail_cache
-backend/duplicate_finder/delete/
-backend/duplicate_finder/settings.json
-backend/manga_classifier/settings.json
+# All per-tool runtime settings (convention: every tool uses settings.json)
+backend/**/settings.json
 
 # File-Git runtime storage (mock cloud in dev, playwright test snapshots)
+backend/file_git/repos.json
+backend/file_git/default_settings.json
 backend/file_git/mock_cloud_storage/
 .playwright-mcp/
 
-# Browser Agent runtime storage (settings + SQLite download queue)
-backend/browser_agent/settings.json
-backend/browser_agent/*.db
-# Captcha template cache (built up over time from Captcha Trainer labels).
+# Photo Classifier runtime storage
+backend/photo_classifier/.thumbnail_cache
+
+# Duplicate Finder runtime storage
+backend/duplicate_finder/delete/
+
+# Browser Agent runtime storage
 backend/browser_agent/captcha_templates/
 
 # Assistant runtime storage
-backend/assistant/settings.json
-backend/assistant/*.db
 backend/assistant/media/
-
-# Internal design docs, not tracked
-backend/file_git/REQUIREMENTS.md
-backend/file_git/USAGE.md
-backend/file_git/BAIDU_TESTING.md
 
 # Roadmap user data
 backend/roadmap/tasks.json
-backend/roadmap/*.db
-backend/roadmap/*.db.backup_*
 backend/roadmap/tasks.json.backup_*
 backend/roadmap/tasks.json.broken
 backend/roadmap/tasks_backup.json
 backend/roadmap/tasks_recovered.json
-backend/file_git/default_settings.json
 
-# Manga Viewer settings (generated at runtime)
-backend/manga_viewer/manga_viewer_settings.json
+# All SQLite databases (runtime data, never committed)
+**/*.db
+**/*.db.backup_*
+
+# Knowledge Vault backups
+backend/knowledge_vault/.backups/
+
+# Dashboard runtime data
+backend/dashboard/tool_meta.json
+backend/dashboard/layout.json
+
 /log
 cypress_test_data
 
@@ -60,25 +57,10 @@ cypress_test_data
 # Caffeinate diagnostic log
 backend/caffeinate/caffeinate.log*
 
-# Memory Curve runtime storage
-backend/memory_curve/settings.json
-backend/memory_curve/*.db
-
-# Knowledge Vault runtime storage
-backend/knowledge_vault/settings.json
-backend/knowledge_vault/*.db
-backend/knowledge_vault/.backups/
-backend/dashboard/layout.json
-
-# Translator runtime storage
-backend/translator/settings.json
-backend/translator/*.db
-
-# Proxy Forward runtime storage
-backend/proxy_forward/settings.json
-
-# Relay Proxy runtime storage
-backend/relay_proxy/settings.json
+# Internal design docs, not tracked
+backend/file_git/REQUIREMENTS.md
+backend/file_git/USAGE.md
+backend/file_git/BAIDU_TESTING.md
 
 # Chinese-language design/handoff docs (process artifacts, keep local only)
 backend/translator/DESIGN.md

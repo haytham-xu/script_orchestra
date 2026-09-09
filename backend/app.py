@@ -1,9 +1,17 @@
 import os
+import logging
 
 from flask import Flask
 from flask_cors import CORS
 from extensions import restx_api
 import time
+
+
+class _SuppressPolling(logging.Filter):
+    def filter(self, record):
+        return "GET /browser-agent/agent/commands" not in record.getMessage()
+
+logging.getLogger("werkzeug").addFilter(_SuppressPolling())
 
 import manga_classifier.config_controller
 import manga_classifier.folder_controller

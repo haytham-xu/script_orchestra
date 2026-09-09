@@ -29,7 +29,7 @@ HERE = Path(__file__).resolve().parent
 BACKEND_DIR = HERE.parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-SETTINGS_FILE = HERE.parent / "manga_viewer_settings.json"
+SETTINGS_FILE = HERE.parent / "settings.json"
 
 
 def load_settings():
