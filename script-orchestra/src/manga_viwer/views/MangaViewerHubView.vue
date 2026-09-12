@@ -157,6 +157,19 @@ const tools = [
       <path d="M35 35l6 6M41 35l-6 6" stroke="#7c3aed" stroke-width="3" stroke-linecap="round"/>
     </svg>`,
   },
+  {
+    key: 'series-grouper',
+    name: 'Series Grouper',
+    desc: 'Group multi-volume series into one folder',
+    path: '/manga-viewer/series-grouper',
+    icon: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0ea5e9"/>
+      <rect x="10" y="22" width="14" height="18" rx="3" fill="#bae6fd"/>
+      <rect x="25" y="18" width="14" height="22" rx="3" fill="#7dd3fc"/>
+      <rect x="40" y="14" width="14" height="26" rx="3" fill="#fff"/>
+      <path d="M17 44l10 6 10-6 10 6" stroke="#0ea5e9" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>`,
+  },
 ]
 </script>
 

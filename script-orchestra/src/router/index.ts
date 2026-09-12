@@ -17,6 +17,7 @@ import MangaViewerHubView from '@/manga_viwer/views/MangaViewerHubView.vue'
 import MangaImportView from '@/manga_viwer/views/MangaImportView.vue'
 import ReadQueueView from '@/manga_viwer/views/ReadQueueView.vue'
 import SnoozeQueueView from '@/manga_viwer/views/SnoozeQueueView.vue'
+import SeriesGrouperView from '@/manga_viwer/views/SeriesGrouperView.vue'
 import RoadmapView from '@/roadmap/views/RoadmapView.vue'
 import PdfConverterView from '@/pdf_converter/views/PdfConverterView.vue'
 import UnzipView from '@/unzip/views/UnzipView.vue'
@@ -134,6 +135,11 @@ const router = createRouter({
       path: '/manga-viewer/snooze-queue',
       name: 'manga-viewer-snooze-queue',
       component: SnoozeQueueView
+    },
+    {
+      path: '/manga-viewer/series-grouper',
+      name: 'manga-viewer-series-grouper',
+      component: SeriesGrouperView
     },
     {
       path: '/roadmap',

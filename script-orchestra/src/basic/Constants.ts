@@ -11,6 +11,7 @@ export const MANGA_VIEWER_INDEX_ENDPOINT = '/manga-viewer/index'
 export const MANGA_VIEWER_FOLDER_SCAN_ENDPINT = '/manga-viewer/files-url-list'
 export const MANGA_VIEWER_UPDATE_ENDPOINT = '/manga-viewer/folders'
 export const MANGA_VIEWER_SETTINGS_ENDPOINT = '/manga-viewer/settings'
+export const MANGA_SERIES_GROUPER_ENDPOINT = '/manga-viewer/series-grouper'
 
 export const PDF_CONVERTER_ENDPOINT_PDF_TO_IMAGES = '/pdf-converter/pdf-to-images'
 export const PDF_CONVERTER_ENDPOINT_IMAGES_TO_PDF = '/pdf-converter/images-to-pdf'

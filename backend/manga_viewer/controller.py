@@ -834,4 +834,67 @@ class SnoozeQueueCleanupResource(Resource):
         return {"deleted": deleted}, 200
 
 
+
+# ---------------------------------------------------------------------------
+# Series Grouper endpoints
+# ---------------------------------------------------------------------------
+from manga_viewer import series_grouper as _sg
+
+
+@api.route("/manga-viewer/series-grouper/scan")
+class SeriesGrouperScanResource(Resource):
+    def post(self):
+        """Scan paths and return proposed series groups."""
+        body = request.get_json(force=True) or {}
+        scan_paths = body.get("scan_paths", [])
+        if not scan_paths:
+            return {"error": "scan_paths is required"}, 400
+        try:
+            groups = _sg.scan_and_group(scan_paths)
+            return {
+                "groups": [
+                    {
+                        "key": g.key,
+                        "display_name": g.display_name,
+                        "folders": g.folders,
+                    }
+                    for g in groups
+                ]
+            }, 200
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+
+@api.route("/manga-viewer/series-grouper/execute")
+class SeriesGrouperExecuteResource(Resource):
+    def post(self):
+        """Move folders into grouped subdirs under output_path."""
+        body = request.get_json(force=True) or {}
+        output_path = body.get("output_path", "").strip()
+        groups = body.get("groups", [])
+        if not output_path:
+            return {"error": "output_path is required"}, 400
+        if not groups:
+            return {"error": "groups is required"}, 400
+        try:
+            result = _sg.execute_grouping(groups, output_path)
+            return result, 200
+        except Exception as e:
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+
+@api.route("/manga-viewer/series-grouper/settings")
+class SeriesGrouperSettingsResource(Resource):
+    def get(self):
+        s = settings_manager.get_setting("series_grouper", {})
+        return s or {}, 200
+
+    def put(self):
+        body = request.get_json(force=True) or {}
+        settings_manager.update_settings({"series_grouper": body})
+        return settings_manager.get_setting("series_grouper", {}), 200
+
+
 restx_api.add_namespace(api)
