@@ -15,10 +15,12 @@ Normalisation pipeline (applied before grouping):
 
 import os
 import re
+import shutil
 import unicodedata
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
+from natsort import natsorted
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +139,7 @@ def scan_and_group(
         # Pick display_name: shortest raw name (usually the series title without episode)
         raws = raw_names[key]
         display = min(raws, key=len)
-        groups.append(SeriesGroup(key=key, display_name=display, folders=sorted(paths)))
+        groups.append(SeriesGroup(key=key, display_name=display, folders=natsorted(paths)))
 
     # Sort groups by display_name for stable UI ordering
     groups.sort(key=lambda g: g.display_name.lower())
@@ -189,7 +191,7 @@ def execute_grouping(
                 continue
             try:
                 if not dry_run:
-                    src.rename(dest)
+                    shutil.move(str(src), str(dest))
                 moved += 1
             except Exception as e:
                 errors.append(f"Failed to move {src_str} → {dest}: {e}")
