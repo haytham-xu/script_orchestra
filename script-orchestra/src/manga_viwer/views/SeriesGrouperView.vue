@@ -1,62 +1,24 @@
 <template>
   <div class="sg-root">
     <div class="sg-header">
-      <el-button type="default" size="small" @click="$router.push('/manga-viewer/hub')">← Back</el-button>
+      <el-button type="default" size="small" @click="$router.push('/manga-viewer/batch')">← Back</el-button>
       <h2 class="sg-title">Series Grouper</h2>
+      <el-button type="default" size="small" @click="goSettings">⚙️ Settings</el-button>
     </div>
 
-    <!-- Settings card -->
-    <el-card class="sg-card">
-      <template #header>
-        <div class="sg-card-header">
-          <span>⚙️ Settings</span>
-          <el-button
-            type="primary"
-            size="small"
-            :loading="savingSettings"
-            @click="saveSettings"
-          >Save</el-button>
-        </div>
-      </template>
-
-      <el-form label-width="130px">
-        <el-form-item label="Scan Paths">
-          <div class="sg-path-list">
-            <div
-              v-for="(_, i) in settings.scan_paths"
-              :key="'sp-' + i"
-              class="sg-path-row"
-            >
-              <el-input
-                v-model="settings.scan_paths[i]"
-                placeholder="/path/to/scan"
-                @input="settingsDirty = true"
-              />
-              <el-button
-                type="danger"
-                size="small"
-                plain
-                @click="removeScanPath(i)"
-              >✕</el-button>
-            </div>
-            <el-button size="small" @click="addScanPath">+ Add Path</el-button>
-          </div>
-          <div class="sg-hint">Each path is scanned one level deep (immediate subdirectories only).</div>
-        </el-form-item>
-
-        <el-form-item label="Output Path">
-          <el-input
-            v-model="settings.output_path"
-            placeholder="/path/to/output"
-            @input="settingsDirty = true"
-          />
-          <div class="sg-hint">Series folders are created here. Each series gets its own subfolder.</div>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <!-- Scan action -->
-    <div class="sg-actions">
+    <!-- Scan paths summary + action bar -->
+    <div class="sg-toolbar">
+      <div class="sg-paths-preview" v-if="settings.scan_paths.filter(p => p.trim()).length">
+        <span class="sg-paths-label">Scanning:</span>
+        <span
+          v-for="p in settings.scan_paths.filter(p => p.trim())"
+          :key="p"
+          class="sg-path-chip"
+        >{{ p }}</span>
+      </div>
+      <div class="sg-paths-preview sg-paths-empty" v-else>
+        No scan paths configured — <el-button type="primary" link @click="goSettings">open Settings</el-button>
+      </div>
       <el-button
         type="primary"
         :loading="scanning"
@@ -103,27 +65,19 @@
               </div>
               <div class="sg-target-row">
                 <span class="sg-target-label">Target folder name:</span>
-                <el-input
-                  v-model="g.target_name"
-                  size="small"
-                  class="sg-target-input"
-                />
+                <el-input v-model="g.target_name" size="small" class="sg-target-input" />
               </div>
             </div>
           </div>
           <div class="sg-folder-list">
-            <div
-              v-for="f in g.folders"
-              :key="f"
-              class="sg-folder-item"
-            >{{ f }}</div>
+            <div v-for="f in g.folders" :key="f" class="sg-folder-item">{{ f }}</div>
           </div>
         </div>
       </div>
     </el-card>
 
     <div v-else-if="!scanning" class="sg-empty">
-      Configure scan paths above and press <strong>Scan</strong> to find series groups.
+      Configure scan paths in <el-button type="primary" link @click="goSettings">Settings</el-button>, then press <strong>Scan</strong>.
     </div>
   </div>
 </template>
@@ -135,29 +89,27 @@ export default SeriesGrouperLogic
 
 <style scoped>
 .sg-root { min-height: 100vh; padding: 28px 32px; box-sizing: border-box; }
-.sg-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-.sg-title { margin: 0; font-size: 22px; font-weight: 600; }
+.sg-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.sg-title { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
+
+.sg-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.sg-paths-preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; }
+.sg-paths-label { font-size: 13px; color: #606266; white-space: nowrap; }
+.sg-path-chip {
+  font-size: 12px; color: #409eff; background: #ecf5ff;
+  padding: 2px 8px; border-radius: 10px; font-family: monospace; word-break: break-all;
+}
+.sg-paths-empty { font-size: 13px; color: #909399; }
+.sg-summary { font-size: 14px; color: #606266; white-space: nowrap; }
 
 .sg-card { margin-bottom: 20px; }
 .sg-card-header { display: flex; align-items: center; justify-content: space-between; }
 .sg-header-right { display: flex; gap: 8px; align-items: center; }
 
-.sg-hint { font-size: 12px; color: #909399; margin-top: 4px; }
-
-.sg-path-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.sg-path-row { display: flex; gap: 8px; align-items: center; }
-.sg-path-row .el-input { flex: 1; }
-
-.sg-actions { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
-.sg-summary { font-size: 14px; color: #606266; }
-
 .sg-group-list { display: flex; flex-direction: column; gap: 12px; }
 .sg-group {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 12px 16px;
-  background: #fafafa;
-  transition: opacity 0.2s;
+  border: 1px solid #e4e7ed; border-radius: 8px;
+  padding: 12px 16px; background: #fafafa; transition: opacity 0.2s;
 }
 .sg-group--deselected { opacity: 0.45; }
 .sg-group-top { display: flex; align-items: flex-start; gap: 12px; }
@@ -169,9 +121,9 @@ export default SeriesGrouperLogic
 .sg-target-row { display: flex; align-items: center; gap: 8px; }
 .sg-target-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .sg-target-input { width: 360px; }
-
 .sg-folder-list { margin-top: 10px; padding-left: 36px; display: flex; flex-direction: column; gap: 2px; }
 .sg-folder-item { font-size: 12px; color: #606266; font-family: monospace; word-break: break-all; }
 
 .sg-empty { text-align: center; color: #909399; font-size: 14px; padding: 48px 0; }
 </style>
+
