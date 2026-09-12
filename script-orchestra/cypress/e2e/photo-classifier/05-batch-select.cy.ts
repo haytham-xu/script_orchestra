@@ -13,7 +13,7 @@
  */
 
 describe('PhotoClassifier - Batch Select Operations', () => {
-  const TEST_DATA_ROOT = '/Users/I353667/Documents/code/github/script_orchestra/backend/cypress_test_data/photo_classifier'
+  const TEST_DATA_ROOT = Cypress.env('PHOTO_CLASSIFIER_TEST_ROOT') || '../backend/photo_classifier/tests/e2e/test_runtime'
 
   before(() => {
     // Enable test mode (saves snapshot and sets test config)

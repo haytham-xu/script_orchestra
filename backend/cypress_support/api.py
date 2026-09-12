@@ -24,7 +24,7 @@ cypress_api = Blueprint('cypress_api', __name__, url_prefix='/api/cypress')
 
 # Base test directory
 BACKEND_DIR = Path(__file__).parent.parent
-TEST_BASE_DIR = BACKEND_DIR / "cypress_test_data" / "photo_classifier"
+TEST_BASE_DIR = BACKEND_DIR / "photo_classifier" / "tests" / "e2e" / "test_runtime"
 
 
 @cypress_api.route('/health', methods=['GET'])
@@ -361,7 +361,7 @@ def cleanup_test_data():
     test_name = data.get('test_name')
 
     try:
-        path_cleaned = None  # 初始化变量
+        path_cleaned = None
 
         if test_name:
             test_dir = TEST_BASE_DIR / test_name
