@@ -115,6 +115,19 @@
           <el-button type="danger" size="small" @click="removeSubCategory(index)">Remove</el-button>
         </div>
         <el-button type="primary" size="small" @click="addSubCategory">+ Add Sub Category</el-button>
+
+        <div class="bulk-import-row">
+          <el-input
+            v-model="subBulkImportPath"
+            placeholder="/path/to/parent — adds all its subfolders as sub categories"
+            style="flex: 1"
+            @keyup.enter="bulkImportSubCategories"
+          />
+          <el-button type="primary" size="small" :loading="subBulkImporting" @click="bulkImportSubCategories">
+            Import Subfolders
+          </el-button>
+        </div>
+        <span class="form-hint" style="margin-left:0">Scans the path one level deep; each subfolder becomes a sub category entry (key and path = folder name, duplicates skipped). Hit Save after importing.</span>
       </el-card>
 
       <!-- Display Settings -->
@@ -252,5 +265,13 @@ h4 {
 .refresh-progress {
   color: #E6A23C;
   font-size: 13px;
+}
+
+.bulk-import-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  width: 100%;
 }
 </style>

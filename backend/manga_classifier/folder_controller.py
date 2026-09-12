@@ -61,7 +61,13 @@ class FolderResource(Resource):
             os.makedirs(target_folder_path)
         source_basename = os.path.basename(source_folder_path.rstrip("/\\"))
         final_path = os.path.join(target_folder_path, source_basename)
-        shutil.move(source_folder_path, target_folder_path)
+        if os.path.exists(final_path):
+            base = source_basename
+            counter = 2
+            while os.path.exists(final_path):
+                final_path = os.path.join(target_folder_path, f"{base}_{counter}")
+                counter += 1
+        shutil.move(source_folder_path, final_path)
         _record_operation(source_folder_path, final_path)
         return {"message": "Accepted, processing started"}, 202
 
@@ -86,7 +92,13 @@ class DeleteFolderResource(Resource):
             os.makedirs(delete_root)
         source_basename = os.path.basename(source_folder_path.rstrip("/\\"))
         final_path = os.path.join(delete_root, source_basename)
-        shutil.move(source_folder_path, delete_root)
+        if os.path.exists(final_path):
+            base = source_basename
+            counter = 2
+            while os.path.exists(final_path):
+                final_path = os.path.join(delete_root, f"{base}_{counter}")
+                counter += 1
+        shutil.move(source_folder_path, final_path)
         _record_operation(source_folder_path, final_path)
         return {"message": "Accepted, processing started"}, 202
 

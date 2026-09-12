@@ -21,6 +21,19 @@
           <div class="sgs-hint">Each path is scanned <strong>one level deep</strong> — only immediate subdirectories are collected as candidate folders.</div>
         </el-form-item>
 
+        <el-form-item label="Bulk Import">
+          <div class="sgs-bulk-row">
+            <el-input
+              v-model="bulkImportPath"
+              placeholder="/path/to/parent — adds all its subfolders"
+              style="flex: 1"
+              @keyup.enter="bulkImport"
+            />
+            <el-button type="primary" :loading="bulkImporting" @click="bulkImport">Import Subfolders</el-button>
+          </div>
+          <div class="sgs-hint">Scans the path one level deep and adds every subfolder to the list above (duplicates skipped).</div>
+        </el-form-item>
+
         <el-form-item label="Output Path">
           <el-input v-model="settings.output_path" placeholder="/path/to/output" style="width: 500px" />
           <div class="sgs-hint">Grouped series are moved here. Each series gets its own subfolder: <code>output_path/&lt;series name&gt;/&lt;volume folders&gt;</code>.</div>
@@ -151,6 +164,7 @@ export default SeriesGrouperSettingsLogic
 .sgs-path-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .sgs-path-row { display: flex; gap: 8px; align-items: center; }
 .sgs-path-row .el-input { flex: 1; }
+.sgs-bulk-row { display: flex; gap: 8px; align-items: center; width: 100%; }
 .sgs-hint { font-size: 12px; color: #909399; margin-top: 6px; line-height: 1.6; }
 
 .sgs-intro { font-size: 13px; color: #606266; line-height: 1.7; margin: 0 0 16px; }

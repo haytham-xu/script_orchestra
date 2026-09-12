@@ -6,17 +6,9 @@
       <el-button type="default" size="small" @click="goSettings">⚙️ Settings</el-button>
     </div>
 
-    <!-- Scan paths summary + action bar -->
+    <!-- Action bar -->
     <div class="sg-toolbar">
-      <div class="sg-paths-preview" v-if="settings.scan_paths.filter(p => p.trim()).length">
-        <span class="sg-paths-label">Scanning:</span>
-        <span
-          v-for="p in settings.scan_paths.filter(p => p.trim())"
-          :key="p"
-          class="sg-path-chip"
-        >{{ p }}</span>
-      </div>
-      <div class="sg-paths-preview sg-paths-empty" v-else>
+      <div class="sg-paths-empty" v-if="!settings.scan_paths.filter(p => p.trim()).length">
         No scan paths configured — <el-button type="primary" link @click="goSettings">open Settings</el-button>
       </div>
       <el-button
@@ -132,13 +124,7 @@ export default SeriesGrouperLogic
 .sg-title { margin: 0; font-size: 22px; font-weight: 600; flex: 1; }
 
 .sg-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
-.sg-paths-preview { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; }
-.sg-paths-label { font-size: 13px; color: #606266; white-space: nowrap; }
-.sg-path-chip {
-  font-size: 12px; color: #409eff; background: #ecf5ff;
-  padding: 2px 8px; border-radius: 10px; font-family: monospace; word-break: break-all;
-}
-.sg-paths-empty { font-size: 13px; color: #909399; }
+.sg-paths-empty { font-size: 13px; color: #909399; flex: 1; }
 .sg-summary { font-size: 14px; color: #606266; white-space: nowrap; }
 
 .sg-card { margin-bottom: 20px; }

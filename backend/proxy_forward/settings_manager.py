@@ -7,6 +7,13 @@ from typing import Any, Dict
 
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'settings.json')
 
+DEFAULT_SETTINGS: Dict[str, Any] = {
+    'listen_host': '127.0.0.1',
+    'listen_port': 8080,
+    'target_host': '127.0.0.1',
+    'target_port': 8081,
+}
+
 
 def _normalize_port(value: Any, field: str) -> int:
     try:
@@ -36,7 +43,8 @@ def validate_and_normalize(settings: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_settings() -> Dict[str, Any]:
     if not os.path.exists(SETTINGS_FILE):
-        raise ValueError('proxy_forward settings.json not found')
+        save_settings(DEFAULT_SETTINGS)
+        return dict(DEFAULT_SETTINGS)
     with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
         data = json.load(f) or {}
     normalized = validate_and_normalize(data)

@@ -22,6 +22,8 @@ export default defineComponent({
     const whitelist = ref<WhitelistEntry[]>([])
     const saving = ref(false)
     const scanning = ref(false)
+    const bulkImportPath = ref('')
+    const bulkImporting = ref(false)
 
     async function load() {
       try {
@@ -52,6 +54,30 @@ export default defineComponent({
         ElMessage.error(e.message || 'Failed to save')
       } finally {
         saving.value = false
+      }
+    }
+
+    async function bulkImport() {
+      const root = bulkImportPath.value.trim()
+      if (!root) return
+      bulkImporting.value = true
+      try {
+        const r = await postRequest<{ subdirs: string[] }>(
+          `${MANGA_SERIES_GROUPER_ENDPOINT}/list-subdirs`, {}, { path: root },
+        )
+        const existing = new Set(settings.value.scan_paths.map((p) => p.trim()).filter(Boolean))
+        const added = (r.subdirs || []).filter((d) => !existing.has(d))
+        if (!added.length) {
+          ElMessage.info('No new subdirectories found (all already in list)')
+          return
+        }
+        settings.value.scan_paths = [...settings.value.scan_paths.filter((p) => p.trim()), ...added]
+        bulkImportPath.value = ''
+        ElMessage.success(`Added ${added.length} path(s)`)
+      } catch (e: any) {
+        ElMessage.error(e.message || 'Failed to list subdirectories')
+      } finally {
+        bulkImporting.value = false
       }
     }
 
@@ -91,7 +117,8 @@ export default defineComponent({
 
     return {
       settings, whitelist, saving, scanning,
-      save, addPath, removePath,
+      bulkImportPath, bulkImporting,
+      save, addPath, removePath, bulkImport,
       removeWhitelistEntry, scanWhitelist,
       goBack: () => router.push('/manga-viewer/series-grouper'),
     }

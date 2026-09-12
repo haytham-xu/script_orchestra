@@ -971,4 +971,25 @@ class SeriesGrouperWhitelistItemResource(Resource):
         return {"whitelist": wl}, 200
 
 
+@api.route("/manga-viewer/series-grouper/list-subdirs")
+class SeriesGrouperListSubdirsResource(Resource):
+    def post(self):
+        """Return immediate subdirectories of a given path for bulk scan-path import."""
+        body = request.get_json(force=True) or {}
+        root = (body.get("path") or "").strip()
+        if not root:
+            return {"error": "path is required"}, 400
+        if not os.path.isdir(root):
+            return {"error": f"Not a directory: {root}"}, 400
+        try:
+            subdirs = sorted(
+                os.path.join(root, name)
+                for name in os.listdir(root)
+                if os.path.isdir(os.path.join(root, name))
+            )
+            return {"subdirs": subdirs}, 200
+        except OSError as e:
+            return {"error": str(e)}, 500
+
+
 restx_api.add_namespace(api)

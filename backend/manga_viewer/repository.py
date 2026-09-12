@@ -75,7 +75,13 @@ class Repository:
         """Load index from disk. Caches by file mtime — subsequent calls with
         an unchanged file skip the re-parse, so hot endpoints like /index and
         /index/random no longer re-decode ~100MB of JSON on every request."""
-        index_path = Repository.get_index_path()
+        try:
+            index_path = Repository.get_index_path()
+        except ValueError:
+            if Repository.manga_index is None:
+                Repository.manga_index = MangaIndex()
+                Repository._index_mtime = 0
+            return
         try:
             mtime = os.path.getmtime(index_path)
         except OSError:

@@ -202,8 +202,11 @@ def execute_grouping(
                 continue
             dest = dest_dir / src.name
             if dest.exists():
-                errors.append(f"Destination already exists, skipping: {dest}")
-                continue
+                base = src.name
+                counter = 2
+                while dest.exists():
+                    dest = dest_dir / f"{base}_{counter}"
+                    counter += 1
             try:
                 if not dry_run:
                     shutil.move(str(src), str(dest))

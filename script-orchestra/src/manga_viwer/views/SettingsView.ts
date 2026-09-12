@@ -3,6 +3,8 @@ import { useRouter } from 'vue-router'
 import { fetchSettings, updateSettings, refreshIndex, fetchRefreshStatus, fetchStats, cleanEmptyFolders } from '@/manga_viwer/service/Service'
 import type { MangaViewerSettings, CategoryOption } from '../service/Model'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
+import { postRequest } from '@/basic/RequestService'
+import { MANGA_SERIES_GROUPER_ENDPOINT } from '@/basic/Constants'
 
 export default defineComponent({
   name: 'SettingsView',
@@ -13,6 +15,8 @@ export default defineComponent({
     const refreshLoading = ref(false)
     const refreshProgress = ref('')
     let pollTimer: number | null = null
+    const subBulkImportPath = ref('')
+    const subBulkImporting = ref(false)
 
     const totalSizeHuman = computed(() => {
       if (!stats.value) return '-'
@@ -146,6 +150,33 @@ export default defineComponent({
       settings.value.categories.sub.splice(index, 1)
     }
 
+    async function bulkImportSubCategories() {
+      const root = subBulkImportPath.value.trim()
+      if (!root || !settings.value) return
+      subBulkImporting.value = true
+      try {
+        const r = await postRequest<{ subdirs: string[] }>(
+          `${MANGA_SERIES_GROUPER_ENDPOINT}/list-subdirs`, {}, { path: root },
+        )
+        const existing = new Set(settings.value.categories.sub.map((c) => c.path.trim()).filter(Boolean))
+        const added: CategoryOption[] = (r.subdirs || [])
+          .map((d) => d.replace(/\\/g, '/').split('/').pop() || '')
+          .filter((name) => name && !existing.has(name))
+          .map((name) => ({ key: name, name: '', path: name }))
+        if (!added.length) {
+          ElMessage.info('No new subfolders found (all already in list)')
+          return
+        }
+        settings.value.categories.sub.push(...added)
+        subBulkImportPath.value = ''
+        ElMessage.success(`Added ${added.length} sub category entry(ies)`)
+      } catch (e: any) {
+        ElMessage.error(e.message || 'Failed to list subdirectories')
+      } finally {
+        subBulkImporting.value = false
+      }
+    }
+
     function addIgnoreScanFolder() {
       if (!settings.value) return
       settings.value.paths.ignore_scan_folders.push('')
@@ -171,6 +202,8 @@ export default defineComponent({
       totalSizeHuman,
       refreshLoading,
       refreshProgress,
+      subBulkImportPath,
+      subBulkImporting,
       goBack,
       handleSave,
       handleRefreshIndex,
@@ -179,6 +212,7 @@ export default defineComponent({
       removeMainCategory,
       addSubCategory,
       removeSubCategory,
+      bulkImportSubCategories,
       addIgnoreScanFolder,
       removeIgnoreScanFolder,
     }

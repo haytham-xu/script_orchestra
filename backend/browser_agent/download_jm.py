@@ -50,7 +50,7 @@ _UA_FALLBACK = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 _ALBUM_PATH_RE = re.compile(r"/album/(\d+)(?:/|$)", re.I)
 _ALBUM_DOWNLOAD_HREF_RE = re.compile(r"^/album_download/(\d+)$", re.I)
 _CAPTCHA_WAIT_TIMEOUT = 300     # if user doesn't answer within N seconds, give up
-_MAX_CAPTCHA_ATTEMPTS = 5
+_MAX_CAPTCHA_ATTEMPTS = 10
 
 
 # --------------------------------------------------------------------------
