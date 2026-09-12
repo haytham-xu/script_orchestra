@@ -1,68 +1,21 @@
-# Test runtime data (mock cloud storage, local repo fixtures) for all tools
-**/test_data/
-__pycache__
-config_local.py
-config_local.json
-prompt.md
-*temp*
-venv
-/.claude
-buffer/
 
-# All per-tool runtime settings (convention: every tool uses settings.json)
+# Global
+/.claude
+venv
+__pycache__
+## All SQLite databases (runtime data, never committed)
+**/*.db
+## All per-tool runtime settings (convention: every tool uses settings.json)
 backend/**/settings.json
 
-# File-Git runtime storage (mock cloud in dev, playwright test snapshots)
-backend/file_git/repos.json
-backend/file_git/default_settings.json
-backend/file_git/mock_cloud_storage/
-.playwright-mcp/
 
-# Photo Classifier runtime storage
+# Tool specified
+## Photo Classifier runtime storage
 backend/photo_classifier/.thumbnail_cache
 
-# Duplicate Finder runtime storage
-backend/duplicate_finder/delete/
-
-# Browser Agent runtime storage
-backend/browser_agent/captcha_templates/
+# Test runtime data — generated during test execution, never committed.
+# Convention: always placed under test_runtime/ inside the test directory.
+**/test_runtime/
 
 # Assistant runtime storage
 backend/assistant/media/
-
-# Roadmap user data
-backend/roadmap/tasks.json
-backend/roadmap/tasks.json.backup_*
-backend/roadmap/tasks.json.broken
-backend/roadmap/tasks_backup.json
-backend/roadmap/tasks_recovered.json
-
-# All SQLite databases (runtime data, never committed)
-**/*.db
-**/*.db.backup_*
-
-# Knowledge Vault backups
-backend/knowledge_vault/.backups/
-
-# Dashboard runtime data
-backend/dashboard/tool_meta.json
-backend/dashboard/layout.json
-
-/log
-cypress_test_data
-
-# Cypress Chinese documentation (not tracked)
-**/cypress_test_case_chinese_gitignore.md
-
-# Caffeinate diagnostic log
-backend/caffeinate/caffeinate.log*
-
-# Internal design docs, not tracked
-backend/file_git/REQUIREMENTS.md
-backend/file_git/USAGE.md
-backend/file_git/BAIDU_TESTING.md
-
-# Chinese-language design/handoff docs (process artifacts, keep local only)
-backend/translator/DESIGN.md
-backend/dashboard/DESIGN.md
-backend/knowledge_vault/REMAINING_WORK.md

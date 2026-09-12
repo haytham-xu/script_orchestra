@@ -32,8 +32,9 @@ Build frontend: `npm run build`. Tests: `npm run test:e2e` (Cypress), `npm run t
   `websocket_service` (`fg_websocket`, `cs_websocket`, `cf_websocket`, `ba_websocket`, `wake_ws`, ...).
   Wiring lives in an `if socketio:` block in `app.py`. Do not create a second socketio.
 - **DBs** init at startup: `<tool>_repo.init_db()` (browser_agent, memory_curve, knowledge_vault).
-- **Config**: `backend/config.py` holds defaults and does `from config_local import *` to override
-  with a gitignored `config_local.py`.
+- **Config**: Per-tool runtime config lives in each tool's `settings.json` (gitignored).
+  Global constants (`HOST_URL`, temp paths) are inlined as module-level constants where needed,
+  using `os.environ.get('HOST_URL', 'http://127.0.0.1:50001')` for overridability.
 
 ### Standard per-module layout
 Newest modules (`memory_curve`, `knowledge_vault`) are the cleanest templates. A module = `backend/<tool>/`:
@@ -105,29 +106,23 @@ Example below uses `my-tool` / `my_tool`.
 
 ---
 
-## knowledge_vault (focus of recent work) — reference
+## knowledge_vault — reference
 
-AI-organized personal knowledge store. **Two layers**: raw fragments are the append-only source of truth
-(user-only edits/deletes; AI never mutates them); the "knowledge network" (nodes + edges) is **derived and fully rebuildable**.
+Personal knowledge store: capture fragments, semantic search, duplicate detection.
 
 - Backend `backend/knowledge_vault/`, prefix `/knowledge-vault`:
   - `controller.py`: `/fragments` CRUD, `/fragments/batch-chat` (stateless conversational import → `{reply, fragments[], suggested_labels[]}`),
-    `/fragments/batch` (commit), `/labels`, `/query` (pure vector recall, no token cost),
-    `/query/ai` (recall + Claude answer), `POST /build` (async 202) + `GET /build/status` (polled),
-    `/nodes`, `/edges`, `/lifecycle/stale`, `/backups`, `/settings`.
+    `/fragments/batch` (commit), `/labels`, `/query` (vector recall, no token cost),
+    `/query/ai` (recall + Claude answer), `/duplicates` (similarity pairs), `/duplicates/resolve`, `/settings`.
   - `ai_client.py`: calls the **Claude CLI directly** —
     `subprocess.run(["claude","--print","--model",MODEL, prompt], stdin=DEVNULL, timeout=...)`.
-    No API key; uses the locally logged-in CLI. Model is user-configured in Settings
-    (`ai_model`, or env `KV_MODEL`) — no baked-in default.
+    No API key; uses the locally logged-in CLI. Model is user-configured in Settings (`ai_model`).
     `ask_text()` / `ask_json()` (extracts first balanced `{...}`, tolerates fences/prose).
-  - `builder.py`: re-embed → vector-dedup (union-find, ≥0.97 auto-group) → materialize nodes →
-    **batched** AI enrich titles/summaries (budget capped by `KV_AI_BUDGET`, `KV_CLASSIFY_BATCH` to stay fast/non-hanging) →
-    relate into edges by similarity → recompute freshness. `get_status()`.
-  - `embedder.py`: lazy `sentence-transformers` (embed model user-configured in Settings, L2-norm, HF offline after first cache).
-  - `vector_store.py`: `VectorStore` iface + `SqliteVectorStore` (in-memory cosine).
-  - `repository.py` SQLite tables: `raw_fragment, node, edge, fragment_vector, label, fragment_label`.
-- Frontend `src/knowledge_vault/`: `views/KnowledgeVaultView.{vue,ts}` (tabs: capture | search | network | settings;
-  `vis-network` graph), `service/{KnowledgeVaultService,Model}.ts`.
+  - `query_service.py`: lazy `sentence-transformers` embed (model from `embed_model` setting),
+    in-memory cosine search over `fragment_vector` table, duplicate-pair detection.
+  - `repository.py` SQLite tables: `raw_fragment, fragment_vector, label, fragment_label`.
+- Frontend `src/knowledge_vault/`: `views/KnowledgeVaultView.{vue,ts}` (tabs: capture | search | settings),
+  `service/{KnowledgeVaultService,Model}.ts`.
 
 ---
 
@@ -140,6 +135,21 @@ AI-organized personal knowledge store. **Two layers**: raw fragments are the app
   `app.py` warns on unrestored config snapshots at startup.
 - **Unit**: Vitest configured but sparse. Backend has ad-hoc `test_*.py` scripts, no formal pytest suite.
 
+### Cypress test data convention
+
+```
+script-orchestra/cypress/
+  fixtures/<tool>/      ← static fixtures (images, seed files) — committed to git
+  e2e/<tool>/           ← spec files
+  support/
+```
+
+Runtime data (files written/mutated during test execution) goes to `backend/<tool>/tests/e2e/test_runtime/`,
+covered by `**/test_runtime/` in `.gitignore`. Never put runtime-generated content in `cypress/fixtures/`.
+
+Path references in specs must use `Cypress.env('...')` with a relative default — no hardcoded absolute paths.
+Example: `Cypress.env('PHOTO_CLASSIFIER_TEST_ROOT') || '../backend/photo_classifier/tests/e2e/test_runtime'`
+
 ### Backend pytest E2E convention
 
 Each tool that has backend E2E tests follows this layout:
@@ -149,13 +159,18 @@ backend/<tool>/tests/e2e/
   conftest.py         # pytest fixtures (storage mode, remote root)
   helpers.py          # shared HTTP helpers, mock cloud helpers
   test_<suite>.py     # test files
-  test_data/          # ← gitignored (**/test_data/); runtime files go here
+  test_runtime/       # ← gitignored (**/test_runtime/); ALL runtime files go here
     mock_cloud/       # MockCloudStorage root (auto-created by conftest)
 ```
 
 Rules:
-- **test_data/ is gitignored** via `**/test_data/` in `.gitignore`. Never commit runtime files.
-- Mock cloud root defaults to `tests/e2e/test_data/mock_cloud/` (no env needed).
+- **test_runtime/ is the single convention for all test runtime data** — mock storage roots,
+  temp files, downloaded artifacts, generated fixtures. Never use `test_data/`, `mock_cloud_storage/`,
+  or any other name for runtime-generated content. The rule `**/test_runtime/` in `.gitignore` covers
+  all tools automatically.
+- **Static test fixtures** (checked-in source images, expected outputs, seed data) live directly
+  in `tests/e2e/` or a named subdirectory — NOT inside `test_runtime/`.
+- Mock cloud root defaults to `tests/e2e/test_runtime/mock_cloud/` (no env needed).
   Override with `FILE_GIT_MOCK_ROOT=<path>` env when required.
 - `pytest.ini` `testpaths` lists `backend/<tool>/tests/e2e` (space-separated when multiple tools have tests).
 - `pythonpath` must include both `backend` and `backend/<tool>/tests/e2e` so that
@@ -182,7 +197,7 @@ STEP_PAUSE=1 pytest backend/file_git/tests/e2e/test_plain_real.py -v -s
 Note: `-s` is required for `STEP_PAUSE=1` so that `input()` is not captured by pytest.
 
 ## Key files
-- Backend: `backend/app.py`, `backend/extensions.py`, `backend/config.py`
+- Backend: `backend/app.py`, `backend/extensions.py`
 - Frontend entry/router: `src/main.ts`, `src/router/index.ts`, `vite.config.ts`
 - Frontend shared: `src/basic/{RequestService,Constants}.ts`
 - Dashboard: `src/dashboard/views/OrchestraView.vue`, `src/dashboard/icons/toolIcons.ts`
@@ -191,11 +206,30 @@ Note: `-s` is required for `STEP_PAUSE=1` so that `input()` is not captured by p
 
 ## Commit rules
 
-- **No Chinese** in any committed file — source code, comments, strings, or docs. Chinese is only
-  allowed in gitignored local files (e.g. `DESIGN.md`, local notes). Before committing, scan changed
-  files for Chinese characters and remove or translate to English.
+- **No Chinese** in any committed file — source code, comments, strings, UI text, placeholder examples,
+  or docs. Chinese is only allowed in gitignored local files (e.g. `.claude/chinese_doc/`). Before
+  committing, scan changed files for Chinese characters and remove or translate to English.
 - **No secrets** — no API keys, tokens, passwords, or personal info in committed code. Use environment
   variables or gitignored config files.
 - **No hardcoded network addresses** — no IPs, domains, or ports baked into code. Inject via env vars
   or runtime config. Exception: `127.0.0.1:50001` in `Constants.ts` (local dev default only).
 - **Persist new packages** — after `pip install <pkg>`, add `<pkg>==<version>` to `requirements.txt`.
+- **Do not add new .gitignore entries lightly** — before adding an ignore rule, first consider whether
+  the file should be deleted, moved to `.claude/`, or stored inside its tool's module dir so an existing
+  rule already covers it. A new rule is a last resort, not a first response to an untracked file.
+
+---
+
+## Local-only file conventions (all under `.claude/`, gitignored)
+
+These directories keep the project root clean. All files should have the last-edited date appended to
+the filename as a suffix: `<name>_YYYYMMDD.<ext>`.
+
+| Directory | What goes here |
+|-----------|---------------|
+| `.claude/chinese_doc/` | Any Chinese-language documentation, design notes, handoff docs |
+| `.claude/log/` | Runtime log files (e.g. `caffeinate.log`) |
+| `.claude/buffer/` | AI-generated intermediate artifacts: drafts, todo lists, analysis docs, scratch notes |
+
+Never place these files directly in the project tree or inside `backend/<tool>/`.
+The entire `.claude/` directory is gitignored.
