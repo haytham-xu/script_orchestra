@@ -9,8 +9,10 @@ from flask import request, send_file, jsonify
 from flask_restx import Namespace, Resource
 from werkzeug.utils import secure_filename
 from extensions import restx_api
-import config
 from pdf_converter.service import PDFConverterService
+
+_HOST_URL = os.environ.get('HOST_URL', 'http://127.0.0.1:50001')
+_TEMP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'buffer', 'pdf_converter')
 
 ns = Namespace("")
 
@@ -33,7 +35,7 @@ class PdfToImagesResource(Resource):
         try:
             # Create unique output folder
             task_id = str(uuid.uuid4())
-            output_folder = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id)
+            output_folder = os.path.join(_TEMP_PATH, task_id)
 
             # Convert PDF to images
             service = PDFConverterService()
@@ -41,14 +43,14 @@ class PdfToImagesResource(Resource):
 
             # Generate URLs for the images
             image_urls = [
-                f"{config.HOST_URL}/pdf-converter/file/{task_id}/{quote(os.path.basename(img_path))}"
+                f"{_HOST_URL}/pdf-converter/file/{task_id}/{quote(os.path.basename(img_path))}"
                 for img_path in image_paths
             ]
 
             # Also create a ZIP file for batch download
             zip_path = os.path.join(output_folder, 'images.zip')
             service.create_zip_archive(image_paths, zip_path)
-            zip_url = f"{config.HOST_URL}/pdf-converter/file/{task_id}/{quote('images.zip')}"
+            zip_url = f"{_HOST_URL}/pdf-converter/file/{task_id}/{quote('images.zip')}"
 
             return jsonify({
                 "taskId": task_id,
@@ -90,7 +92,7 @@ class ImagesToPdfResource(Resource):
         try:
             # Create unique output folder
             task_id = str(uuid.uuid4())
-            output_folder = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id)
+            output_folder = os.path.join(_TEMP_PATH, task_id)
             os.makedirs(output_folder, exist_ok=True)
 
             # Convert images to PDF
@@ -99,7 +101,7 @@ class ImagesToPdfResource(Resource):
             service.images_to_pdf(image_files, output_pdf_path)
 
             # Generate URL for the PDF
-            pdf_url = f"{config.HOST_URL}/pdf-converter/file/{task_id}/{quote(output_filename)}"
+            pdf_url = f"{_HOST_URL}/pdf-converter/file/{task_id}/{quote(output_filename)}"
 
             return jsonify({
                 "taskId": task_id,
@@ -118,7 +120,7 @@ class FileDownloadResource(Resource):
         from urllib.parse import unquote
         # Decode URL-encoded filename
         filename = unquote(filename)
-        file_path = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id, filename)
+        file_path = os.path.join(_TEMP_PATH, task_id, filename)
 
         if not os.path.exists(file_path):
             return {"error": "File not found"}, 404
@@ -156,8 +158,8 @@ class FolderToPdfResource(Resource):
         try:
             # Create unique folders for uploaded files and output
             task_id = str(uuid.uuid4())
-            temp_folder = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id, 'uploaded')
-            output_folder = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id)
+            temp_folder = os.path.join(_TEMP_PATH, task_id, 'uploaded')
+            output_folder = os.path.join(_TEMP_PATH, task_id)
             os.makedirs(temp_folder, exist_ok=True)
 
             # Save uploaded files maintaining their relative paths and collect image paths in order
@@ -213,7 +215,7 @@ class FolderToPdfResource(Resource):
             service.files_to_pdf_preserve_order(sorted_image_paths, output_pdf_path)
 
             # Generate URL for the PDF
-            pdf_url = f"{config.HOST_URL}/pdf-converter/file/{task_id}/{quote(output_filename)}"
+            pdf_url = f"{_HOST_URL}/pdf-converter/file/{task_id}/{quote(output_filename)}"
 
             return jsonify({
                 "taskId": task_id,
@@ -253,7 +255,7 @@ class MergePdfsResource(Resource):
         try:
             # Create unique output folder
             task_id = str(uuid.uuid4())
-            output_folder = os.path.join(config.PDF_CONVERTER_TEMP_PATH, task_id)
+            output_folder = os.path.join(_TEMP_PATH, task_id)
             os.makedirs(output_folder, exist_ok=True)
 
             # Merge PDFs
@@ -262,7 +264,7 @@ class MergePdfsResource(Resource):
             service.merge_pdfs(pdf_files, output_pdf_path)
 
             # Generate URL for the merged PDF
-            pdf_url = f"{config.HOST_URL}/pdf-converter/file/{task_id}/{output_filename}"
+            pdf_url = f"{_HOST_URL}/pdf-converter/file/{task_id}/{output_filename}"
 
             return jsonify({
                 "taskId": task_id,

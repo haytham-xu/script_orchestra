@@ -5,8 +5,9 @@ from pathlib import Path
 from flask_restx import Namespace, Resource
 from flask import request, jsonify
 from extensions import restx_api
-import config
 from . import settings_manager
+
+_HOST_URL = os.environ.get('HOST_URL', 'http://127.0.0.1:50001')
 
 ns = Namespace("")
 
@@ -186,7 +187,7 @@ class FilesResource(Resource):
                 full_path = os.path.join(base_path, fname)
                 if os.path.isfile(full_path):
                     lower_name = fname.lower()
-                    file_url = f"{config.HOST_URL}/manga-classifier/file/{folder_name}{'/' + relative_path if relative_path else ''}/{fname}"
+                    file_url = f"{_HOST_URL}/manga-classifier/file/{folder_name}{'/' + relative_path if relative_path else ''}/{fname}"
                     if image_exts and lower_name.endswith(image_exts):
                         collected.append({"fileUrl": file_url, "fileType": "image"})
                     elif video_exts and lower_name.endswith(video_exts):
