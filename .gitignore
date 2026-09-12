@@ -1,6 +1,7 @@
 
 # Global
 /.claude
+/.playwright-mcp
 venv
 __pycache__
 ## All SQLite databases (runtime data, never committed)
