@@ -27,9 +27,9 @@ import requests
 
 from helpers import BASE_URL, api
 
-# Default mock cloud root: next to this file so it's gitignored by **/test_data/.
+# Default mock cloud root: next to this file so it's gitignored by **/test_runtime/.
 # Override with FILE_GIT_MOCK_ROOT env when you need a different location.
-_DEFAULT_MOCK_ROOT = str(Path(__file__).parent / "test_data" / "mock_cloud")
+_DEFAULT_MOCK_ROOT = str(Path(__file__).parent / "test_runtime" / "mock_cloud")
 
 # ---------------------------------------------------------------------------
 # Backend reachability

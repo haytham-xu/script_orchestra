@@ -78,6 +78,9 @@ from loans_calc.blueprint import blueprint as loans_calc_blueprint
 # Import compress_image tool
 from compress_image.blueprint import blueprint as compress_image_blueprint
 
+# Import dedup_folder tool
+from dedup_folder.blueprint import blueprint as dedup_folder_blueprint
+
 # Import claude_bridge tool (remote Claude Code agent). It depends on the
 # Unix-only `pty`/`termios` stack, so on Windows we skip the import instead
 # of failing the whole app.
@@ -105,6 +108,7 @@ import pdf_converter.controller
 import unzip.controller
 
 import file_git.controller
+from file_git import repository_manager as fg_repo_manager
 
 # Import websocket services from both tools
 from file_git import websocket_service as fg_websocket
@@ -183,6 +187,9 @@ def create_app() -> Flask:
     # Register compress_image blueprint
     app.register_blueprint(compress_image_blueprint)
 
+    # Register dedup_folder blueprint
+    app.register_blueprint(dedup_folder_blueprint)
+
     # Register claude_bridge blueprint (only if the Unix-only deps loaded)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
@@ -232,6 +239,9 @@ def create_app() -> Flask:
     # Initialize browser_agent DB and start its background download dispatcher.
     browser_agent_repo.init_db()
     browser_agent_dispatcher.start_background_loop()
+
+    # Initialize file_git DB.
+    fg_repo_manager.init_db()
 
     # Initialize memory_curve DB.
     memory_curve_repo.init_db()

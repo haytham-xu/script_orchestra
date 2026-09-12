@@ -5,7 +5,7 @@ Environment / config:
     TEST_REMOTE_ROOT            remote path for PLAIN suite (mandatory)
     TEST_REMOTE_ROOT_ENCRYPTED  remote path for ENCRYPTED suite (optional)
     FILE_GIT_BASE_URL           defaults to http://127.0.0.1:50001
-    FILE_GIT_MOCK_ROOT          override for mock cloud root (default: test_data/mock_cloud)
+    FILE_GIT_MOCK_ROOT          override for mock cloud root (default: test_runtime/mock_cloud)
 
 Reading either from env vars or from config_local values injected at import time.
 """
@@ -32,9 +32,9 @@ BASE_URL = os.environ.get("FILE_GIT_BASE_URL", "http://127.0.0.1:50001")
 TEST_REMOTE_ROOT = os.environ.get("TEST_REMOTE_ROOT")
 TEST_REMOTE_ROOT_ENCRYPTED = os.environ.get("TEST_REMOTE_ROOT_ENCRYPTED")
 
-# Mock cloud root: fixed path next to this file (gitignored via **/test_data/).
+# Mock cloud root: fixed path next to this file (gitignored via **/test_runtime/).
 # Override with FILE_GIT_MOCK_ROOT env when needed.
-_DEFAULT_MOCK_ROOT = str(Path(__file__).parent / "test_data" / "mock_cloud")
+_DEFAULT_MOCK_ROOT = str(Path(__file__).parent / "test_runtime" / "mock_cloud")
 MOCK_ROOT = os.environ.get("FILE_GIT_MOCK_ROOT") or _DEFAULT_MOCK_ROOT
 
 

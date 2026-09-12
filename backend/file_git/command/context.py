@@ -101,7 +101,7 @@ def _build_storage() -> CloudStorage:
                      os.environ.get("FILE_GIT_MOCK_ROOT"))
         if not mock_root:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            mock_root = os.path.join(base, "mock_cloud_storage")
+            mock_root = os.path.join(base, "tests", "e2e", "test_runtime", "mock_cloud")
         return MockCloudStorage(mock_root)
 
     from ..cloud import BaiduCloudStorage
