@@ -841,16 +841,50 @@ class SnoozeQueueCleanupResource(Resource):
 from manga_viewer import series_grouper as _sg
 
 
+def _sg_settings() -> dict:
+    return settings_manager.get_setting("series_grouper", {}) or {}
+
+
+def _sg_whitelist() -> dict:
+    """Return the whitelist dict: {normalized_key: [abs_folder_paths]}."""
+    return _sg_settings().get("whitelist", {})
+
+
+def _sg_save_whitelist(wl: dict):
+    s = _sg_settings()
+    s["whitelist"] = wl
+    settings_manager.update_settings({"series_grouper": s})
+
+
+def _sg_prune_whitelist(wl: dict) -> dict:
+    """
+    Remove entries whose folder no longer exists on disk.
+    If a whitelist group drops to <=1 surviving folder, remove the whole entry.
+    Returns the pruned whitelist.
+    """
+    import os as _os
+    pruned = {}
+    for key, folders in wl.items():
+        alive = [f for f in folders if _os.path.isdir(f)]
+        if len(alive) >= 2:
+            pruned[key] = alive
+    return pruned
+
+
 @api.route("/manga-viewer/series-grouper/scan")
 class SeriesGrouperScanResource(Resource):
     def post(self):
-        """Scan paths and return proposed series groups."""
+        """Scan paths and return proposed series groups (whitelist excluded)."""
         body = request.get_json(force=True) or {}
         scan_paths = body.get("scan_paths", [])
         if not scan_paths:
             return {"error": "scan_paths is required"}, 400
         try:
-            groups = _sg.scan_and_group(scan_paths)
+            wl = _sg_whitelist()
+            pruned = _sg_prune_whitelist(wl)
+            if pruned != wl:
+                _sg_save_whitelist(pruned)
+            groups = _sg.scan_and_group(scan_paths, whitelist=pruned)
             return {
                 "groups": [
                     {
@@ -888,13 +922,53 @@ class SeriesGrouperExecuteResource(Resource):
 @api.route("/manga-viewer/series-grouper/settings")
 class SeriesGrouperSettingsResource(Resource):
     def get(self):
-        s = settings_manager.get_setting("series_grouper", {})
+        s = _sg_settings()
         return s or {}, 200
 
     def put(self):
         body = request.get_json(force=True) or {}
         settings_manager.update_settings({"series_grouper": body})
-        return settings_manager.get_setting("series_grouper", {}), 200
+        return _sg_settings() or {}, 200
+
+
+@api.route("/manga-viewer/series-grouper/whitelist")
+class SeriesGrouperWhitelistResource(Resource):
+    def get(self):
+        """Return whitelist dict {key: [folders]}."""
+        return {"whitelist": _sg_whitelist()}, 200
+
+    def post(self):
+        """Add a group to the whitelist. Body: {key, folders}."""
+        body = request.get_json(force=True) or {}
+        key = (body.get("key") or "").strip()
+        folders = body.get("folders", [])
+        if not key:
+            return {"error": "key is required"}, 400
+        wl = _sg_whitelist()
+        wl[key] = folders
+        _sg_save_whitelist(wl)
+        return {"whitelist": wl}, 200
+
+
+@api.route("/manga-viewer/series-grouper/whitelist/scan")
+class SeriesGrouperWhitelistScanResource(Resource):
+    def post(self):
+        """Prune stale whitelist entries (folders that no longer exist)."""
+        wl = _sg_whitelist()
+        pruned = _sg_prune_whitelist(wl)
+        removed = [k for k in wl if k not in pruned]
+        _sg_save_whitelist(pruned)
+        return {"whitelist": pruned, "removed": removed}, 200
+
+
+@api.route("/manga-viewer/series-grouper/whitelist/<string:key>")
+class SeriesGrouperWhitelistItemResource(Resource):
+    def delete(self, key: str):
+        """Remove a single key from the whitelist."""
+        wl = _sg_whitelist()
+        wl.pop(key, None)
+        _sg_save_whitelist(wl)
+        return {"whitelist": wl}, 200
 
 
 restx_api.add_namespace(api)

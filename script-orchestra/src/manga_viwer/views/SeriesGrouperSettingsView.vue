@@ -28,6 +28,33 @@
       </el-form>
     </el-card>
 
+    <!-- Whitelist -->
+    <el-card class="sgs-card">
+      <template #header>
+        <div class="sgs-wl-header">
+          <span>🚫 Whitelist</span>
+          <el-button size="small" :loading="scanning" @click="scanWhitelist">🔍 Scan for stale entries</el-button>
+        </div>
+      </template>
+      <p class="sgs-hint" style="margin-bottom:12px">
+        Groups added here are permanently excluded from scan results.
+        Use "Scan for stale entries" to remove whitelist groups whose folders no longer exist on disk.
+      </p>
+      <div v-if="!whitelist.length" class="sgs-wl-empty">No whitelist entries yet.</div>
+      <div v-else class="sgs-wl-list">
+        <div v-for="entry in whitelist" :key="entry.key" class="sgs-wl-entry">
+          <div class="sgs-wl-entry-top">
+            <span class="sgs-wl-key">{{ entry.key }}</span>
+            <span class="sgs-wl-count">{{ entry.folders.length }} folders</span>
+            <el-button size="small" type="danger" plain @click="removeWhitelistEntry(entry.key)">Remove</el-button>
+          </div>
+          <div class="sgs-wl-folders">
+            <span v-for="f in entry.folders" :key="f" class="sgs-wl-folder">{{ f }}</span>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
     <!-- Recognition rules reference -->
     <el-card class="sgs-card">
       <template #header><span>📖 Recognised Patterns</span></template>
@@ -145,4 +172,14 @@ export default SeriesGrouperSettingsLogic
 .sgs-table code { background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 
 .sgs-list { font-size: 13px; color: #606266; line-height: 1.9; padding-left: 20px; margin: 0; }
+
+.sgs-wl-header { display: flex; align-items: center; justify-content: space-between; }
+.sgs-wl-empty { font-size: 13px; color: #909399; }
+.sgs-wl-list { display: flex; flex-direction: column; gap: 10px; }
+.sgs-wl-entry { border: 1px solid #e4e7ed; border-radius: 6px; padding: 8px 12px; background: #fff; }
+.sgs-wl-entry-top { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.sgs-wl-key { font-weight: 600; font-size: 13px; color: #303133; flex: 1; }
+.sgs-wl-count { font-size: 12px; color: #909399; background: #f0f0f0; padding: 1px 7px; border-radius: 10px; }
+.sgs-wl-folders { display: flex; flex-direction: column; gap: 2px; padding-left: 4px; }
+.sgs-wl-folder { font-size: 11px; color: #909399; font-family: monospace; word-break: break-all; }
 </style>

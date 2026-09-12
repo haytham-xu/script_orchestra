@@ -102,17 +102,29 @@ class SeriesGroup:
     folders: list[str] = field(default_factory=list)   # abs paths
 
 
+def _longest_common_prefix(names: list[str]) -> str:
+    """Return the longest common prefix of *names*, stripped of trailing separators."""
+    if not names:
+        return ""
+    prefix = os.path.commonprefix(names)
+    # Strip trailing separators / spaces so the name looks clean
+    return prefix.rstrip(" _-–—:.").strip()
+
+
 def scan_and_group(
     scan_paths: list[str],
     min_group_size: int = 2,
+    whitelist: Optional[dict] = None,
 ) -> list[SeriesGroup]:
     """
     Scan each path (one level only), collect folder names, normalise, group.
 
     Returns only groups where at least *min_group_size* distinct folders share
     the same normalised key.  Singletons (unique series with only one folder)
-    are excluded.
+    are excluded.  Groups whose key appears in *whitelist* are also excluded.
     """
+    whitelist = whitelist or {}
+
     # key → list of abs paths
     buckets: dict[str, list[str]] = {}
     # key → list of raw basenames (to pick display_name)
@@ -136,9 +148,12 @@ def scan_and_group(
     for key, paths in buckets.items():
         if len(paths) < min_group_size:
             continue
-        # Pick display_name: shortest raw name (usually the series title without episode)
+        if key in whitelist:
+            continue
         raws = raw_names[key]
-        display = min(raws, key=len)
+        # Strip leading tags from raw names before computing longest common prefix
+        stripped = [_strip_brackets(r).strip() for r in raws]
+        display = _longest_common_prefix(stripped) or min(raws, key=len)
         groups.append(SeriesGroup(key=key, display_name=display, folders=natsorted(paths)))
 
     # Sort groups by display_name for stable UI ordering

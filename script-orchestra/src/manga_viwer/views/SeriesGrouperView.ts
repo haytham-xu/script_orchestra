@@ -1,19 +1,27 @@
 import { defineComponent, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { getRequest, postRequest } from '@/basic/RequestService'
+import { getRequest, postRequest, deleteRequest } from '@/basic/RequestService'
 import { MANGA_SERIES_GROUPER_ENDPOINT } from '@/basic/Constants'
+
 interface SeriesGroup {
   key: string
   display_name: string
   folders: string[]
   target_name: string
-  selected: boolean
+  executing: boolean
+  // merge UI
+  mergeTarget: string | null
 }
 
 interface Settings {
   scan_paths: string[]
   output_path: string
+}
+
+interface WhitelistEntry {
+  key: string
+  folders: string[]
 }
 
 export default defineComponent({
@@ -23,7 +31,6 @@ export default defineComponent({
     const settings = ref<Settings>({ scan_paths: [], output_path: '' })
     const groups = ref<SeriesGroup[]>([])
     const scanning = ref(false)
-    const executing = ref(false)
 
     async function loadSettings() {
       try {
@@ -51,7 +58,8 @@ export default defineComponent({
         groups.value = (r.groups || []).map((g) => ({
           ...g,
           target_name: g.display_name,
-          selected: true,
+          executing: false,
+          mergeTarget: null,
         }))
         if (!groups.value.length) {
           ElMessage.info('No series groups found — all folders appear to be unique')
@@ -63,44 +71,67 @@ export default defineComponent({
       }
     }
 
-    async function execute() {
-      const selected = groups.value.filter((g) => g.selected)
-      if (!selected.length) { ElMessage.warning('No groups selected'); return }
-      if (!settings.value.output_path.trim()) { ElMessage.warning('Output path not configured — go to Settings'); return }
+    async function executeGroup(g: SeriesGroup) {
+      if (!settings.value.output_path.trim()) {
+        ElMessage.warning('Output path not configured — go to Settings')
+        return
+      }
       try {
         await ElMessageBox.confirm(
-          `Move folders from ${selected.length} group(s) into "${settings.value.output_path}"? This cannot be undone.`,
+          `Move ${g.folders.length} folder(s) from "${g.target_name || g.key}" into "${settings.value.output_path}"? This cannot be undone.`,
           'Confirm', { type: 'warning' },
         )
       } catch { return }
-      executing.value = true
+      g.executing = true
       try {
         const r = await postRequest<{ moved: number; errors: string[] }>(
           `${MANGA_SERIES_GROUPER_ENDPOINT}/execute`,
           {},
           {
             output_path: settings.value.output_path,
-            groups: selected.map((g) => ({
-              key: g.key,
-              target_name: g.target_name || g.display_name,
-              folders: g.folders,
-            })),
+            groups: [{ key: g.key, target_name: g.target_name || g.display_name, folders: g.folders }],
           },
         )
         if (r.errors?.length) {
           ElMessage.warning(`Moved ${r.moved}, but ${r.errors.length} error(s): ${r.errors[0]}`)
         } else {
-          ElMessage.success(`Moved ${r.moved} folder(s) successfully`)
+          ElMessage.success(`Moved ${r.moved} folder(s)`)
         }
-        const movedKeys = new Set(selected.map((g) => g.key))
-        groups.value = groups.value.filter((g) => !movedKeys.has(g.key))
+        groups.value = groups.value.filter((x) => x.key !== g.key)
       } catch (e: any) {
         ElMessage.error(e.message || 'Execute failed')
       } finally {
-        executing.value = false }
+        g.executing = false
+      }
     }
 
-    function toggleAll(val: boolean) { groups.value.forEach((g) => (g.selected = val)) }
+    async function addToWhitelist(g: SeriesGroup) {
+      try {
+        await postRequest(`${MANGA_SERIES_GROUPER_ENDPOINT}/whitelist`, {}, { key: g.key, folders: g.folders })
+        ElMessage.success(`"${g.key}" added to whitelist`)
+        groups.value = groups.value.filter((x) => x.key !== g.key)
+      } catch (e: any) {
+        ElMessage.error(e.message || 'Failed to add to whitelist')
+      }
+    }
+
+    function startMerge(g: SeriesGroup) {
+      g.mergeTarget = g.mergeTarget ? null : ''
+    }
+
+    function confirmMerge(g: SeriesGroup) {
+      const targetKey = g.mergeTarget
+      if (!targetKey) return
+      const other = groups.value.find((x) => x.key === targetKey)
+      if (!other) return
+      // Merge other into g
+      g.folders = [...g.folders, ...other.folders]
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .sort()
+      g.mergeTarget = null
+      groups.value = groups.value.filter((x) => x.key !== targetKey)
+      ElMessage.success(`Merged "${targetKey}" into "${g.key}"`)
+    }
 
     async function openFolder(path: string) {
       try {
@@ -113,10 +144,11 @@ export default defineComponent({
     onMounted(loadSettings)
 
     return {
-      settings, groups, scanning, executing,
-      scan, execute, toggleAll, openFolder,
+      settings, groups, scanning,
+      scan, executeGroup, addToWhitelist, openFolder,
+      startMerge, confirmMerge,
       goSettings: () => router.push('/manga-viewer/series-grouper/settings'),
+      otherGroups: (key: string) => groups.value.filter((g) => g.key !== key),
     }
   },
 })
-
