@@ -44,6 +44,7 @@ import RelayProxyView from '@/relay_proxy/views/RelayProxyView.vue'
 import CleanKeywordView from '@/clean_keyword/views/CleanKeywordView.vue'
 import LoansCalcView from '@/loans_calc/views/LoansCalcView.vue'
 import CompressImageView from '@/compress_image/views/CompressImageView.vue'
+import DedupFolderView from '@/dedup_folder/views/DedupFolderView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -248,6 +249,11 @@ const router = createRouter({
       path: '/compress-image',
       name: 'compress-image',
       component: CompressImageView
+    },
+    {
+      path: '/dedup-folder',
+      name: 'dedup-folder',
+      component: DedupFolderView
     },
     {
       path: '/file-git',

@@ -145,6 +145,18 @@ const tools = [
       <path d="M38 46l-5-5-5 5M33 41v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`,
   },
+  {
+    key: 'dedup-folder',
+    name: 'Dedup Folder',
+    desc: 'Remove duplicate folders by cross-dir, name pattern, or macOS copies',
+    path: '/dedup-folder',
+    icon: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#7c3aed"/>
+      <path d="M12 24h16l4-6h20v24H12z" fill="#fff" opacity="0.3"/>
+      <path d="M12 28h16l4-6h20v20H12z" fill="#fff"/>
+      <path d="M35 35l6 6M41 35l-6 6" stroke="#7c3aed" stroke-width="3" stroke-linecap="round"/>
+    </svg>`,
+  },
 ]
 </script>
 

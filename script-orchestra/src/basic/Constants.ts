@@ -45,3 +45,5 @@ export const CLEAN_KEYWORD_ENDPOINT = '/clean-keyword'
 export const LOANS_CALC_ENDPOINT = '/loans-calc'
 
 export const COMPRESS_IMAGE_ENDPOINT = '/compress-image'
+
+export const DEDUP_FOLDER_ENDPOINT = '/dedup-folder'

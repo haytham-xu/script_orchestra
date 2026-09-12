@@ -27,6 +27,7 @@ const TOOLS: Tool[] = [
   { key: 'relay-proxy',            name: 'Relay Proxy',            path: '/relay-proxy' },
   { key: 'loans-calc',             name: 'Loans Calc',             path: '/loans-calc' },
   { key: 'compress-image',         name: 'Compress Image',         path: '/compress-image' },
+  { key: 'dedup-folder',           name: 'Dedup Folder',           path: '/dedup-folder' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))
