@@ -3,7 +3,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getRequest, postRequest } from '@/basic/RequestService'
 import { MANGA_SERIES_GROUPER_ENDPOINT } from '@/basic/Constants'
-
 interface SeriesGroup {
   key: string
   display_name: string
@@ -103,11 +102,19 @@ export default defineComponent({
 
     function toggleAll(val: boolean) { groups.value.forEach((g) => (g.selected = val)) }
 
+    async function openFolder(path: string) {
+      try {
+        await postRequest('/manga-viewer/open-folder', {}, { folderPath: path })
+      } catch (e: any) {
+        ElMessage.error(e.message || 'Failed to open folder')
+      }
+    }
+
     onMounted(loadSettings)
 
     return {
       settings, groups, scanning, executing,
-      scan, execute, toggleAll,
+      scan, execute, toggleAll, openFolder,
       goSettings: () => router.push('/manga-viewer/series-grouper/settings'),
     }
   },

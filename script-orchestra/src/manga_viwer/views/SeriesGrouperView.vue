@@ -70,7 +70,10 @@
             </div>
           </div>
           <div class="sg-folder-list">
-            <div v-for="f in g.folders" :key="f" class="sg-folder-item">{{ f }}</div>
+            <div v-for="f in g.folders" :key="f" class="sg-folder-item">
+              <span class="sg-folder-path">{{ f }}</span>
+              <el-button size="small" plain @click="openFolder(f)" class="sg-open-btn">📂</el-button>
+            </div>
           </div>
         </div>
       </div>
@@ -121,8 +124,10 @@ export default SeriesGrouperLogic
 .sg-target-row { display: flex; align-items: center; gap: 8px; }
 .sg-target-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .sg-target-input { width: 360px; }
-.sg-folder-list { margin-top: 10px; padding-left: 36px; display: flex; flex-direction: column; gap: 2px; }
-.sg-folder-item { font-size: 12px; color: #606266; font-family: monospace; word-break: break-all; }
+.sg-folder-list { margin-top: 10px; padding-left: 36px; display: flex; flex-direction: column; gap: 4px; }
+.sg-folder-item { display: flex; align-items: center; gap: 8px; }
+.sg-folder-path { font-size: 12px; color: #606266; font-family: monospace; word-break: break-all; flex: 1; }
+.sg-open-btn { flex-shrink: 0; padding: 2px 6px; }
 
 .sg-empty { text-align: center; color: #909399; font-size: 14px; padding: 48px 0; }
 </style>
