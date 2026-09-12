@@ -1,10 +1,6 @@
-"""Dashboard — layout persistence (JSON on disk).
+"""Dashboard — layout persistence.
 
-Stores the user's Launchpad layout: ordered items where each is either a tool
-(referenced by its code-defined key) or a folder grouping several tool keys.
-This layer is pure storage — it does NOT know the set of valid tool keys; the
-frontend reconciles the layout against the code-defined tool list at render
-time (appends new tools, ignores removed keys).
+Reads/writes the 'layout' key inside the shared settings.json.
 """
 import os
 import json
@@ -12,42 +8,50 @@ import tempfile
 from typing import Any, Dict
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
-_LAYOUT_FILE = os.path.join(_DIR, "layout.json")
+_SETTINGS_FILE = os.path.join(_DIR, "settings.json")
 
 _EMPTY: Dict[str, Any] = {"items": []}
 
 
-def load_layout() -> Dict[str, Any]:
-    if not os.path.exists(_LAYOUT_FILE):
-        return dict(_EMPTY)
+def _load_settings() -> Dict[str, Any]:
+    if not os.path.exists(_SETTINGS_FILE):
+        return {}
     try:
-        with open(_LAYOUT_FILE, "r", encoding="utf-8") as f:
+        with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-            return dict(_EMPTY)
-        return data
-    except Exception as exc:  # corrupt file → don't crash, return empty
-        print(f"[dashboard] failed to read layout.json ({exc}); using empty layout")
-        return dict(_EMPTY)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
-def save_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = _normalize(layout)
-    # Atomic write: temp file + replace, so a crash mid-write can't corrupt it.
+def _save_settings(data: Dict[str, Any]) -> None:
     fd, tmp = tempfile.mkstemp(dir=_DIR, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(normalized, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, _LAYOUT_FILE)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _SETTINGS_FILE)
     except Exception:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
+
+
+def load_layout() -> Dict[str, Any]:
+    data = _load_settings().get("layout")
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return dict(_EMPTY)
+    return data
+
+
+def save_layout(layout: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _normalize(layout)
+    settings = _load_settings()
+    settings["layout"] = normalized
+    _save_settings(settings)
     return normalized
 
 
 def _normalize(layout: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only well-formed items. tool needs key; folder needs id/name/keys[]."""
     items = []
     raw_items = (layout or {}).get("items")
     if not isinstance(raw_items, list):

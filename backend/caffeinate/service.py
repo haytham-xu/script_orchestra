@@ -20,10 +20,12 @@ from .config import (
     MIN_INTERVAL_SECONDS,
 )
 
-# Diagnostic file logger — writes to backend/caffeinate/caffeinate.log
-# (gitignored). Records the exact command, pid, exit codes, stderr, and
-# exceptions so failures can be analyzed after the fact.
-_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "caffeinate.log")
+# Diagnostic file logger — writes to .claude/log/caffeinate.log (gitignored).
+# Records the exact command, pid, exit codes, stderr, and exceptions so
+# failures can be analyzed after the fact.
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude", "log")
+os.makedirs(_LOG_DIR, exist_ok=True)
+_LOG_PATH = os.path.join(_LOG_DIR, "caffeinate.log")
 logger = logging.getLogger("caffeinate")
 if not logger.handlers:
     logger.setLevel(logging.DEBUG)
