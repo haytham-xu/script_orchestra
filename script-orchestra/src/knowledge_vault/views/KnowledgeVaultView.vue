@@ -4,15 +4,6 @@
       <div class="kv-topbar-inner">
         <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <h1>Knowledge Vault</h1>
-        <!-- Network build controls hidden (the Network tab is retired for now). Kept for easy restore.
-        <div class="kv-auto">
-          <span>Auto-build</span>
-          <el-switch :model-value="settings.auto_build" @change="(v: any) => toggleAutoBuild(v)" />
-          <el-button size="small" :loading="building" @click="rebuild">
-            {{ building ? (buildPhase ? 'Building — ' + buildPhase : 'Building…') : 'Rebuild network' }}
-          </el-button>
-        </div>
-        -->
       </div>
     </header>
 
@@ -42,8 +33,8 @@
                   <span class="kv-dot">·</span>
                   <span class="kv-added">{{ fmtDate(row.created_at) }}</span>
                   <span class="kv-dot">·</span>
-                  <el-tag size="small" :type="FRESH_TYPE[row.freshness]" effect="light">
-                    {{ FRESH_LABEL[row.freshness] || row.freshness }}
+                  <el-tag size="small" :type="row.freshness === 'fresh' ? 'success' : row.freshness === 'aging' ? 'warning' : 'danger'" effect="light">
+                    {{ row.freshness === 'fresh' ? 'Fresh' : row.freshness === 'aging' ? 'Aging' : 'May be outdated' }}
                   </el-tag>
                 </div>
               </div>
@@ -164,8 +155,8 @@
 
           <h3 style="margin-top:24px">AI model</h3>
           <p class="kv-hint">
-            Model used for build (dedup / classify) and AI deep-answer, run via the
-            local Claude CLI. Change it to any model your CLI/proxy supports.
+            Model used for AI deep-answer, run via the local Claude CLI.
+            Change it to any model your CLI/proxy supports.
           </p>
           <div class="kv-model-row">
             <el-input v-model="settings.ai_model" placeholder="model id (as your CLI/proxy expects)"
@@ -173,16 +164,6 @@
             <el-button type="primary" @click="saveAiModel">Save</el-button>
           </div>
 
-          <h3 style="margin-top:24px">Link checking</h3>
-          <p class="kv-hint">
-            Probe your saved URLs over HTTP so dead links get flagged for review sooner.
-            <strong>This sends requests to those URLs' servers</strong> (they can see the request in their logs),
-            so it's off by default. When on, use “Check links” on the Network tab.
-          </p>
-          <div class="kv-link-toggle">
-            <el-switch :model-value="settings.link_check_enabled" @change="(v: any) => toggleLinkCheck(v)" />
-            <span>{{ settings.link_check_enabled ? 'Enabled' : 'Disabled' }}</span>
-          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -288,11 +269,9 @@
 .kv-topbar-inner { display: flex; align-items: center; justify-content: space-between;
   width: 100%; max-width: 1240px; margin: 0 auto; }
 .kv-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; }
-.kv-auto { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #86868b; }
 .kv-tabs { padding: 0 24px; max-width: 1240px; margin: 0 auto; }
 .kv-capture, .kv-search { max-width: 1100px; margin: 16px auto; }
 .kv-settings { max-width: 1100px; margin: 16px auto; }
-.kv-network { max-width: 1200px; margin: 16px auto; }
 .kv-hint { font-size: 12px; color: #86868b; margin: 0; }
 
 .kv-cap-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }

@@ -1,7 +1,7 @@
 import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/RequestService'
 import { KNOWLEDGE_VAULT_ENDPOINT } from '@/basic/Constants'
 import type {
-  RawFragment, KnowledgeNode, KnowledgeEdge, KnowledgeVaultSettings, BuildStatus,
+  RawFragment, KnowledgeVaultSettings,
   Label, AnalyzedFragment,
 } from './Model'
 
@@ -44,37 +44,6 @@ export async function search(q: string, topK = 10): Promise<RawFragment[]> {
 }
 export async function aiQuery(q: string): Promise<{ answer: string; used: RawFragment[] }> {
   return await postRequest(`${B}/query/ai`, {}, { q }) as { answer: string; used: RawFragment[] }
-}
-export async function build(useAi = true): Promise<BuildStatus> {
-  return await postRequest(`${B}/build`, {}, { use_ai: useAi }) as BuildStatus
-}
-export async function getBuildStatus(): Promise<BuildStatus> {
-  return await getRequest<BuildStatus>(`${B}/build/status`)
-}
-export async function getNodes(): Promise<KnowledgeNode[]> {
-  return (await getRequest<{ nodes: KnowledgeNode[] }>(`${B}/nodes`)).nodes
-}
-export async function getEdges(): Promise<KnowledgeEdge[]> {
-  return (await getRequest<{ edges: KnowledgeEdge[] }>(`${B}/edges`)).edges
-}
-export async function getStale(): Promise<KnowledgeNode[]> {
-  return (await getRequest<{ stale: KnowledgeNode[] }>(`${B}/lifecycle/stale`)).stale
-}
-// Stale review — acts on the node's source fragments (raw layer). Both return the fresh stale list.
-export async function markStaleReviewed(nodeId: number): Promise<KnowledgeNode[]> {
-  return (await postRequest(`${B}/lifecycle/stale/${nodeId}/reviewed`, {}, {}) as { stale: KnowledgeNode[] }).stale
-}
-export async function archiveStale(nodeId: number): Promise<KnowledgeNode[]> {
-  return (await postRequest(`${B}/lifecycle/stale/${nodeId}/archive`, {}, {}) as { stale: KnowledgeNode[] }).stale
-}
-// URL liveness check (opt-in; makes outbound requests). Returns a summary + refreshed stale list.
-export interface CheckLinksResult {
-  checked: number; dead: number; flagged_nodes: number
-  results: { url: string; alive: boolean | null; status: number | null; reason: string }[]
-  stale: KnowledgeNode[]
-}
-export async function checkLinks(): Promise<CheckLinksResult> {
-  return await postRequest(`${B}/lifecycle/check-links`, {}, {}) as CheckLinksResult
 }
 // Duplicate detection (on-demand). Vector pairs are zero-cost; ai-check spends tokens.
 export interface DupFrag { id: number; content: string; note: string; kind: string }

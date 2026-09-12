@@ -1,13 +1,8 @@
-"""Knowledge Vault — REST controller (blueprint prefix /knowledge-vault).
-
-Stage 1: raw fragment ingest + listing. Query / build / lifecycle endpoints
-are added in later stages.
-"""
+"""Knowledge Vault — REST controller (blueprint prefix /knowledge-vault)."""
 from flask_restx import Namespace, Resource
 from flask import request
 
-from . import repository, settings_manager, query_service
-from . import builder, lifecycle, ai_client, backup, link_checker, dedup
+from . import repository, settings_manager, query_service, ai_client
 from .entity import RawFragment
 import threading
 import json
@@ -20,16 +15,12 @@ class FragmentsResource(Resource):
     def get(self):
         include_archived = request.args.get("archived") == "1"
         frags = repository.get_fragments(include_archived=include_archived)
-        stale_days = settings_manager.load_settings().get("stale_days", 90)
-        for f in frags:
-            f.freshness = lifecycle.freshness_for(f.kind, f.last_accessed, f.created_at, stale_days)
         return {"fragments": [f.to_dict() for f in frags]}, 200
 
     def post(self):
         data = request.json or {}
         content = (data.get("content") or "").strip()
         raw_text = (data.get("raw_text") or "").strip()
-        # Accept either an explicit content field or a raw blob to store as-is.
         if not content and not raw_text:
             return {"error": "content or raw_text is required"}, 400
         frag = RawFragment.new_instance(
@@ -42,22 +33,12 @@ class FragmentsResource(Resource):
         if isinstance(data.get("label_ids"), list):
             frag.label_ids = [int(x) for x in data["label_ids"]]
             repository.set_fragment_labels(frag.id, frag.label_ids)
-        # Snapshot after every new fragment — the raw layer must never be lost.
-        backup.snapshot()
-        # Embed off the request path: the first call lazy-loads the
-        # sentence-transformers model (can take tens of seconds), which would
-        # otherwise block Save. Ingest must feel instant; the raw layer is
-        # already persisted, and build/query will re-index if this hasn't run.
+
         def _post_ingest():
             try:
                 query_service.index_fragment(frag.id, f"{frag.content}\n{frag.note}")
             except Exception as exc:
                 print(f"[knowledge_vault] embed on ingest failed: {exc}")
-            if settings_manager.load_settings().get("auto_build"):
-                try:
-                    builder.rebuild(use_ai=True)
-                except Exception as exc:
-                    print(f"[knowledge_vault] auto-build failed: {exc}")
 
         threading.Thread(target=_post_ingest, daemon=True).start()
         return {"fragment": frag.to_dict()}, 201
@@ -86,16 +67,13 @@ class FragmentResource(Resource):
         )
         if isinstance(data.get("label_ids"), list):
             repository.set_fragment_labels(fid, [int(x) for x in data["label_ids"]])
-        backup.snapshot()
         updated = repository.get_fragment(fid)
-        # Re-index vector off the request path (content/note may have changed).
         threading.Thread(
             target=lambda: _safe_index(fid, f"{updated.content}\n{updated.note}"),
             daemon=True).start()
         return {"fragment": updated.to_dict()}, 200
 
     def delete(self, fid):
-        # Hard delete (user-initiated). The AI never deletes; only the user can.
         if repository.get_fragment(fid) is None:
             return {"error": "fragment not found"}, 404
         repository.delete_fragment(fid)
@@ -126,9 +104,7 @@ def _sanitize_fragments(frags) -> list:
 @ns.route("/fragments/batch-chat")
 class BatchChatResource(Resource):
     def post(self):
-        """Conversational batch import (stateless). The client sends the full
-        conversation plus the current draft; Claude replies AND regenerates the
-        draft. Nothing is written until /fragments/batch is called.
+        """Conversational batch import (stateless). Nothing is written until /fragments/batch.
 
         Body: {"messages":[{"role":"user"|"assistant","content":"..."}],
                "current_fragments":[{content,note,kind}]}
@@ -205,8 +181,6 @@ class BatchCommitResource(Resource):
             if label_ids:
                 repository.set_fragment_labels(frag.id, label_ids)
             created.append(frag)
-        backup.snapshot(tag="batch")
-        # Embed all newly-created fragments off the request path.
         ids_texts = [(f.id, f"{f.content}\n{f.note}") for f in created]
 
         def _index_all():
@@ -251,7 +225,7 @@ class QueryResource(Resource):
 @ns.route("/query/ai")
 class AiQueryResource(Resource):
     def post(self):
-        """Optional AI deep-answer: recall fragments, then let Claude answer."""
+        """Recall fragments then let Claude answer."""
         data = request.json or {}
         q = (data.get("q") or "").strip()
         if not q:
@@ -269,195 +243,23 @@ class AiQueryResource(Resource):
         return {"answer": answer, "used": hits}, 200
 
 
-@ns.route("/build")
-class BuildResource(Resource):
-    def post(self):
-        data = request.json or {}
-        use_ai = data.get("use_ai", True)
-        # Don't start a second build on top of a running one.
-        if builder.get_status().get("running"):
-            return builder.get_status(), 202
-        # Run in the background and return immediately; the client polls
-        # /build/status. A synchronous build can take minutes, which would spin
-        # the UI button the whole time.
-        def _run():
-            try:
-                builder.rebuild(use_ai=bool(use_ai))
-            except Exception as exc:
-                print(f"[knowledge_vault] build failed: {exc}")
-        threading.Thread(target=_run, daemon=True).start()
-        return builder.get_status(), 202
-
-
-@ns.route("/build/status")
-class BuildStatusResource(Resource):
-    def get(self):
-        return builder.get_status(), 200
-
-
-@ns.route("/nodes")
-class NodesResource(Resource):
-    def get(self):
-        # A node's labels = union of its source fragments' labels (labels live on
-        # the raw layer). Aggregated here so the graph can filter by label.
-        labels_by_frag = {f.id: f.label_ids for f in repository.get_fragments(include_archived=True)}
-        out = []
-        for n in repository.get_nodes():
-            d = n.to_dict()
-            lids = set()
-            for fid in d.get("fragment_ids", []):
-                lids.update(labels_by_frag.get(fid, []))
-            d["label_ids"] = sorted(lids)
-            out.append(d)
-        return {"nodes": out}, 200
-
-
-@ns.route("/edges")
-class EdgesResource(Resource):
-    def get(self):
-        return {"edges": [e.to_dict() for e in repository.get_edges()]}, 200
-
-
-@ns.route("/lifecycle/stale")
-class StaleResource(Resource):
-    def get(self):
-        return {"stale": lifecycle.stale_nodes()}, 200
-
-
-def _node_fragment_ids(node_id):
-    """Source fragment ids of a node, or None if the node doesn't exist.
-
-    Stale review acts on the raw layer (the source of truth); the node is
-    derived and rebuildable, so touching/archiving a node's freshness directly
-    would be lost on the next rebuild.
-    """
-    for n in repository.get_nodes():
-        if n.id == node_id:
-            import json
-            return json.loads(n.fragment_ids or "[]")
-    return None
-
-
-@ns.route("/lifecycle/stale/<int:node_id>/reviewed")
-class StaleReviewedResource(Resource):
-    def post(self, node_id):
-        """Mark a stale node still valid: refresh its source fragments' access time."""
-        fids = _node_fragment_ids(node_id)
-        if fids is None:
-            return {"error": "node not found"}, 404
-        for fid in fids:
-            repository.touch_fragment(fid)
-        lifecycle.recompute_freshness()
-        return {"stale": lifecycle.stale_nodes()}, 200
-
-
-@ns.route("/lifecycle/stale/<int:node_id>/archive")
-class StaleArchiveResource(Resource):
-    def post(self, node_id):
-        """Archive a stale node: soft-remove its source fragments (raw is never hard-deleted)."""
-        fids = _node_fragment_ids(node_id)
-        if fids is None:
-            return {"error": "node not found"}, 404
-        for fid in fids:
-            repository.archive_fragment(fid)
-        backup.snapshot()
-        lifecycle.recompute_freshness()
-        return {"stale": lifecycle.stale_nodes()}, 200
-
-
-@ns.route("/lifecycle/check-links")
-class CheckLinksResource(Resource):
-    def post(self):
-        """Probe url-kind fragments over HTTP; flag nodes with dead links stale.
-
-        Opt-in (settings.link_check_enabled) and user-triggered only — this makes
-        outbound requests to the saved URLs' hosts. Dead links are a stronger
-        signal than time-decay, so we mark the owning node stale directly.
-        """
-        if not settings_manager.load_settings().get("link_check_enabled"):
-            return {"error": "Link checking is off. Enable it in Settings first."}, 403
-
-        frags = [f for f in repository.get_fragments() if (f.kind or "") == "url"]
-        # url -> fragment ids (a url may appear in more than one fragment)
-        frag_ids_by_url = {}
-        for f in frags:
-            frag_ids_by_url.setdefault(f.content.strip(), []).append(f.id)
-
-        results = link_checker.check_urls(list(frag_ids_by_url.keys()))
-        dead_frag_ids = set()
-        for r in results:
-            if r.get("alive") is False:   # alive is None = skipped/undetermined → ignore
-                dead_frag_ids.update(frag_ids_by_url.get(r["url"], []))
-
-        # Map dead fragments → their nodes, mark those nodes stale.
-        flagged = 0
-        if dead_frag_ids:
-            for n in repository.get_nodes():
-                if set(json.loads(n.fragment_ids or "[]")) & dead_frag_ids:
-                    repository.set_node_freshness(n.id, "stale")
-                    flagged += 1
-
-        checked = len(results)
-        dead = sum(1 for r in results if r.get("alive") is False)
-        return {
-            "checked": checked,
-            "dead": dead,
-            "flagged_nodes": flagged,
-            "results": results,
-            "stale": lifecycle.stale_nodes(),
-        }, 200
-
-
 @ns.route("/duplicates")
 class DuplicatesResource(Resource):
     def get(self):
-        """Near-duplicate fragment pairs from stored vectors. Zero token cost.
-
-        Optional query params `high` / `fuzzy_low` override the similarity tiers.
-        """
+        """Near-duplicate fragment pairs from stored vectors. Zero token cost."""
         def _f(name):
             v = request.args.get(name)
             try:
                 return float(v) if v is not None else None
             except ValueError:
                 return None
-        return dedup.find_duplicate_pairs(high=_f("high"), fuzzy_low=_f("fuzzy_low")), 200
-
-
-@ns.route("/duplicates/ai-check")
-class DuplicatesAiCheckResource(Resource):
-    def post(self):
-        """Ask the AI to judge fuzzy-band pairs — the only token-spending step.
-
-        Body: {"pairs": [[a_id, b_id], ...]} (typically the current fuzzy pairs).
-        Returns {"duplicates": [[a_id, b_id], ...]} — the subset judged duplicates.
-        Batched + budget-capped (KV_AI_BUDGET) via builder._ai_dedup_batch.
-        """
-        data = request.json or {}
-        raw_pairs = data.get("pairs") or []
-        pairs = []
-        for p in raw_pairs:
-            try:
-                a, b = int(p[0]), int(p[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            pairs.append((a, b))
-        if not pairs:
-            return {"duplicates": []}, 200
-        frag_by_id = {f.id: f for f in repository.get_fragments()}
-        budget = [builder._AI_BUDGET]
-        dups = builder._ai_dedup_batch(pairs, frag_by_id, budget)
-        return {"duplicates": [list(p) for p in dups]}, 200
+        return query_service.find_duplicate_pairs(high=_f("high"), fuzzy_low=_f("fuzzy_low")), 200
 
 
 @ns.route("/duplicates/resolve")
 class DuplicatesResolveResource(Resource):
     def post(self):
-        """Resolve one duplicate pair: keep one fragment, archive the other.
-
-        Body: {"keep_id": int, "drop_id": int}. Archive is a soft-delete (raw is
-        never hard-deleted; recoverable). Returns the refreshed duplicate lists.
-        """
+        """Resolve one duplicate pair: keep one fragment, archive the other."""
         data = request.json or {}
         try:
             keep_id = int(data.get("keep_id"))
@@ -469,21 +271,7 @@ class DuplicatesResolveResource(Resource):
         if repository.get_fragment(drop_id) is None:
             return {"error": "drop fragment not found"}, 404
         repository.archive_fragment(drop_id)
-        backup.snapshot()
-        return dedup.find_duplicate_pairs(), 200
-
-
-@ns.route("/backups")
-class BackupsResource(Resource):
-    def get(self):
-        import os
-        return {"backups": [os.path.basename(b) for b in backup.list_backups()]}, 200
-
-    def post(self):
-        """Force a manual backup snapshot now."""
-        path = backup.snapshot(tag="manual")
-        import os
-        return {"backup": os.path.basename(path) if path else None}, 200
+        return query_service.find_duplicate_pairs(), 200
 
 
 @ns.route("/settings")

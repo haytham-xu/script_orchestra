@@ -30,38 +30,6 @@ export interface ChatMessage {
   content: string
 }
 
-export interface KnowledgeNode {
-  id: number
-  title: string
-  summary: string
-  kind: string
-  fragment_ids: number[]
-  label_ids?: number[]   // union of source fragments' labels (aggregated by /nodes)
-  freshness: 'fresh' | 'aging' | 'stale'
-  updated_at: string
-}
-
-export interface KnowledgeEdge {
-  id: number
-  source_id: number
-  target_id: number
-  relation: string
-  weight: number
-}
-
 export interface KnowledgeVaultSettings {
-  auto_build: boolean
-  embed_model: string
   ai_model: string
-  relate_top_k: number
-  stale_days: number
-  link_check_enabled: boolean
-}
-
-export interface BuildStatus {
-  running: boolean
-  phase: string
-  nodes: number
-  edges: number
-  last_run: string | null
 }

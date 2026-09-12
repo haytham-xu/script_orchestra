@@ -1,10 +1,9 @@
-import { defineComponent, ref, onMounted, nextTick, onBeforeUnmount, computed } from 'vue'
+import { defineComponent, ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Network } from 'vis-network/standalone'
 import * as api from '../service/KnowledgeVaultService'
 import type {
-  RawFragment, KnowledgeNode, KnowledgeVaultSettings, BuildStatus, Label, AnalyzedFragment, ChatMessage,
+  RawFragment, KnowledgeVaultSettings, Label, AnalyzedFragment, ChatMessage,
 } from '../service/Model'
 
 export default defineComponent({
@@ -15,8 +14,7 @@ export default defineComponent({
 
     const activeTab = ref<'capture' | 'search' | 'duplicates' | 'settings'>('capture')
     const settings = ref<KnowledgeVaultSettings>({
-      auto_build: false, embed_model: '', ai_model: '', relate_top_k: 5, stale_days: 90,
-      link_check_enabled: false,
+      ai_model: '',
     })
 
     // ---- labels (user-managed tags, shared across tabs) ----
@@ -55,8 +53,6 @@ export default defineComponent({
       const d = new Date(iso)
       return isNaN(d.getTime()) ? '—' : d.toLocaleDateString()
     }
-    const FRESH_LABEL: Record<string, string> = { fresh: 'Fresh', aging: 'Aging', stale: 'May be outdated' }
-    const FRESH_TYPE: Record<string, string> = { fresh: 'success', aging: 'warning', stale: 'danger' }
 
     async function loadFragments() { fragments.value = await api.getFragments() }
     const addDialog = ref(false)
@@ -185,80 +181,6 @@ export default defineComponent({
       } finally { aiLoading.value = false }
     }
 
-    // ---- network / build ----
-    const nodes = ref<KnowledgeNode[]>([])
-    const edges = ref<any[]>([])
-    const stale = ref<any[]>([])
-    const buildStatus = ref<BuildStatus | null>(null)
-    const building = ref(false)
-    const selected = ref<KnowledgeNode | null>(null)   // clicked node detail
-    const graphEl = ref<HTMLElement | null>(null)
-    let network: Network | null = null
-
-    // kind → node colour (semantic, so the graph is scannable at a glance).
-    const KIND_COLOR: Record<string, string> = {
-      url: '#0a84ff', command: '#30d158', script: '#ff9f0a', note: '#bf5af2',
-    }
-    // freshness → border colour (aging/stale visually flagged).
-    const FRESH_BORDER: Record<string, string> = {
-      fresh: '#34c759', aging: '#ff9f0a', stale: '#ff3b30',
-    }
-
-    async function loadNetwork() {
-      nodes.value = await api.getNodes()
-      edges.value = await api.getEdges()
-      stale.value = await api.getStale()
-      await nextTick()
-      renderGraph()
-    }
-
-    // ---- stale review (acts on the node's source fragments; nodes are rebuildable) ----
-    const staleActing = ref<number | null>(null)   // node id currently being acted on
-    async function markReviewed(node: KnowledgeNode) {
-      staleActing.value = node.id
-      try {
-        stale.value = await api.markStaleReviewed(node.id)
-        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
-        ElMessage.success('Marked as still valid')
-      } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Failed')
-      } finally { staleActing.value = null }
-    }
-    async function archiveStale(node: KnowledgeNode) {
-      try {
-        await ElMessageBox.confirm(
-          `Archive “${node.title}”? Its ${node.fragment_ids?.length || 0} source fragment(s) will be hidden (not deleted). Rebuild to fully drop it from the graph.`,
-          'Confirm', { type: 'warning' })
-      } catch { return }   // cancelled
-      staleActing.value = node.id
-      try {
-        stale.value = await api.archiveStale(node.id)
-        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
-        await loadFragments()   // archived fragments drop from the capture list
-        ElMessage.success('Archived')
-      } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Failed')
-      } finally { staleActing.value = null }
-    }
-
-    // ---- URL liveness check (C1; opt-in, user-triggered — makes outbound requests) ----
-    const checkingLinks = ref(false)
-    async function checkLinks() {
-      checkingLinks.value = true
-      try {
-        const r = await api.checkLinks()
-        stale.value = r.stale
-        await api.getNodes().then((n) => { nodes.value = n; renderGraph() })
-        if (r.dead > 0) {
-          ElMessage.warning(`Checked ${r.checked} link(s): ${r.dead} dead → ${r.flagged_nodes} node(s) flagged for review`)
-        } else {
-          ElMessage.success(`Checked ${r.checked} link(s): all reachable`)
-        }
-      } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Link check failed')
-      } finally { checkingLinks.value = false }
-    }
-
     // ---- duplicates (on-demand; vector pairs are zero-cost, ai-check spends tokens) ----
     const dupConfident = ref<api.DupPair[]>([])
     const dupFuzzy = ref<api.DupPair[]>([])
@@ -312,144 +234,10 @@ export default defineComponent({
       } finally { dupActing.value = null }
     }
 
-    // ---- graph filter / search / navigation (C2) ----
-    const graphKinds = computed<string[]>(() =>
-      Array.from(new Set(nodes.value.map((n) => n.kind || 'note'))).sort())
-    const kindFilter = ref<Set<string>>(new Set())   // empty = show all kinds
-    const labelFilter = ref<Set<number>>(new Set())   // empty = show all labels
-    const nodeSearch = ref('')
-    function toggleKind(kind: string) {
-      const s = new Set(kindFilter.value)
-      s.has(kind) ? s.delete(kind) : s.add(kind)
-      kindFilter.value = s
-      renderGraph()
-    }
-    function toggleLabelFilter(id: number) {
-      const s = new Set(labelFilter.value)
-      s.has(id) ? s.delete(id) : s.add(id)
-      labelFilter.value = s
-      renderGraph()
-    }
-    // Labels actually present on the current network (for the filter chips).
-    const graphLabels = computed<Label[]>(() => {
-      const present = new Set<number>()
-      nodes.value.forEach((n) => (n.label_ids || []).forEach((id) => present.add(id)))
-      return labels.value.filter((l) => present.has(l.id))
-    })
-    // Nodes to draw: kind filter ∩ label filter ∩ search match (empty set = no constraint).
-    const visibleNodes = computed<KnowledgeNode[]>(() => {
-      const q = nodeSearch.value.trim().toLowerCase()
-      return nodes.value.filter((n) => {
-        if (kindFilter.value.size && !kindFilter.value.has(n.kind || 'note')) return false
-        if (labelFilter.value.size && !(n.label_ids || []).some((id) => labelFilter.value.has(id))) return false
-        if (q && !(`${n.title} ${n.summary}`.toLowerCase().includes(q))) return false
-        return true
-      })
-    })
-    // Jump the viewport to the first search match and select it.
-    function focusSearch() {
-      const first = visibleNodes.value[0]
-      if (!first || !network) { ElMessage.info('No matching node'); return }
-      selected.value = first
-      network.selectNodes([first.id])
-      network.focus(first.id, { scale: 1.1, animation: { duration: 400, easingFunction: 'easeInOutQuad' } })
-    }
-    // Source fragments of the selected node (resolved from the in-memory list).
-    const selectedFragments = computed<RawFragment[]>(() => {
-      if (!selected.value) return []
-      const byId = new Map(fragments.value.map((f) => [f.id, f]))
-      return (selected.value.fragment_ids || []).map((id) => byId.get(id)).filter(Boolean) as RawFragment[]
-    })
-    // Jump to the Capture tab and briefly highlight a fragment.
+    // ---- fragment highlight (from search result navigation) ----
     const highlightFragId = ref<number | null>(null)
-    function goToFragment(f: RawFragment) {
-      activeTab.value = 'capture'
-      highlightFragId.value = f.id
-      nextTick(() => {
-        document.querySelector(`[data-frag-id="${f.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      })
-      setTimeout(() => { if (highlightFragId.value === f.id) highlightFragId.value = null }, 2400)
-    }
-
-    function renderGraph() {
-      if (!graphEl.value) return
-      const shown = visibleNodes.value
-      const shownIds = new Set(shown.map((n) => n.id))
-      const visNodes = shown.map((n) => ({
-        id: n.id,
-        label: n.title,
-        title: n.summary || n.title,          // native tooltip
-        color: {
-          background: KIND_COLOR[n.kind] || '#8e8e93',
-          border: FRESH_BORDER[n.freshness] || '#c7c7cc',
-          highlight: { background: KIND_COLOR[n.kind] || '#8e8e93', border: '#1d1d1f' },
-        },
-        borderWidth: 3,
-        font: { color: '#1d1d1f', size: 13 },
-        shape: 'dot',
-        size: 14 + (n.fragment_ids?.length || 1) * 2,   // bigger = more source fragments
-      }))
-      const visEdges = edges.value
-        .filter((e) => shownIds.has(e.source_id) && shownIds.has(e.target_id))
-        .map((e) => ({
-        from: e.source_id, to: e.target_id,
-        label: e.relation, width: 1 + (e.weight || 0.5) * 3,
-        title: e.weight != null ? `similarity ${Number(e.weight).toFixed(2)}` : undefined,
-        font: { size: 10, color: '#86868b', strokeWidth: 0 },
-        color: { color: '#c7c7cc', highlight: '#0a84ff' },
-        smooth: { enabled: true, type: 'continuous', roundness: 0.3 },
-      }))
-      const data = { nodes: visNodes, edges: visEdges }
-      const options = {
-        physics: { stabilization: true, barnesHut: { springLength: 140 } },
-        interaction: { hover: true, tooltipDelay: 120 },
-        nodes: { shadow: false },
-        edges: { arrows: { to: { enabled: true, scaleFactor: 0.5 } } },
-      }
-      if (network) { network.setData(data as any) }
-      else {
-        network = new Network(graphEl.value, data as any, options as any)
-        network.on('click', (params: any) => {
-          const id = params.nodes?.[0]
-          selected.value = id != null ? nodes.value.find((n) => n.id === id) || null : null
-        })
-      }
-    }
-
-    const buildPhase = ref('')
-    async function rebuild() {
-      building.value = true
-      buildPhase.value = 'starting'
-      try {
-        await api.build(true)   // returns immediately (202); build runs in background
-        // Poll status until the build finishes.
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 1500))
-          const s = await api.getBuildStatus()
-          buildStatus.value = s
-          buildPhase.value = s.phase
-          if (!s.running) break
-        }
-        if (buildStatus.value?.phase?.startsWith('error')) {
-          ElMessage.error('Build failed: ' + buildStatus.value.phase)
-        } else {
-          ElMessage.success(`Built ${buildStatus.value?.nodes ?? 0} nodes, ${buildStatus.value?.edges ?? 0} edges`)
-        }
-        await loadNetwork()
-      } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Build failed')
-      } finally { building.value = false; buildPhase.value = '' }
-    }
 
     // ---- settings ----
-    async function toggleAutoBuild(v: boolean) {
-      try { settings.value = await api.updateSettings({ auto_build: v }) }
-      catch (e: any) { ElMessage.error(e.message || 'Failed') }
-    }
-    async function toggleLinkCheck(v: boolean) {
-      try { settings.value = await api.updateSettings({ link_check_enabled: v }) }
-      catch (e: any) { ElMessage.error(e.message || 'Failed') }
-    }
     async function saveAiModel() {
       const m = (settings.value.ai_model || '').trim()
       if (!m) { ElMessage.warning('Model cannot be empty'); return }
@@ -465,30 +253,22 @@ export default defineComponent({
       await loadFragments()
     })
 
-    onBeforeUnmount(() => { if (network) { network.destroy(); network = null } })
-
     return {
       goBack,
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
       addDialog, openAdd,
-      fmtDate, FRESH_LABEL, FRESH_TYPE,
+      fmtDate,
       editDialog, editing, openEdit, saveEdit,
       batchDialog, chatInput, chatLoading, batchCommitting, batchLabelIds,
       messages, analyzed, openBatch, sendChat, commitBatch,
       suggestedLabels, applySuggestedLabel,
       queryText, results, aiAnswer, aiLoading, runSearch, runAiQuery,
-      nodes, edges, stale, buildStatus, building, buildPhase, loadNetwork, rebuild,
-      staleActing, markReviewed, archiveStale,
-      checkingLinks, checkLinks,
       dupConfident, dupFuzzy, dupLoading, dupChecked, aiChecking, aiDupKeys, dupActing,
       pairKey, loadDuplicates, aiCheckFuzzy, resolvePair,
-      selected, graphEl, KIND_COLOR,
-      graphKinds, kindFilter, toggleKind, nodeSearch, focusSearch,
-      graphLabels, labelFilter, toggleLabelFilter,
-      visibleNodes, selectedFragments, goToFragment, highlightFragId,
-      toggleAutoBuild, toggleLinkCheck, saveAiModel,
+      highlightFragId,
+      saveAiModel,
     }
   },
 })

@@ -1,15 +1,15 @@
 """Knowledge Vault — SQLite persistence.
 
-raw_fragment is append-only (soft-archive, never hard-delete). node/edge form
-the AI-managed network (rebuildable). fragment_vector stores embeddings for
-the SQLite vector store. Tables self-heal on every connection.
+raw_fragment is append-only (soft-archive, never hard-delete).
+fragment_vector stores embeddings for semantic search.
+Tables self-heal on every connection.
 """
 import json
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
 
-from .entity import RawFragment, KnowledgeNode, Edge
+from .entity import RawFragment
 from . import settings_manager
 
 _SCHEMA = [
@@ -23,27 +23,11 @@ _SCHEMA = [
         archived INTEGER DEFAULT 0,
         last_accessed TEXT
     )""",
-    """CREATE TABLE IF NOT EXISTS node (
-        id INTEGER PRIMARY KEY,
-        title TEXT NOT NULL,
-        summary TEXT DEFAULT '',
-        kind TEXT DEFAULT '',
-        fragment_ids TEXT DEFAULT '[]',
-        freshness TEXT DEFAULT 'fresh',
-        updated_at TEXT
-    )""",
-    """CREATE TABLE IF NOT EXISTS edge (
-        id INTEGER PRIMARY KEY,
-        source_id INTEGER NOT NULL,
-        target_id INTEGER NOT NULL,
-        relation TEXT DEFAULT 'related',
-        weight REAL DEFAULT 1.0
-    )""",
     """CREATE TABLE IF NOT EXISTS fragment_vector (
         fragment_id INTEGER PRIMARY KEY,
-        vector TEXT NOT NULL
-    )""",
-    """CREATE TABLE IF NOT EXISTS label (
+        vector TEXT NOT NULL,
+        content_hash TEXT
+    )""",    """CREATE TABLE IF NOT EXISTS label (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         color TEXT DEFAULT '#8e8e93'
@@ -60,15 +44,11 @@ def _conn():
     conn = sqlite3.connect(settings_manager.get_db_path())
     for stmt in _SCHEMA:
         conn.execute(stmt)
-    _migrate(conn)
+    _maybe_add_content_hash(conn)
     return conn
 
 
-def _migrate(conn) -> None:
-    """Idempotent column-level migrations (self-healing schema can't add columns).
-
-    Cheap: PRAGMA reads are in-memory. Adds columns that older DBs lack.
-    """
+def _maybe_add_content_hash(conn) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(fragment_vector)")}
     if "content_hash" not in cols:
         conn.execute("ALTER TABLE fragment_vector ADD COLUMN content_hash TEXT")
@@ -107,7 +87,6 @@ def get_fragments(include_archived=False) -> List[RawFragment]:
     q += " ORDER BY id DESC"
     cur.execute(q)
     rows = cur.fetchall()
-    # Bulk-load label assignments so we don't N+1 query per fragment.
     cur.execute("SELECT fragment_id, label_id FROM fragment_label")
     label_map = {}
     for frag_id, label_id in cur.fetchall():
@@ -136,8 +115,6 @@ def get_fragment(fid) -> Optional[RawFragment]:
 
 
 def update_fragment(fid, content=None, note=None) -> None:
-    """Edit the content/note of a fragment (user-initiated). The raw layer is
-    append-only w.r.t. the AI, but the user may correct their own entries."""
     conn = _conn()
     sets, params = [], []
     if content is not None:
@@ -159,8 +136,6 @@ def archive_fragment(fid) -> None:
 
 
 def delete_fragment(fid) -> None:
-    """Hard-delete a fragment and its vector (user-initiated only; the AI never
-    deletes)."""
     conn = _conn()
     conn.execute("DELETE FROM raw_fragment WHERE id = ?", (fid,))
     conn.execute("DELETE FROM fragment_vector WHERE fragment_id = ?", (fid,))
@@ -187,20 +162,6 @@ def save_vector(fragment_id: int, vector: List[float], content_hash: str = None)
     conn.close()
 
 
-def get_vector_hashes() -> dict:
-    """{fragment_id: content_hash} for fragments that already have a vector.
-
-    Lets an incremental build skip re-embedding fragments whose content is
-    unchanged (hash matches). None hash means 'unknown' → treat as changed.
-    """
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("SELECT fragment_id, content_hash FROM fragment_vector")
-    rows = cur.fetchall()
-    conn.close()
-    return {r[0]: r[1] for r in rows}
-
-
 def get_all_vectors() -> List[tuple]:
     """Returns [(fragment_id, [floats])] for non-archived fragments."""
     conn = _conn()
@@ -211,81 +172,6 @@ def get_all_vectors() -> List[tuple]:
     rows = cur.fetchall()
     conn.close()
     return [(r[0], json.loads(r[1])) for r in rows]
-
-
-# ---- knowledge network (rebuildable) ---------------------------------
-
-def clear_network() -> None:
-    conn = _conn()
-    conn.execute("DELETE FROM node")
-    conn.execute("DELETE FROM edge")
-    conn.commit()
-    conn.close()
-
-
-def insert_node(n: KnowledgeNode) -> KnowledgeNode:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("""INSERT INTO node (title, summary, kind, fragment_ids, freshness, updated_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (n.title, n.summary, n.kind, n.fragment_ids, n.freshness,
-                 n.updated_at or datetime.now().isoformat()))
-    n.id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return n
-
-
-def insert_edge(e: Edge) -> Edge:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("""INSERT INTO edge (source_id, target_id, relation, weight)
-                   VALUES (?,?,?,?)""",
-                (e.source_id, e.target_id, e.relation, e.weight))
-    e.id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return e
-
-
-def get_nodes() -> List[KnowledgeNode]:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, title, summary, kind, fragment_ids, freshness, updated_at FROM node ORDER BY id")
-    rows = cur.fetchall()
-    conn.close()
-    return [KnowledgeNode.from_row(r) for r in rows]
-
-
-def get_edges() -> List[Edge]:
-    conn = _conn()
-    cur = conn.cursor()
-    cur.execute("SELECT id, source_id, target_id, relation, weight FROM edge")
-    rows = cur.fetchall()
-    conn.close()
-    return [Edge.from_row(r) for r in rows]
-
-
-def set_node_freshness(node_id: int, freshness: str) -> None:
-    conn = _conn()
-    conn.execute("UPDATE node SET freshness = ? WHERE id = ?", (freshness, node_id))
-    conn.commit()
-    conn.close()
-
-
-def update_node_meta(node_id: int, title: str, summary: str, kind: str) -> None:
-    conn = _conn()
-    conn.execute("UPDATE node SET title = ?, summary = ?, kind = ? WHERE id = ?",
-                 (title, summary, kind, node_id))
-    conn.commit()
-    conn.close()
-
-
-def set_edge_relation(edge_id: int, relation: str) -> None:
-    conn = _conn()
-    conn.execute("UPDATE edge SET relation = ? WHERE id = ?", (relation, edge_id))
-    conn.commit()
-    conn.close()
 
 
 # ---- labels (user-managed tags; a fragment may have many) --------------
@@ -302,7 +188,6 @@ def get_labels() -> List[dict]:
 def create_label(name: str, color: str = "#8e8e93") -> dict:
     conn = _conn()
     cur = conn.cursor()
-    # Idempotent: reuse an existing label of the same name.
     cur.execute("SELECT id, name, color FROM label WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
