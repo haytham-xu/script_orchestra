@@ -97,7 +97,9 @@ def delete_file(fid: int) -> None:
 
 
 def prune_missing() -> int:
-    """Remove DB entries for files that no longer exist on disk."""
+    """Remove DB entries for paths that no longer exist on disk.
+    Used by the manual 'Prune' button in Settings.
+    """
     conn = _conn()
     cur = conn.cursor()
     cur.execute('SELECT id, path FROM tracked_file')
@@ -107,6 +109,26 @@ def prune_missing() -> int:
         if not os.path.exists(path):
             conn.execute('DELETE FROM tracked_file WHERE id = ?', (fid,))
             removed += 1
+    conn.commit()
+    conn.close()
+    return removed
+
+
+def prune_by_scan_time(scan_time: float) -> int:
+    """Remove entries not touched in the most recent scan pass.
+
+    Any row whose scan_time is strictly older than the current scan_time
+    was not seen during the scan (deleted, renamed, or newly ignored) and
+    should be removed — unless the user has manually set its status to
+    'ignored' or 'archived', in which case we keep it so the mark survives
+    even if the path temporarily disappears.
+    """
+    conn = _conn()
+    cur = conn.execute(
+        "DELETE FROM tracked_file WHERE scan_time < ? AND status = 'normal'",
+        (scan_time,),
+    )
+    removed = cur.rowcount
     conn.commit()
     conn.close()
     return removed

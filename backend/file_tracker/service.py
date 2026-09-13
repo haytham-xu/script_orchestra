@@ -59,6 +59,15 @@ class FileTrackerService:
     # ------------------------------------------------------------------
 
     def _run_scan(self):
+        """Shallow scan: for each configured path, track immediate children.
+
+        - Plain files under the root are tracked directly.
+        - Subdirectories are tracked as a single entry: last_active = max
+          mtime/atime of direct children, size = sum of direct children sizes.
+
+        After the scan, entries whose scan_time predates this run are pruned
+        (handles renames and deletions without a separate disk-existence check).
+        """
         try:
             settings = settings_manager.load_settings()
             scan_paths = settings.get('scan_paths', [])
@@ -68,33 +77,45 @@ class FileTrackerService:
             for root_path in scan_paths:
                 if not os.path.isdir(root_path):
                     continue
-                for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
-                    # Prune ignored dirs in-place so os.walk won't descend into them
-                    dirnames[:] = [
-                        d for d in dirnames
-                        if not self._should_ignore(d, ignore_patterns)
-                    ]
-                    self._estimated_total += len(filenames)
-                    for fname in filenames:
-                        if self._should_ignore(fname, ignore_patterns):
-                            self._scanned += 1
-                            continue
-                        fpath = os.path.join(dirpath, fname)
-                        self._current_path = fpath
-                        try:
-                            st = os.stat(fpath)
-                            mtime = st.st_mtime
-                            atime = st.st_atime
+
+                try:
+                    entries = os.listdir(root_path)
+                except OSError:
+                    continue
+
+                self._estimated_total += len(entries)
+
+                for name in entries:
+                    if self._should_ignore(name, ignore_patterns):
+                        self._scanned += 1
+                        continue
+
+                    entry_path = os.path.join(root_path, name)
+                    self._current_path = entry_path
+
+                    try:
+                        if os.path.isfile(entry_path):
+                            st = os.stat(entry_path)
+                            mtime, atime = st.st_mtime, st.st_atime
                             size = st.st_size
                             last_active = max(mtime, atime)
                             repository.upsert_file(
-                                fpath, size, mtime, atime, last_active, scan_time
+                                entry_path, size, mtime, atime, last_active, scan_time
                             )
-                        except OSError:
-                            pass
-                        self._scanned += 1
 
-            repository.prune_missing()
+                        elif os.path.isdir(entry_path):
+                            # Aggregate direct children of the subdirectory
+                            size, last_active, mtime, atime = _stat_dir_shallow(entry_path)
+                            repository.upsert_file(
+                                entry_path, size, mtime, atime, last_active, scan_time
+                            )
+                    except OSError:
+                        pass
+
+                    self._scanned += 1
+
+            # Mark-and-sweep: remove entries not touched in this scan pass
+            repository.prune_by_scan_time(scan_time)
             self._last_scan_time = time.time()
         finally:
             with self._lock:
@@ -144,3 +165,46 @@ def _trash_via_osascript(path: str) -> None:
     result = subprocess.run(['osascript', '-e', script], capture_output=True)
     if result.returncode != 0:
         raise RuntimeError(f'osascript trash failed: {result.stderr.decode()}')
+
+
+def _stat_dir_shallow(dir_path: str):
+    """Return (total_size, last_active, max_mtime, max_atime) for a directory.
+
+    Reads direct children only (one level deep) and aggregates:
+    - size = sum of child file sizes (subdirectories are counted by their own stat)
+    - last_active = max(mtime, atime) across all children
+    - mtime/atime = the maximum values seen
+    """
+    total_size = 0
+    max_mtime = 0.0
+    max_atime = 0.0
+
+    try:
+        for name in os.listdir(dir_path):
+            child = os.path.join(dir_path, name)
+            try:
+                st = os.stat(child)
+                if os.path.isfile(child):
+                    total_size += st.st_size
+                if st.st_mtime > max_mtime:
+                    max_mtime = st.st_mtime
+                if st.st_atime > max_atime:
+                    max_atime = st.st_atime
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    # Fall back to the directory's own stat when empty or unreadable
+    if max_mtime == 0.0 or max_atime == 0.0:
+        try:
+            st = os.stat(dir_path)
+            if max_mtime == 0.0:
+                max_mtime = st.st_mtime
+            if max_atime == 0.0:
+                max_atime = st.st_atime
+        except OSError:
+            pass
+
+    last_active = max(max_mtime, max_atime)
+    return total_size, last_active, max_mtime, max_atime
