@@ -1,5 +1,5 @@
 import { getRequest, postRequest, putRequest, patchRequest, deleteRequest } from '@/basic/RequestService'
-import { FILE_TRACKER_ENDPOINT } from '@/basic/Constants'
+import { BACKEND_BASE_URL, FILE_TRACKER_ENDPOINT } from '@/basic/Constants'
 import type { TrackedFile, ScanStatus, FileTrackerSettings, FilesPage, FileStats, PreviewMeta } from './Model'
 
 const B = FILE_TRACKER_ENDPOINT
@@ -67,7 +67,7 @@ export async function getPreviewMeta(id: number): Promise<PreviewMeta> {
 }
 
 export function rawUrl(id: number): string {
-  return `${B}/files/${id}/raw`
+  return `${BACKEND_BASE_URL}${B}/files/${id}/raw`
 }
 
 export async function pruneDeleted(): Promise<number> {
