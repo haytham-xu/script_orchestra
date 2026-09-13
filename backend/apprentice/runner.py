@@ -17,7 +17,7 @@ from typing import Optional
 from . import repository
 
 WORKER_SCRIPT = Path(__file__).parent / "worker.py"
-LOGS_DIR = Path(__file__).parent / "logs"
+LOGS_DIR = Path("/tmp/apprentice_logs")
 
 
 @dataclass

@@ -8,8 +8,6 @@ __pycache__
 **/*.db
 **/*.db-shm
 **/*.db-wal
-## Apprentice worker logs
-backend/apprentice/logs/
 ## All per-tool runtime settings (convention: every tool uses settings.json)
 backend/**/settings.json
 
