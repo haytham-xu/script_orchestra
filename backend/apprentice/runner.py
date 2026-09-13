@@ -100,6 +100,10 @@ def _reader_loop(task_id: int, process: subprocess.Popen) -> None:
         _broadcast({"task_id": task_id, "event": "system", "content": f"[reader error] {e}"})
     finally:
         process.wait()
+        # If the worker crashed without emitting [DONE]/[HALTED], mark as failed.
+        task = repository.get_task(task_id)
+        if task and task.status == "running":
+            repository.update_task_status(task_id, "failed")
         _broadcast({"task_id": task_id, "event": "run_finished"})
         with _state_lock:
             global _state
