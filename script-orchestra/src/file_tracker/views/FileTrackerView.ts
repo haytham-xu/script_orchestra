@@ -2,7 +2,7 @@ import { defineComponent, ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '../service/FileTrackerService'
-import type { TrackedFile, ScanStatus, FileStats } from '../service/Model'
+import type { TrackedFile, ScanStatus, FileStats, PreviewMeta } from '../service/Model'
 
 type AgeGroup = 'danger' | 'warn' | 'archive' | 'recent'
 
@@ -49,23 +49,23 @@ export default defineComponent({
     const loading = ref(false)
     const thresholds = ref({ archive: 90, warn: 180, danger: 365 })
 
+    // Preview state
+    const selectedFile = ref<TrackedFile | null>(null)
+    const preview = ref<PreviewMeta | null>(null)
+    const previewLoading = ref(false)
+
     let pollTimer: ReturnType<typeof setInterval> | null = null
 
     // ---- scan polling ----
     async function pollScan() {
-      try {
-        scanStatus.value = await api.getScanStatus()
-      } catch { /* non-fatal */ }
+      try { scanStatus.value = await api.getScanStatus() } catch { /* non-fatal */ }
     }
 
     function startPoll() {
       if (pollTimer) return
       pollTimer = setInterval(async () => {
         await pollScan()
-        if (!scanStatus.value.running) {
-          stopPoll()
-          await loadAll()
-        }
+        if (!scanStatus.value.running) { stopPoll(); await loadAll() }
       }, 2000)
     }
 
@@ -75,16 +75,10 @@ export default defineComponent({
 
     async function triggerScan() {
       try {
-        await api.startScan()
-        await pollScan()
-        startPoll()
+        await api.startScan(); await pollScan(); startPoll()
       } catch (e: any) {
-        if (e?.response?.status === 409) {
-          ElMessage.info('Scan already running')
-          startPoll()
-        } else {
-          ElMessage.error(e.message || 'Failed to start scan')
-        }
+        if (e?.response?.status === 409) { ElMessage.info('Scan already running'); startPoll() }
+        else ElMessage.error(e.message || 'Failed to start scan')
       }
     }
 
@@ -113,7 +107,6 @@ export default defineComponent({
       await Promise.all([loadFiles(), loadStats()])
     }
 
-    // ---- load settings thresholds ----
     async function loadThresholds() {
       try {
         const s = await api.getSettings()
@@ -130,22 +123,54 @@ export default defineComponent({
 
     const grouped = computed(() => {
       const g: Record<AgeGroup, TrackedFile[]> = { danger: [], warn: [], archive: [], recent: [] }
-      for (const f of filteredFiles.value) {
+      for (const f of filteredFiles.value)
         g[ageGroup(ageDays(f.last_active), thresholds.value)].push(f)
-      }
       return g
     })
 
-    const totalSizeDisplay = computed(() => {
-      if (!stats.value) return ''
-      return fmtSize(stats.value.total_size)
-    })
+    const totalSizeDisplay = computed(() => stats.value ? fmtSize(stats.value.total_size) : '')
 
     const scanPercent = computed(() => {
       const { scanned, total: tot } = scanStatus.value.progress
       if (!tot) return 0
       return Math.min(100, Math.round((scanned / tot) * 100))
     })
+
+    // ---- preview ----
+    async function selectFile(f: TrackedFile) {
+      if (selectedFile.value?.id === f.id) return
+      selectedFile.value = f
+      preview.value = null
+      previewLoading.value = true
+      try {
+        preview.value = await api.getPreviewMeta(f.id)
+      } catch {
+        preview.value = { type: 'unsupported' }
+      } finally {
+        previewLoading.value = false
+      }
+    }
+
+    function clearSelection() {
+      selectedFile.value = null
+      preview.value = null
+    }
+
+    function rawUrl(f: TrackedFile): string {
+      return api.rawUrl(f.id)
+    }
+
+    // Keyboard up/down to navigate files
+    function onKeyDown(e: KeyboardEvent) {
+      if (!selectedFile.value) return
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+      e.preventDefault()
+      const list = filteredFiles.value
+      const idx = list.findIndex(f => f.id === selectedFile.value!.id)
+      if (idx === -1) return
+      const next = e.key === 'ArrowDown' ? idx + 1 : idx - 1
+      if (next >= 0 && next < list.length) selectFile(list[next])
+    }
 
     // ---- per-file actions ----
     async function setStatus(f: TrackedFile, status: string) {
@@ -158,13 +183,13 @@ export default defineComponent({
       const name = f.path.split('/').pop() || f.path
       try {
         await ElMessageBox.confirm(
-          `Move "${name}" to Trash? This cannot be undone from here.`,
-          'Confirm Delete',
+          `Move "${name}" to Trash?`, 'Confirm Delete',
           { type: 'warning', confirmButtonText: 'Move to Trash', cancelButtonText: 'Cancel' },
         )
       } catch { return }
       try {
         await api.trashFile(f.id)
+        if (selectedFile.value?.id === f.id) clearSelection()
         files.value = files.value.filter(x => x.id !== f.id)
         await loadStats()
         ElMessage.success(`"${name}" moved to Trash`)
@@ -182,17 +207,11 @@ export default defineComponent({
       if (!selectedIds.value.length) return
       if (action === 'delete') {
         try {
-          await ElMessageBox.confirm(
-            `Move ${selectedIds.value.length} file(s) to Trash?`, 'Confirm',
-            { type: 'warning' },
-          )
+          await ElMessageBox.confirm(`Move ${selectedIds.value.length} file(s) to Trash?`, 'Confirm', { type: 'warning' })
         } catch { return }
         const r = await api.bulkDelete(selectedIds.value)
-        if (r.errors?.length) {
-          ElMessage.warning(`Moved ${r.deleted}, ${r.errors.length} error(s)`)
-        } else {
-          ElMessage.success(`Moved ${r.deleted} file(s) to Trash`)
-        }
+        if (r.errors?.length) ElMessage.warning(`Moved ${r.deleted}, ${r.errors.length} error(s)`)
+        else ElMessage.success(`Moved ${r.deleted} file(s) to Trash`)
       } else {
         await api.bulkStatus(selectedIds.value, action)
         ElMessage.success(`${selectedIds.value.length} file(s) marked as ${action}`)
@@ -206,8 +225,7 @@ export default defineComponent({
     }
 
     function groupSize(grp: TrackedFile[]): string {
-      const sz = grp.reduce((s, f) => s + (f.size_bytes || 0), 0)
-      return fmtSize(sz)
+      return fmtSize(grp.reduce((s, f) => s + (f.size_bytes || 0), 0))
     }
 
     onMounted(async () => {
@@ -215,13 +233,19 @@ export default defineComponent({
       await pollScan()
       if (scanStatus.value.running) startPoll()
       await loadAll()
+      window.addEventListener('keydown', onKeyDown)
     })
-    onUnmounted(() => stopPoll())
+    onUnmounted(() => {
+      stopPoll()
+      window.removeEventListener('keydown', onKeyDown)
+    })
 
     return {
       files, total, stats, scanStatus, viewMode, activeStatusFilter, searchText,
       selectedIds, loading, filteredFiles, grouped, totalSizeDisplay, scanPercent, thresholds,
+      selectedFile, preview, previewLoading,
       triggerScan, loadFiles, loadAll,
+      selectFile, clearSelection, rawUrl,
       setStatus, deleteFile, revealFile, bulkAction, onTableSelectionChange,
       fmtSize, ageDays, ageGroup, fmtDate, groupSize,
       goSettings: () => router.push('/file-tracker/settings'),

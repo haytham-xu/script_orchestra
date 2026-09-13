@@ -4,9 +4,10 @@ Route ordering: literal-path sub-routes (bulk-status, bulk-delete, prune)
 must be defined before the parametric route /files/<int:fid> so Flask does
 not try to parse "bulk-status" etc. as integer IDs.
 """
+import os
 import traceback
 
-from flask import request
+from flask import request, send_file
 from flask_restx import Namespace, Resource
 
 from .service import get_service
@@ -144,6 +145,26 @@ class FileRevealResource(Resource):
             return {'error': str(e)}, 500
 
 
+@ns.route('/files/<int:fid>/preview')
+class FilePreviewMetaResource(Resource):
+    def get(self, fid):
+        f = repository.get_file(fid)
+        if not f:
+            return {'error': 'Not found'}, 404
+        return {'preview': _preview_meta(f.path)}, 200
+
+
+@ns.route('/files/<int:fid>/raw')
+class FileRawResource(Resource):
+    def get(self, fid):
+        f = repository.get_file(fid)
+        if not f:
+            return {'error': 'Not found'}, 404
+        if not os.path.exists(f.path):
+            return {'error': 'File not on disk'}, 404
+        return send_file(f.path, conditional=True)
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -159,3 +180,65 @@ class SettingsResource(Resource):
         s.update(data)
         settings_manager.save_settings(s)
         return {'settings': s}, 200
+
+
+# ---------------------------------------------------------------------------
+# Preview helpers
+# ---------------------------------------------------------------------------
+
+_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg',
+               '.ico', '.tiff', '.tif', '.avif', '.heic'}
+_VIDEO_EXTS = {'.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.wmv',
+               '.flv', '.mpg', '.mpeg'}
+_TEXT_EXTS  = {'.txt', '.md', '.log', '.json', '.yaml', '.yml', '.toml',
+               '.csv', '.xml', '.html', '.htm', '.css', '.js', '.ts',
+               '.py', '.sh', '.bash', '.zsh', '.fish', '.rb', '.go',
+               '.rs', '.c', '.cpp', '.h', '.java', '.kt', '.swift',
+               '.ini', '.cfg', '.conf', '.env', '.gitignore', '.dockerfile',
+               '.sql', '.graphql', '.proto'}
+
+_TEXT_PREVIEW_BYTES = 100 * 1024  # 100 KB
+
+
+def _is_text_by_sniff(path: str) -> bool:
+    """Read first 512 bytes and check for binary characters."""
+    try:
+        with open(path, 'rb') as f:
+            chunk = f.read(512)
+        if b'\x00' in chunk:
+            return False
+        printable = sum(1 for b in chunk if 0x09 <= b <= 0x0D or 0x20 <= b <= 0x7E or b >= 0x80)
+        return printable / max(len(chunk), 1) > 0.90
+    except OSError:
+        return False
+
+
+def _preview_meta(path: str) -> dict:
+    if os.path.isdir(path):
+        return {'type': 'unsupported'}
+
+    ext = os.path.splitext(path)[1].lower()
+    name = os.path.basename(path)
+    size = 0
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        pass
+
+    if ext in _IMAGE_EXTS:
+        return {'type': 'image', 'name': name, 'size': size, 'ext': ext}
+
+    if ext in _VIDEO_EXTS:
+        return {'type': 'video', 'name': name, 'size': size, 'ext': ext}
+
+    if ext in _TEXT_EXTS or _is_text_by_sniff(path):
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read(_TEXT_PREVIEW_BYTES)
+            truncated = os.path.getsize(path) > _TEXT_PREVIEW_BYTES
+            return {'type': 'text', 'name': name, 'size': size,
+                    'content': content, 'truncated': truncated}
+        except OSError:
+            pass
+
+    return {'type': 'unsupported', 'name': name, 'size': size, 'ext': ext}

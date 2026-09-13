@@ -38,3 +38,14 @@ export interface FileStats {
   total_size: number
   by_status: Record<string, { count: number; size: number }>
 }
+
+export type PreviewType = 'image' | 'video' | 'text' | 'unsupported'
+
+export interface PreviewMeta {
+  type: PreviewType
+  name?: string
+  size?: number
+  ext?: string
+  content?: string      // text only
+  truncated?: boolean   // text only
+}

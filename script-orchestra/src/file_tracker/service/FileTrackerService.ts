@@ -1,6 +1,6 @@
 import { getRequest, postRequest, putRequest, patchRequest, deleteRequest } from '@/basic/RequestService'
 import { FILE_TRACKER_ENDPOINT } from '@/basic/Constants'
-import type { TrackedFile, ScanStatus, FileTrackerSettings, FilesPage, FileStats } from './Model'
+import type { TrackedFile, ScanStatus, FileTrackerSettings, FilesPage, FileStats, PreviewMeta } from './Model'
 
 const B = FILE_TRACKER_ENDPOINT
 
@@ -59,6 +59,15 @@ export async function bulkDelete(ids: number[]): Promise<{ deleted: number; erro
 
 export async function revealFile(id: number): Promise<void> {
   await postRequest(`${B}/files/${id}/reveal`)
+}
+
+export async function getPreviewMeta(id: number): Promise<PreviewMeta> {
+  const r = await getRequest<{ preview: PreviewMeta }>(`${B}/files/${id}/preview`)
+  return r.preview
+}
+
+export function rawUrl(id: number): string {
+  return `${B}/files/${id}/raw`
 }
 
 export async function pruneDeleted(): Promise<number> {
