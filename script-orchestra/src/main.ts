@@ -2,7 +2,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
-import router from './router'
+import { createToolRouter } from './router'
+import { BACKEND_BASE_URL, ENABLED_TOOLS_ENDPOINT } from './basic/Constants'
 import '@/assets/main.css'
 
 import ElementPlus from 'element-plus'
@@ -26,18 +27,33 @@ if ('serviceWorker' in navigator) {
   }
 }
 
-const app = createApp(App)
-app.use(createPinia())
-app.use(router)
-
-app.use(ElementPlus, {
-  message: {
-    offset: 20,
-    duration: 1500
+async function bootstrap() {
+  let enabled: Set<string> = new Set()
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}${ENABLED_TOOLS_ENDPOINT}`)
+    const data = await res.json()
+    if (Array.isArray(data.enabled)) {
+      enabled = new Set(data.enabled)
+    }
+  } catch {
+    // Backend unreachable on load — no tools enabled (default: all disabled)
   }
-})
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
+
+  const app = createApp(App)
+  app.use(createPinia())
+  app.use(createToolRouter(enabled))
+
+  app.use(ElementPlus, {
+    message: {
+      offset: 20,
+      duration: 1500
+    }
+  })
+  for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+    app.component(key, component)
+  }
+
+  app.mount('#app')
 }
 
-app.mount('#app')
+bootstrap()

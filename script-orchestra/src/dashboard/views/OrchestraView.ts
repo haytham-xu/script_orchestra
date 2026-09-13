@@ -1,10 +1,10 @@
 import { defineComponent, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { toolIcons } from '../icons/toolIcons'
 import * as api from '../service/DashboardService'
 import type { LayoutItem, FolderItem, ToolMeta, ToolStatus } from '../service/DashboardService'
-import { BACKEND_BASE_URL } from '@/basic/Constants'
+import { BACKEND_BASE_URL, ENABLED_TOOLS_ENDPOINT } from '@/basic/Constants'
 
 // Code-defined tool registry — the source of truth for what tools exist.
 // key matches the slug used in toolIcons. Layout only references these keys.
@@ -119,6 +119,44 @@ export default defineComponent({
     const toolMeta = ref<Record<string, ToolMeta>>({})
     const metaSaveTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 
+    // Enabled tools — always a Set; empty = no settings.json / all disabled
+    const enabledTools = ref<Set<string>>(new Set())
+    const enabledLoaded = ref(false)
+
+    async function loadEnabledTools() {
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}${ENABLED_TOOLS_ENDPOINT}`)
+        const data = await res.json()
+        enabledTools.value = new Set(Array.isArray(data.enabled) ? data.enabled : [])
+      } catch { /* non-fatal */ }
+      enabledLoaded.value = true
+    }
+
+    function isToolEnabled(key: string): boolean {
+      return enabledTools.value.has(key)
+    }
+
+    async function toggleTool(key: string) {
+      const newSet = new Set(enabledTools.value)
+      if (newSet.has(key)) {
+        newSet.delete(key)
+      } else {
+        newSet.add(key)
+      }
+      enabledTools.value = newSet
+
+      try {
+        await fetch(`${BACKEND_BASE_URL}${ENABLED_TOOLS_ENDPOINT}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: [...newSet] }),
+        })
+        ElMessage({ type: 'success', message: 'Saved — restart backend to apply changes', duration: 3000 })
+      } catch {
+        ElMessage({ type: 'error', message: 'Failed to save enabled tools' })
+      }
+    }
+
     async function loadToolMeta() {
       try { toolMeta.value = await api.getToolMeta() } catch { /* non-fatal */ }
     }
@@ -186,6 +224,21 @@ export default defineComponent({
     const openFolder = computed<FolderCell | null>(() => {
       const candidate = cells.value.find((c) => c.type === 'folder' && c.id === openFolderId.value)
       return candidate && candidate.type === 'folder' ? candidate : null
+    })
+
+    // Only show enabled tools on the grid; folder keys are also filtered
+    const visibleCells = computed<Cell[]>(() => {
+      return cells.value
+        .map((c): Cell | null => {
+          if (c.type === 'tool') {
+            return isToolEnabled(c.key) ? c : null
+          }
+          // folder: keep only enabled keys; dissolve if empty
+          const keys = c.keys.filter((k) => isToolEnabled(k))
+          if (keys.length === 0) return null
+          return { ...c, keys }
+        })
+        .filter((c): c is Cell => c !== null)
     })
 
     async function load() {
@@ -299,6 +352,7 @@ export default defineComponent({
     onMounted(() => {
       load()
       loadToolMeta()
+      loadEnabledTools()
       pollStatus()
       statusTimer = setInterval(pollStatus, 5000)
     })
@@ -308,13 +362,14 @@ export default defineComponent({
     })
 
     return {
-      cells, toolIcons, toolOf, goTo, dragKey, overCell,
+      cells, visibleCells, toolIcons, toolOf, goTo, dragKey, overCell,
       onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd, onGridDrop,
       openFolderId, openFolder, openFolderView, closeFolder,
       renameFolder, removeFromFolder,
       runningKeys,
       infoPanelOpen, toolMeta, metaOf, STATUS_OPTIONS, TOOLS,
       statusLabel, statusColor, setMetaStatus, setMetaComment,
+      enabledTools, enabledLoaded, isToolEnabled, toggleTool,
     }
   },
 })

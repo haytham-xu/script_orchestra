@@ -21,33 +21,38 @@
     </div>
 
     <div class="lp-grid" @dragover.prevent @drop="onGridDrop">
-      <div
+      <template
         v-for="(cell, index) in cells"
-        :key="cell.type === 'tool' ? cell.key : cell.id"
-        class="lp-cell"
-        :class="{ 'lp-over': overCell === index }"
-        draggable="true"
-        @dragstart="onDragStart($event, index)"
-        @dragover="onDragOver($event, index)"
-        @dragleave="onDragLeave(index)"
-        @drop.stop="onDrop($event, index)"
-        @dragend="onDragEnd">
-        <!-- tool -->
-        <div v-if="cell.type === 'tool'" class="lp-item"
-             :data-testid="toolOf(cell.key)?.testid"
-             @click="goTo(toolOf(cell.key)?.path, cell.key)">
-          <div class="lp-icon" v-html="toolIcons[cell.key]"></div>
-          <div class="lp-name">{{ toolOf(cell.key)?.name }}</div>
-        </div>
-        <!-- folder -->
-        <div v-else class="lp-item lp-folder-cell" @click="openFolderView(cell.id)">
-          <div class="lp-folder-thumb">
-            <div v-for="k in cell.keys.slice(0, 9)" :key="k" class="lp-folder-mini"
-                 v-html="toolIcons[k]"></div>
+        :key="cell.type === 'tool' ? cell.key : cell.id">
+        <!-- skip disabled tools entirely -->
+        <template v-if="cell.type === 'folder' || isToolEnabled(cell.key)">
+        <div
+          class="lp-cell"
+          :class="{ 'lp-over': overCell === index }"
+          draggable="true"
+          @dragstart="onDragStart($event, index)"
+          @dragover="onDragOver($event, index)"
+          @dragleave="onDragLeave(index)"
+          @drop.stop="onDrop($event, index)"
+          @dragend="onDragEnd">
+          <!-- tool -->
+          <div v-if="cell.type === 'tool'" class="lp-item"
+               :data-testid="toolOf(cell.key)?.testid"
+               @click="goTo(toolOf(cell.key)?.path, cell.key)">
+            <div class="lp-icon" v-html="toolIcons[cell.key]"></div>
+            <div class="lp-name">{{ toolOf(cell.key)?.name }}</div>
           </div>
-          <div class="lp-name">{{ cell.name }}</div>
+          <!-- folder -->
+          <div v-else class="lp-item lp-folder-cell" @click="openFolderView(cell.id)">
+            <div class="lp-folder-thumb">
+              <div v-for="k in cell.keys.slice(0, 9)" :key="k" class="lp-folder-mini"
+                   v-html="toolIcons[k]"></div>
+            </div>
+            <div class="lp-name">{{ cell.name }}</div>
+          </div>
         </div>
-      </div>
+        </template>
+      </template>
     </div>
 
     <!-- Folder overlay -->
@@ -82,6 +87,7 @@
             <thead>
               <tr>
                 <th>Tool</th>
+                <th>Enabled</th>
                 <th>Status</th>
                 <th>Last Opened</th>
                 <th>Comment</th>
@@ -89,9 +95,15 @@
             </thead>
             <tbody>
               <tr v-for="tool in TOOLS" :key="tool.key">
-                <td class="lp-info-name" @click="goTo(tool.path, tool.key); infoPanelOpen = false">
+                <td class="lp-info-name" @click="isToolEnabled(tool.key) && goTo(tool.path, tool.key); infoPanelOpen = false">
                   <span class="lp-info-icon" v-html="toolIcons[tool.key]"></span>
                   {{ tool.name }}
+                </td>
+                <td>
+                  <label class="lp-toggle" :title="isToolEnabled(tool.key) ? 'Click to disable' : 'Click to enable'">
+                    <input type="checkbox" :checked="isToolEnabled(tool.key)" @change="toggleTool(tool.key)" />
+                    <span class="lp-toggle-track"></span>
+                  </label>
                 </td>
                 <td>
                   <select
@@ -254,4 +266,19 @@
 }
 .lp-info-comment:focus { border-color: #409eff; }
 .lp-info-comment::placeholder { color: #c0c4cc; }
+
+/* Toggle switch */
+.lp-toggle { display: inline-flex; align-items: center; cursor: pointer; }
+.lp-toggle input { display: none; }
+.lp-toggle-track {
+  width: 36px; height: 20px; border-radius: 10px; background: #dcdfe6;
+  position: relative; transition: background 0.2s; display: block;
+}
+.lp-toggle-track::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 14px; height: 14px; border-radius: 50%; background: #fff;
+  transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.lp-toggle input:checked + .lp-toggle-track { background: #409eff; }
+.lp-toggle input:checked + .lp-toggle-track::after { left: 19px; }
 </style>

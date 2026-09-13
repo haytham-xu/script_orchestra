@@ -54,3 +54,5 @@ export const FILE_PIPELINE_ENDPOINT = '/file-pipeline'
 export const FILE_TRACKER_ENDPOINT = '/file-tracker'
 
 export const APPRENTICE_ENDPOINT = '/apprentice'
+
+export const ENABLED_TOOLS_ENDPOINT = '/enabled-tools'

@@ -9,6 +9,7 @@ __pycache__
 **/*.db-shm
 **/*.db-wal
 ## All per-tool runtime settings (convention: every tool uses settings.json)
+## backend/settings.json is also covered by this rule (per-machine tool enable list)
 backend/**/settings.json
 
 
