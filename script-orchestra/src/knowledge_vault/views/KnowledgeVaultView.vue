@@ -7,7 +7,7 @@
       </div>
     </header>
 
-    <el-tabs v-model="activeTab" class="kv-tabs" @tab-change="activeTab === 'duplicates' && loadDuplicates()">
+    <el-tabs v-model="activeTab" class="kv-tabs">
       <!-- Capture -->
       <el-tab-pane label="Capture" name="capture">
         <div class="kv-capture">
