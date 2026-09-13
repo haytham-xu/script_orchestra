@@ -172,23 +172,41 @@
           </div>
 
           <div class="kv-rebuild-row" style="margin-top:16px">
-            <el-button :loading="rebuildingLabels" @click="rebuildLabels">
-              Rebuild labels (AI)
+            <el-button :loading="rebuildingLabels" @click="scanLabels">
+              Scan with AI
             </el-button>
-            <span class="kv-hint">Scans all fragments and suggests missing label assignments based on existing labels. Only adds — never removes.</span>
+            <span class="kv-hint">AI scans all fragments and suggests missing labels from your vocabulary. You review and confirm before anything is saved.</span>
           </div>
-          <div v-if="rebuildResult" class="kv-rebuild-result">
-            <template v-if="rebuildResult.updated === 0">
-              All fragments already have complete labels.
-            </template>
-            <template v-else>
-              Updated {{ rebuildResult.updated }} fragment(s):
-              <ul class="kv-rebuild-list">
-                <li v-for="a in rebuildResult.assignments" :key="a.id">
-                  #{{ a.id }} — added: {{ a.added.join(', ') }}
-                </li>
-              </ul>
-            </template>
+
+          <!-- Suggestions review list -->
+          <div v-if="labelSuggestions.length" class="kv-suggestions">
+            <div class="kv-suggestions-head">
+              <span class="kv-suggestions-title">{{ labelSuggestions.length }} suggestion(s) — select which to apply</span>
+              <div style="display:flex;gap:8px">
+                <el-button size="small" text @click="labelSuggestions.forEach(s => s._selected = true)">Select all</el-button>
+                <el-button size="small" text @click="labelSuggestions.forEach(s => s._selected = false)">None</el-button>
+              </div>
+            </div>
+            <div v-for="s in labelSuggestions" :key="s.id" class="kv-suggestion-row"
+              :class="{ 'kv-suggestion-selected': s._selected }"
+              @click="s._selected = !s._selected">
+              <el-checkbox v-model="s._selected" @click.stop />
+              <div class="kv-suggestion-body">
+                <div class="kv-suggestion-content">{{ s.content }}</div>
+                <div v-if="s.note" class="kv-suggestion-note">{{ s.note }}</div>
+              </div>
+              <div class="kv-suggestion-labels">
+                <el-tag v-for="name in s.add_labels" :key="name" size="small" type="warning">+ {{ name }}</el-tag>
+              </div>
+            </div>
+            <div class="kv-suggestions-footer">
+              <el-button type="primary" :loading="applyingLabels"
+                :disabled="!labelSuggestions.some(s => s._selected)"
+                @click="applyLabelSuggestions">
+                Apply selected ({{ labelSuggestions.filter(s => s._selected).length }})
+              </el-button>
+              <el-button @click="labelSuggestions = []">Discard</el-button>
+            </div>
           </div>
 
           <h3 style="margin-top:24px">AI model</h3>
@@ -416,8 +434,25 @@
 .kv-link-toggle { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #3a3a3c; }
 .kv-model-row { display: flex; align-items: center; gap: 10px; }
 .kv-rebuild-row { display: flex; align-items: center; gap: 12px; }
-.kv-rebuild-result { margin-top: 10px; font-size: 13px; color: #606266; }
-.kv-rebuild-list { margin: 6px 0 0 16px; padding: 0; font-size: 12px; color: #909399; line-height: 1.8; }
+.kv-suggestions { margin-top: 14px; border: 1px solid #e4e7ed; border-radius: 6px; overflow: hidden; }
+.kv-suggestions-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: #f5f7fa; border-bottom: 1px solid #e4e7ed;
+}
+.kv-suggestions-title { font-size: 13px; font-weight: 600; color: #303133; }
+.kv-suggestion-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid #f0f0f0;
+  cursor: pointer; transition: background 0.1s;
+}
+.kv-suggestion-row:last-of-type { border-bottom: none; }
+.kv-suggestion-row:hover { background: #fafafa; }
+.kv-suggestion-selected { background: #f0f9ff; }
+.kv-suggestion-body { flex: 1; min-width: 0; }
+.kv-suggestion-content { font-size: 12px; color: #303133; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-suggestion-note { font-size: 11px; color: #909399; margin-top: 2px; }
+.kv-suggestion-labels { display: flex; gap: 4px; flex-wrap: wrap; flex-shrink: 0; }
+.kv-suggestions-footer { display: flex; gap: 8px; padding: 10px 14px; background: #fafafa; border-top: 1px solid #e4e7ed; }
 .kv-detail-frags { margin-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 8px; }
 .kv-detail-frag { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   border-radius: 6px; cursor: pointer; font-size: 12px; color: #3a3a3c; }

@@ -213,7 +213,7 @@ class LabelsRebuildResource(Resource):
             return {"error": "No labels defined yet"}, 400
         fragments = repository.get_fragments()
         if not fragments:
-            return {"updated": 0, "assignments": []}, 200
+            return {"suggestions": []}, 200
 
         label_names = [l["name"] for l in labels]
         label_by_name = {l["name"].lower(): l["id"] for l in labels}
@@ -246,14 +246,14 @@ class LabelsRebuildResource(Resource):
             return {"error": f"AI call failed: {exc}"}, 502
 
         if not isinstance(result, list):
-            # ask_json expects a dict; try wrapping
             if isinstance(result, dict) and "assignments" in result:
                 result = result["assignments"]
             else:
                 return {"error": "AI returned unexpected format"}, 502
 
-        updated = 0
-        assignments = []
+        # Return suggestions with fragment preview — do NOT write anything yet
+        frag_map = {f.id: f for f in fragments}
+        suggestions = []
         for item in result:
             if not isinstance(item, dict):
                 continue
@@ -261,19 +261,53 @@ class LabelsRebuildResource(Resource):
             add_names = item.get("add_labels") or []
             if not fid or not isinstance(add_names, list):
                 continue
-            # Map names to ids (case-insensitive), filter unknown
+            valid_names = [n for n in add_names if n.lower() in label_by_name]
+            if not valid_names:
+                continue
+            frag = frag_map.get(fid)
+            if not frag:
+                continue
+            suggestions.append({
+                "id": fid,
+                "content": frag.content[:120],
+                "note": frag.note or "",
+                "add_labels": valid_names,
+            })
+
+        return {"suggestions": suggestions}, 200
+
+
+@ns.route("/labels/rebuild/apply")
+class LabelsRebuildApplyResource(Resource):
+    def post(self):
+        """Apply a user-confirmed subset of label suggestions."""
+        data = request.get_json(force=True) or {}
+        items = data.get("assignments") or []
+        if not isinstance(items, list):
+            return {"error": "assignments must be a list"}, 400
+
+        labels = repository.get_labels()
+        label_by_name = {l["name"].lower(): l["id"] for l in labels}
+        fragments = repository.get_fragments()
+        frag_map = {f.id: f for f in fragments}
+
+        updated = 0
+        for item in items:
+            fid = item.get("id")
+            add_names = item.get("add_labels") or []
+            if not fid or not add_names:
+                continue
+            frag = frag_map.get(int(fid))
+            if not frag:
+                continue
             new_ids = [label_by_name[n.lower()] for n in add_names if n.lower() in label_by_name]
             if not new_ids:
                 continue
-            frag = next((f for f in fragments if f.id == fid), None)
-            if not frag:
-                continue
             merged = list(set((frag.label_ids or []) + new_ids))
-            repository.set_fragment_labels(fid, merged)
-            assignments.append({"id": fid, "added": add_names})
+            repository.set_fragment_labels(frag.id, merged)
             updated += 1
 
-        return {"updated": updated, "assignments": assignments}, 200
+        return {"updated": updated}, 200
 
 
 @ns.route("/labels/<int:label_id>")

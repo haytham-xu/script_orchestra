@@ -249,22 +249,38 @@ export default defineComponent({
 
     // ---- settings ----
     const rebuildingLabels = ref(false)
-    const rebuildResult = ref<{ updated: number; assignments: { id: number; added: string[] }[] } | null>(null)
-    async function rebuildLabels() {
+    // Each suggestion has a `_selected` flag the user can toggle
+    type LabelSuggestion = { id: number; content: string; note: string; add_labels: string[]; _selected: boolean }
+    const labelSuggestions = ref<LabelSuggestion[]>([])
+    const applyingLabels = ref(false)
+
+    async function scanLabels() {
       rebuildingLabels.value = true
-      rebuildResult.value = null
+      labelSuggestions.value = []
       try {
         const r = await api.rebuildLabels()
-        rebuildResult.value = r
-        if (r.updated > 0) {
-          await loadFragments()
-          ElMessage.success(`Updated ${r.updated} fragment(s)`)
+        if (!r.suggestions.length) {
+          ElMessage.info('All fragments already have complete labels')
         } else {
-          ElMessage.info('All labels are already complete')
+          labelSuggestions.value = r.suggestions.map(s => ({ ...s, _selected: true }))
         }
       } catch (e: any) {
-        ElMessage.error(e.response?.data?.error || e.message || 'Rebuild failed')
+        ElMessage.error(e.response?.data?.error || e.message || 'Scan failed')
       } finally { rebuildingLabels.value = false }
+    }
+
+    async function applyLabelSuggestions() {
+      const selected = labelSuggestions.value.filter(s => s._selected)
+      if (!selected.length) { ElMessage.warning('Nothing selected'); return }
+      applyingLabels.value = true
+      try {
+        const r = await api.applyLabelSuggestions(selected.map(s => ({ id: s.id, add_labels: s.add_labels })))
+        ElMessage.success(`Applied to ${r.updated} fragment(s)`)
+        labelSuggestions.value = []
+        await loadFragments()
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Apply failed')
+      } finally { applyingLabels.value = false }
     }
 
     async function saveAiModel() {
@@ -298,7 +314,7 @@ export default defineComponent({
       dupConfident, dupFuzzy, dupLoading, dupChecked, aiChecking, aiDupKeys, dupActing,
       pairKey, loadDuplicates, aiCheckFuzzy, resolvePair,
       highlightFragId,
-      rebuildingLabels, rebuildResult, rebuildLabels,
+      rebuildingLabels, labelSuggestions, applyingLabels, scanLabels, applyLabelSuggestions,
       saveAiModel,
     }
   },
