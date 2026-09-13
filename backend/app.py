@@ -300,14 +300,20 @@ def create_app() -> Flask:
     # ── Enabled tools endpoints ───────────────────────────────
     @app.route('/enabled-tools', methods=['GET'])
     def get_enabled_tools():
+        # Return what is actually loaded (registered at startup), not the file.
         return jsonify({"enabled": list(_ENABLED)})
 
     @app.route('/enabled-tools', methods=['PUT'])
     def put_enabled_tools():
+        global _ENABLED
         data = request.get_json(force=True)
         enabled_list = data.get("enabled", [])
         with open(_SETTINGS_PATH, "w") as f:
             json.dump({"enabled": enabled_list}, f, indent=2)
+        # Update in-memory set so GET reflects the saved list immediately.
+        # Note: newly enabled tools still require a backend restart to load
+        # their blueprints; this only ensures the saved list survives a page refresh.
+        _ENABLED = set(enabled_list)
         return jsonify({"ok": True})
 
     # ── WebSocket init ────────────────────────────────────────

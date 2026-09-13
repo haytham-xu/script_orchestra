@@ -48,7 +48,6 @@ const STATUS_CHECKS: StatusCheck[] = [
   { key: 'relay-proxy',            url: `${BACKEND_BASE_URL}/relay-proxy/status`,                     isRunning: (d) => !!d?.running },
   { key: 'browser-agent',          url: `${BACKEND_BASE_URL}/browser-agent/download-jm/status`,       isRunning: (d) => !!d?.running },
   { key: 'browser-agent',          url: `${BACKEND_BASE_URL}/browser-agent/download-ssmh/status`,     isRunning: (d) => !!d?.running },
-  { key: 'knowledge-vault',        url: `${BACKEND_BASE_URL}/knowledge-vault/build/status`,           isRunning: (d) => !!d?.running },
   { key: 'duplicate-finder',       url: `${BACKEND_BASE_URL}/duplicate-finder/active-scans`,          isRunning: (d) => (d?.count ?? d?.scans?.length ?? 0) > 0 },
   { key: 'video-duplicate-finder', url: `${BACKEND_BASE_URL}/video-duplicate-finder/status`,          isRunning: (d) => !!d?.running },
   { key: 'file-git',               url: `${BACKEND_BASE_URL}/file-git/status`,                        isRunning: (d) => !!d?.running },
@@ -122,12 +121,18 @@ export default defineComponent({
     // Enabled tools — always a Set; empty = no settings.json / all disabled
     const enabledTools = ref<Set<string>>(new Set())
     const enabledLoaded = ref(false)
+    // Reflects what the backend actually loaded at startup (used for status polling).
+    // Separate from enabledTools so that UI toggles don't trigger 404s on endpoints
+    // that haven't been registered yet (require backend restart to take effect).
+    let backendEnabled: Set<string> = new Set()
 
     async function loadEnabledTools() {
       try {
         const res = await fetch(`${BACKEND_BASE_URL}${ENABLED_TOOLS_ENDPOINT}`)
         const data = await res.json()
-        enabledTools.value = new Set(Array.isArray(data.enabled) ? data.enabled : [])
+        const loaded = new Set<string>(Array.isArray(data.enabled) ? data.enabled : [])
+        enabledTools.value = loaded
+        backendEnabled = loaded
       } catch { /* non-fatal */ }
       enabledLoaded.value = true
     }
@@ -205,7 +210,7 @@ export default defineComponent({
 
     async function pollStatus() {
       const results = await Promise.allSettled(
-        STATUS_CHECKS.filter(check => isToolEnabled(check.key)).map(async (check) => {
+        STATUS_CHECKS.filter(check => backendEnabled.has(check.key)).map(async (check) => {
           const res = await fetch(check.url)
           if (!res.ok) return null
           const data = await res.json()
