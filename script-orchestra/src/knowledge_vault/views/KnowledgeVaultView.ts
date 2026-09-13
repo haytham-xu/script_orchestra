@@ -55,6 +55,16 @@ export default defineComponent({
     }
 
     async function loadFragments() { fragments.value = await api.getFragments() }
+
+    // ---- label filter (capture tab) ----
+    const filterLabelIds = ref<number[]>([])
+    const filteredFragments = computed(() => {
+      if (!filterLabelIds.value.length) return fragments.value
+      return fragments.value.filter(f =>
+        filterLabelIds.value.every(lid => f.label_ids?.includes(lid))
+      )
+    })
+
     const addDialog = ref(false)
     function openAdd() {
       draft.value = { content: '', note: '', label_ids: [] }
@@ -258,6 +268,7 @@ export default defineComponent({
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
+      filterLabelIds, filteredFragments,
       addDialog, openAdd,
       fmtDate,
       editDialog, editing, openEdit, saveEdit,

@@ -19,9 +19,27 @@
             </div>
           </div>
 
+          <!-- Label filter -->
+          <div v-if="labels.length" class="kv-label-filter">
+            <span class="kv-label-filter-label">Filter:</span>
+            <el-check-tag
+              v-for="l in labels" :key="l.id"
+              :checked="filterLabelIds.includes(l.id)"
+              @change="filterLabelIds.includes(l.id)
+                ? filterLabelIds.splice(filterLabelIds.indexOf(l.id), 1)
+                : filterLabelIds.push(l.id)"
+              class="kv-filter-tag"
+              :style="filterLabelIds.includes(l.id) ? { background: l.color, borderColor: l.color, color: '#fff' } : {}"
+            >{{ l.name }}</el-check-tag>
+            <el-button v-if="filterLabelIds.length" text size="small" @click="filterLabelIds = []">Clear</el-button>
+            <span class="kv-filter-count" v-if="filterLabelIds.length">
+              {{ filteredFragments.length }} / {{ fragments.length }}
+            </span>
+          </div>
+
           <div class="kv-list">
-            <el-empty v-if="!fragments.length" description="No fragments yet" :image-size="70" />
-            <div v-for="row in fragments" :key="row.id" class="kv-frag"
+            <el-empty v-if="!filteredFragments.length" description="No fragments" :image-size="70" />
+            <div v-for="row in filteredFragments" :key="row.id" class="kv-frag"
               :class="{ 'kv-frag-hl': highlightFragId === row.id }" :data-frag-id="row.id">
               <div class="kv-frag-main">
                 <div class="kv-frag-content" :title="row.content">{{ row.content }}</div>
@@ -275,6 +293,15 @@
 .kv-hint { font-size: 12px; color: #86868b; margin: 0; }
 
 .kv-cap-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+
+.kv-label-filter {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 12px; padding: 8px 10px;
+  background: #f8f9fa; border-radius: 6px;
+}
+.kv-label-filter-label { font-size: 12px; color: #909399; white-space: nowrap; }
+.kv-filter-tag { font-size: 12px; border: 1px solid #dcdfe6; }
+.kv-filter-count { font-size: 12px; color: #909399; margin-left: 4px; }
 .kv-cap-title { font-size: 14px; font-weight: 600; }
 .kv-cap-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 
