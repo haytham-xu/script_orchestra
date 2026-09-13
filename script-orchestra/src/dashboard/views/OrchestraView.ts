@@ -205,7 +205,7 @@ export default defineComponent({
 
     async function pollStatus() {
       const results = await Promise.allSettled(
-        STATUS_CHECKS.map(async (check) => {
+        STATUS_CHECKS.filter(check => isToolEnabled(check.key)).map(async (check) => {
           const res = await fetch(check.url)
           if (!res.ok) return null
           const data = await res.json()
