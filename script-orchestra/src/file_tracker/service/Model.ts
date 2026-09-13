@@ -39,7 +39,7 @@ export interface FileStats {
   by_status: Record<string, { count: number; size: number }>
 }
 
-export type PreviewType = 'image' | 'video' | 'text' | 'unsupported'
+export type PreviewType = 'image' | 'video' | 'pdf' | 'text' | 'unsupported'
 
 export interface PreviewMeta {
   type: PreviewType

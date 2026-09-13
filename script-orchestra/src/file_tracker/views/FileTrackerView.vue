@@ -306,6 +306,11 @@
             <video :src="rawUrl(selectedFile)" controls class="ft-preview-video" />
           </template>
 
+          <!-- PDF -->
+          <template v-else-if="preview && preview.type === 'pdf'">
+            <iframe :src="rawUrl(selectedFile)" class="ft-preview-pdf" />
+          </template>
+
           <!-- Text -->
           <template v-else-if="preview && preview.type === 'text'">
             <div class="ft-preview-text-meta">
@@ -438,6 +443,12 @@ export default {
 .ft-preview-video {
   max-width: 100%;
   max-height: 60vh;
+  border-radius: 4px;
+}
+.ft-preview-pdf {
+  width: 100%;
+  height: 70vh;
+  border: none;
   border-radius: 4px;
 }
 .ft-preview-text-meta {

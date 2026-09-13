@@ -231,6 +231,9 @@ def _preview_meta(path: str) -> dict:
     if ext in _VIDEO_EXTS:
         return {'type': 'video', 'name': name, 'size': size, 'ext': ext}
 
+    if ext == '.pdf':
+        return {'type': 'pdf', 'name': name, 'size': size, 'ext': ext}
+
     if ext in _TEXT_EXTS or _is_text_by_sniff(path):
         try:
             with open(path, 'r', encoding='utf-8', errors='replace') as f:
