@@ -125,7 +125,7 @@ export default FileTrackerSettingsLogic
 </script>
 
 <style scoped>
-.fts-root { width: 100%; min-height: 100vh; padding: 24px 28px; box-sizing: border-box; max-width: 800px; }
+.fts-root { min-height: 100vh; padding: 24px 28px; box-sizing: border-box; max-width: 800px; }
 .fts-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
 .fts-title { margin: 0; font-size: 20px; font-weight: 700; }
 .fts-card { margin-bottom: 16px; }
