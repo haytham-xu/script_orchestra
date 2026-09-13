@@ -39,6 +39,9 @@ export async function createLabel(name: string, color = '#8e8e93'): Promise<Labe
 export async function deleteLabel(id: number) {
   return deleteRequest(`${B}/labels/${id}`)
 }
+export async function rebuildLabels(): Promise<{ updated: number; assignments: { id: number; added: string[] }[] }> {
+  return await postRequest(`${B}/labels/rebuild`, {}, {}) as { updated: number; assignments: { id: number; added: string[] }[] }
+}
 export async function search(q: string, topK = 10): Promise<RawFragment[]> {
   return (await getRequest<{ results: RawFragment[] }>(`${B}/query`, { q, top_k: topK })).results
 }

@@ -248,6 +248,25 @@ export default defineComponent({
     const highlightFragId = ref<number | null>(null)
 
     // ---- settings ----
+    const rebuildingLabels = ref(false)
+    const rebuildResult = ref<{ updated: number; assignments: { id: number; added: string[] }[] } | null>(null)
+    async function rebuildLabels() {
+      rebuildingLabels.value = true
+      rebuildResult.value = null
+      try {
+        const r = await api.rebuildLabels()
+        rebuildResult.value = r
+        if (r.updated > 0) {
+          await loadFragments()
+          ElMessage.success(`Updated ${r.updated} fragment(s)`)
+        } else {
+          ElMessage.info('All labels are already complete')
+        }
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Rebuild failed')
+      } finally { rebuildingLabels.value = false }
+    }
+
     async function saveAiModel() {
       const m = (settings.value.ai_model || '').trim()
       if (!m) { ElMessage.warning('Model cannot be empty'); return }
@@ -279,6 +298,7 @@ export default defineComponent({
       dupConfident, dupFuzzy, dupLoading, dupChecked, aiChecking, aiDupKeys, dupActing,
       pairKey, loadDuplicates, aiCheckFuzzy, resolvePair,
       highlightFragId,
+      rebuildingLabels, rebuildResult, rebuildLabels,
       saveAiModel,
     }
   },

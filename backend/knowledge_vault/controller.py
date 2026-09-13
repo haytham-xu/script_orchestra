@@ -204,6 +204,78 @@ class LabelsResource(Resource):
         return {"label": repository.create_label(name, color)}, 201
 
 
+@ns.route("/labels/rebuild")
+class LabelsRebuildResource(Resource):
+    def post(self):
+        """Ask AI to suggest missing label assignments across all fragments."""
+        labels = repository.get_labels()
+        if not labels:
+            return {"error": "No labels defined yet"}, 400
+        fragments = repository.get_fragments()
+        if not fragments:
+            return {"updated": 0, "assignments": []}, 200
+
+        label_names = [l["name"] for l in labels]
+        label_by_name = {l["name"].lower(): l["id"] for l in labels}
+
+        # Build compact fragment list for the prompt (cap at 200 fragments to stay in context)
+        frag_lines = []
+        for f in fragments[:200]:
+            current = [l["name"] for l in labels if l["id"] in (f.label_ids or [])]
+            frag_lines.append(
+                f'  {{"id":{f.id},"content":{json.dumps(f.content[:120], ensure_ascii=False)},'
+                f'"note":{json.dumps((f.note or "")[:60], ensure_ascii=False)},'
+                f'"current_labels":{json.dumps(current)}}}'
+            )
+
+        prompt = (
+            "You are a knowledge organizer. Given a list of fragments and an existing label vocabulary, "
+            "suggest which additional labels from the vocabulary should be applied to each fragment. "
+            "Only use labels from the provided vocabulary — do not invent new ones. "
+            "Only return fragments that need at least one new label added. "
+            "Skip fragments whose current labels are already complete.\n\n"
+            f"Label vocabulary: {json.dumps(label_names)}\n\n"
+            "Fragments:\n[\n" + ",\n".join(frag_lines) + "\n]\n\n"
+            "Reply with STRICT JSON only — an array of objects, each with fragment id and labels to ADD:\n"
+            '[{"id": <int>, "add_labels": ["<label_name>", ...]}, ...]'
+        )
+
+        try:
+            result = ai_client.ask_json(prompt, max_tokens=4096, timeout=180)
+        except Exception as exc:
+            return {"error": f"AI call failed: {exc}"}, 502
+
+        if not isinstance(result, list):
+            # ask_json expects a dict; try wrapping
+            if isinstance(result, dict) and "assignments" in result:
+                result = result["assignments"]
+            else:
+                return {"error": "AI returned unexpected format"}, 502
+
+        updated = 0
+        assignments = []
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            fid = item.get("id")
+            add_names = item.get("add_labels") or []
+            if not fid or not isinstance(add_names, list):
+                continue
+            # Map names to ids (case-insensitive), filter unknown
+            new_ids = [label_by_name[n.lower()] for n in add_names if n.lower() in label_by_name]
+            if not new_ids:
+                continue
+            frag = next((f for f in fragments if f.id == fid), None)
+            if not frag:
+                continue
+            merged = list(set((frag.label_ids or []) + new_ids))
+            repository.set_fragment_labels(fid, merged)
+            assignments.append({"id": fid, "added": add_names})
+            updated += 1
+
+        return {"updated": updated, "assignments": assignments}, 200
+
+
 @ns.route("/labels/<int:label_id>")
 class LabelResource(Resource):
     def delete(self, label_id):

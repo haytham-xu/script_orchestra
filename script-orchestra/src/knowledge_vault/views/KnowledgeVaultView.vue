@@ -171,6 +171,26 @@
             <el-empty v-if="!labels.length" description="No labels yet" :image-size="50" />
           </div>
 
+          <div class="kv-rebuild-row" style="margin-top:16px">
+            <el-button :loading="rebuildingLabels" @click="rebuildLabels">
+              Rebuild labels (AI)
+            </el-button>
+            <span class="kv-hint">Scans all fragments and suggests missing label assignments based on existing labels. Only adds — never removes.</span>
+          </div>
+          <div v-if="rebuildResult" class="kv-rebuild-result">
+            <template v-if="rebuildResult.updated === 0">
+              All fragments already have complete labels.
+            </template>
+            <template v-else>
+              Updated {{ rebuildResult.updated }} fragment(s):
+              <ul class="kv-rebuild-list">
+                <li v-for="a in rebuildResult.assignments" :key="a.id">
+                  #{{ a.id }} — added: {{ a.added.join(', ') }}
+                </li>
+              </ul>
+            </template>
+          </div>
+
           <h3 style="margin-top:24px">AI model</h3>
           <p class="kv-hint">
             Model used for AI deep-answer, run via the local Claude CLI.
@@ -395,6 +415,9 @@
 .kv-kind-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .kv-link-toggle { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #3a3a3c; }
 .kv-model-row { display: flex; align-items: center; gap: 10px; }
+.kv-rebuild-row { display: flex; align-items: center; gap: 12px; }
+.kv-rebuild-result { margin-top: 10px; font-size: 13px; color: #606266; }
+.kv-rebuild-list { margin: 6px 0 0 16px; padding: 0; font-size: 12px; color: #909399; line-height: 1.8; }
 .kv-detail-frags { margin-top: 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 8px; }
 .kv-detail-frag { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
   border-radius: 6px; cursor: pointer; font-size: 12px; color: #3a3a3c; }
