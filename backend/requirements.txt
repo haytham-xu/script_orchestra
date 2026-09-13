@@ -27,6 +27,7 @@ MarkupSafe==3.0.2
 moviepy==2.2.1
 multivolumefile==0.2.3
 natsort==8.4.0
+send2trash==2.1.0
 numpy==2.4.4
 opencv-python==4.13.0.92
 pdf2image==1.17.0

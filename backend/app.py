@@ -81,6 +81,14 @@ from compress_image.blueprint import blueprint as compress_image_blueprint
 # Import dedup_folder tool
 from dedup_folder.blueprint import blueprint as dedup_folder_blueprint
 
+# Import file_pipeline tool
+from file_pipeline.blueprint import blueprint as file_pipeline_blueprint
+from file_pipeline import repository as file_pipeline_repo
+
+# Import file_tracker tool
+from file_tracker.blueprint import blueprint as file_tracker_blueprint
+from file_tracker import repository as file_tracker_repo
+
 # Import claude_bridge tool (remote Claude Code agent). It depends on the
 # Unix-only `pty`/`termios` stack, so on Windows we skip the import instead
 # of failing the whole app.
@@ -190,6 +198,12 @@ def create_app() -> Flask:
     # Register dedup_folder blueprint
     app.register_blueprint(dedup_folder_blueprint)
 
+    # Register file_pipeline blueprint
+    app.register_blueprint(file_pipeline_blueprint)
+
+    # Register file_tracker blueprint
+    app.register_blueprint(file_tracker_blueprint)
+
     # Register claude_bridge blueprint (only if the Unix-only deps loaded)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
@@ -257,6 +271,12 @@ def create_app() -> Flask:
 
     # Initialize clean_keyword DB.
     clean_keyword_repo.init_db()
+
+    # Initialize file_pipeline DB.
+    file_pipeline_repo.init_db()
+
+    # Initialize file_tracker DB.
+    file_tracker_repo.init_db()
 
     # Initialize claude_bridge message history DB (only when the module loaded).
     if claude_bridge_repo is not None:

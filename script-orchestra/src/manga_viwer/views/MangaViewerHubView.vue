@@ -170,6 +170,21 @@ const tools = [
       <path d="M17 44l10 6 10-6 10 6" stroke="#0ea5e9" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </svg>`,
   },
+  {
+    key: 'file-pipeline',
+    name: 'File Pipeline',
+    desc: 'Define reusable extract/rename pipelines with branching logic',
+    path: '/file-pipeline',
+    icon: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#f59e0b"/>
+      <rect x="10" y="26" width="14" height="12" rx="3" fill="#fff"/>
+      <rect x="40" y="26" width="14" height="12" rx="3" fill="#fff"/>
+      <path d="M24 32h6M34 32h6" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M33 29l3 3-3 3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="32" cy="18" r="5" fill="#fff" opacity="0.5"/>
+      <path d="M32 23v4" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+    </svg>`,
+  },
 ]
 </script>
 

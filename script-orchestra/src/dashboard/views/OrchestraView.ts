@@ -28,6 +28,8 @@ const TOOLS: Tool[] = [
   { key: 'loans-calc',             name: 'Loans Calc',             path: '/loans-calc' },
   { key: 'compress-image',         name: 'Compress Image',         path: '/compress-image' },
   { key: 'dedup-folder',           name: 'Dedup Folder',           path: '/dedup-folder' },
+  { key: 'file-pipeline',          name: 'File Pipeline',          path: '/file-pipeline' },
+  { key: 'file-tracker',           name: 'File Tracker',           path: '/file-tracker' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))
@@ -49,6 +51,7 @@ const STATUS_CHECKS: StatusCheck[] = [
   { key: 'duplicate-finder',       url: `${BACKEND_BASE_URL}/duplicate-finder/active-scans`,          isRunning: (d) => (d?.count ?? d?.scans?.length ?? 0) > 0 },
   { key: 'video-duplicate-finder', url: `${BACKEND_BASE_URL}/video-duplicate-finder/status`,          isRunning: (d) => !!d?.running },
   { key: 'file-git',               url: `${BACKEND_BASE_URL}/file-git/status`,                        isRunning: (d) => !!d?.running },
+  { key: 'file-tracker',           url: `${BACKEND_BASE_URL}/file-tracker/scan/status`,               isRunning: (d) => !!d?.running },
 ]
 
 // Client-side grid model: each cell is a single tool or a folder of tools.
