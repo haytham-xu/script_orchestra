@@ -48,3 +48,9 @@ export const LOANS_CALC_ENDPOINT = '/loans-calc'
 export const COMPRESS_IMAGE_ENDPOINT = '/compress-image'
 
 export const DEDUP_FOLDER_ENDPOINT = '/dedup-folder'
+
+export const FILE_PIPELINE_ENDPOINT = '/file-pipeline'
+
+export const FILE_TRACKER_ENDPOINT = '/file-tracker'
+
+export const APPRENTICE_ENDPOINT = '/apprentice'

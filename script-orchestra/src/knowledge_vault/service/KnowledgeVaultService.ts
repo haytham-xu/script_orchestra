@@ -39,6 +39,12 @@ export async function createLabel(name: string, color = '#8e8e93'): Promise<Labe
 export async function deleteLabel(id: number) {
   return deleteRequest(`${B}/labels/${id}`)
 }
+export async function rebuildLabels(): Promise<{ suggestions: { id: number; content: string; note: string; add_labels: string[] }[] }> {
+  return await postRequest(`${B}/labels/rebuild`, {}, {}) as { suggestions: { id: number; content: string; note: string; add_labels: string[] }[] }
+}
+export async function applyLabelSuggestions(assignments: { id: number; add_labels: string[] }[]): Promise<{ updated: number }> {
+  return await postRequest(`${B}/labels/rebuild/apply`, {}, { assignments }) as { updated: number }
+}
 export async function search(q: string, topK = 10): Promise<RawFragment[]> {
   return (await getRequest<{ results: RawFragment[] }>(`${B}/query`, { q, top_k: topK })).results
 }

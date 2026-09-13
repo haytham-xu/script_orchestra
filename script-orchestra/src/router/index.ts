@@ -47,6 +47,10 @@ import CleanKeywordView from '@/clean_keyword/views/CleanKeywordView.vue'
 import LoansCalcView from '@/loans_calc/views/LoansCalcView.vue'
 import CompressImageView from '@/compress_image/views/CompressImageView.vue'
 import DedupFolderView from '@/dedup_folder/views/DedupFolderView.vue'
+import FilePipelineView from '@/file_pipeline/views/FilePipelineView.vue'
+import FileTrackerView from '@/file_tracker/views/FileTrackerView.vue'
+import FileTrackerSettingsView from '@/file_tracker/views/FileTrackerSettingsView.vue'
+import ApprenticeView from '@/apprentice/views/ApprenticeView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -268,6 +272,21 @@ const router = createRouter({
       component: DedupFolderView
     },
     {
+      path: '/file-pipeline',
+      name: 'file-pipeline',
+      component: FilePipelineView
+    },
+    {
+      path: '/file-tracker',
+      name: 'file-tracker',
+      component: FileTrackerView
+    },
+    {
+      path: '/file-tracker/settings',
+      name: 'file-tracker-settings',
+      component: FileTrackerSettingsView
+    },
+    {
       path: '/file-git',
       name: 'file-git',
       component: FileGitReposView
@@ -296,6 +315,11 @@ const router = createRouter({
       path: '/file-git/:id/sync-filter',
       name: 'file-git-repo-sync-filter',
       component: FileGitRepoSyncFilterView
+    },
+    {
+      path: '/apprentice',
+      name: 'apprentice',
+      component: ApprenticeView
     },
   ],
 })

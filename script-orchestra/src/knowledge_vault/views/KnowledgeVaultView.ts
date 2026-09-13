@@ -55,6 +55,16 @@ export default defineComponent({
     }
 
     async function loadFragments() { fragments.value = await api.getFragments() }
+
+    // ---- label filter (capture tab) ----
+    const filterLabelIds = ref<number[]>([])
+    const filteredFragments = computed(() => {
+      if (!filterLabelIds.value.length) return fragments.value
+      return fragments.value.filter(f =>
+        filterLabelIds.value.every(lid => f.label_ids?.includes(lid))
+      )
+    })
+
     const addDialog = ref(false)
     function openAdd() {
       draft.value = { content: '', note: '', label_ids: [] }
@@ -238,6 +248,41 @@ export default defineComponent({
     const highlightFragId = ref<number | null>(null)
 
     // ---- settings ----
+    const rebuildingLabels = ref(false)
+    // Each suggestion has a `_selected` flag the user can toggle
+    type LabelSuggestion = { id: number; content: string; note: string; add_labels: string[]; _selected: boolean }
+    const labelSuggestions = ref<LabelSuggestion[]>([])
+    const applyingLabels = ref(false)
+
+    async function scanLabels() {
+      rebuildingLabels.value = true
+      labelSuggestions.value = []
+      try {
+        const r = await api.rebuildLabels()
+        if (!r.suggestions.length) {
+          ElMessage.info('All fragments already have complete labels')
+        } else {
+          labelSuggestions.value = r.suggestions.map(s => ({ ...s, _selected: true }))
+        }
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Scan failed')
+      } finally { rebuildingLabels.value = false }
+    }
+
+    async function applyLabelSuggestions() {
+      const selected = labelSuggestions.value.filter(s => s._selected)
+      if (!selected.length) { ElMessage.warning('Nothing selected'); return }
+      applyingLabels.value = true
+      try {
+        const r = await api.applyLabelSuggestions(selected.map(s => ({ id: s.id, add_labels: s.add_labels })))
+        ElMessage.success(`Applied to ${r.updated} fragment(s)`)
+        labelSuggestions.value = []
+        await loadFragments()
+      } catch (e: any) {
+        ElMessage.error(e.response?.data?.error || e.message || 'Apply failed')
+      } finally { applyingLabels.value = false }
+    }
+
     async function saveAiModel() {
       const m = (settings.value.ai_model || '').trim()
       if (!m) { ElMessage.warning('Model cannot be empty'); return }
@@ -258,6 +303,7 @@ export default defineComponent({
       activeTab, settings,
       labels, labelMap, loadLabels, newLabel, addLabel, removeLabel,
       draft, fragments, saving, addFragment, removeFragment, loadFragments,
+      filterLabelIds, filteredFragments,
       addDialog, openAdd,
       fmtDate,
       editDialog, editing, openEdit, saveEdit,
@@ -268,6 +314,7 @@ export default defineComponent({
       dupConfident, dupFuzzy, dupLoading, dupChecked, aiChecking, aiDupKeys, dupActing,
       pairKey, loadDuplicates, aiCheckFuzzy, resolvePair,
       highlightFragId,
+      rebuildingLabels, labelSuggestions, applyingLabels, scanLabels, applyLabelSuggestions,
       saveAiModel,
     }
   },

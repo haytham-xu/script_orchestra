@@ -214,4 +214,41 @@ export const toolIcons: Record<string, string> = {
       <path d="M12 28h16l4-6h20v20H12z" fill="#fff"/>
       <path d="M35 35l6 6M41 35l-6 6" stroke="#7c3aed" stroke-width="3" stroke-linecap="round"/>
     </svg>`,
+
+  // File Pipeline — nodes connected by arrows (pipeline flow)
+  'file-pipeline': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#f59e0b"/>
+      <rect x="10" y="26" width="14" height="12" rx="3" fill="#fff"/>
+      <rect x="40" y="26" width="14" height="12" rx="3" fill="#fff"/>
+      <path d="M24 32h6M34 32h6" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M33 29l3 3-3 3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="32" cy="18" r="5" fill="#fff" opacity="0.5"/>
+      <path d="M32 23v4" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+    </svg>`,
+
+  // File Tracker — file with a clock overlay
+  'file-tracker': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#d97706"/>
+      <rect x="14" y="12" width="24" height="30" rx="3" fill="#fff"/>
+      <polygon points="38,12 38,22 48,22" fill="#fde68a"/>
+      <path d="M18 22h14M18 29h10M18 36h8" stroke="#d97706" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="44" cy="46" r="11" fill="#1e293b"/>
+      <line x1="44" y1="39" x2="44" y2="46" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+      <line x1="44" y1="46" x2="49" y2="46" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="44" cy="46" r="2" fill="#f59e0b"/>
+    </svg>`,
+
+  // Apprentice — graduation cap with a brain circuit, purple/indigo theme
+  'apprentice': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#4f46e5"/>
+      <polygon points="32,14 52,24 32,34 12,24" fill="#fff"/>
+      <rect x="29" y="34" width="6" height="10" rx="2" fill="#c7d2fe"/>
+      <rect x="22" y="44" width="20" height="4" rx="2" fill="#c7d2fe"/>
+      <circle cx="48" cy="24" r="3" fill="#a5b4fc"/>
+      <line x1="48" y1="27" x2="48" y2="38" stroke="#a5b4fc" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="48" cy="40" r="3" fill="#818cf8"/>
+    </svg>`,
 }
