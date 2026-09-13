@@ -239,4 +239,16 @@ export const toolIcons: Record<string, string> = {
       <line x1="44" y1="46" x2="49" y2="46" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
       <circle cx="44" cy="46" r="2" fill="#f59e0b"/>
     </svg>`,
+
+  // Apprentice — graduation cap with a brain circuit, purple/indigo theme
+  'apprentice': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#4f46e5"/>
+      <polygon points="32,14 52,24 32,34 12,24" fill="#fff"/>
+      <rect x="29" y="34" width="6" height="10" rx="2" fill="#c7d2fe"/>
+      <rect x="22" y="44" width="20" height="4" rx="2" fill="#c7d2fe"/>
+      <circle cx="48" cy="24" r="3" fill="#a5b4fc"/>
+      <line x1="48" y1="27" x2="48" y2="38" stroke="#a5b4fc" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="48" cy="40" r="3" fill="#818cf8"/>
+    </svg>`,
 }

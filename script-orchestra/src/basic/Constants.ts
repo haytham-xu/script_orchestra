@@ -52,3 +52,5 @@ export const DEDUP_FOLDER_ENDPOINT = '/dedup-folder'
 export const FILE_PIPELINE_ENDPOINT = '/file-pipeline'
 
 export const FILE_TRACKER_ENDPOINT = '/file-tracker'
+
+export const APPRENTICE_ENDPOINT = '/apprentice'

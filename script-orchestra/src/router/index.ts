@@ -50,6 +50,7 @@ import DedupFolderView from '@/dedup_folder/views/DedupFolderView.vue'
 import FilePipelineView from '@/file_pipeline/views/FilePipelineView.vue'
 import FileTrackerView from '@/file_tracker/views/FileTrackerView.vue'
 import FileTrackerSettingsView from '@/file_tracker/views/FileTrackerSettingsView.vue'
+import ApprenticeView from '@/apprentice/views/ApprenticeView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -314,6 +315,11 @@ const router = createRouter({
       path: '/file-git/:id/sync-filter',
       name: 'file-git-repo-sync-filter',
       component: FileGitRepoSyncFilterView
+    },
+    {
+      path: '/apprentice',
+      name: 'apprentice',
+      component: ApprenticeView
     },
   ],
 })

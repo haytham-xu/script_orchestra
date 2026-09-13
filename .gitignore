@@ -6,6 +6,10 @@ venv
 __pycache__
 ## All SQLite databases (runtime data, never committed)
 **/*.db
+**/*.db-shm
+**/*.db-wal
+## Apprentice worker logs
+backend/apprentice/logs/
 ## All per-tool runtime settings (convention: every tool uses settings.json)
 backend/**/settings.json
 
@@ -20,3 +24,4 @@ backend/photo_classifier/.thumbnail_cache
 
 # Assistant runtime storage
 backend/assistant/media/
+/script-orchestra/.playwright-mcp
