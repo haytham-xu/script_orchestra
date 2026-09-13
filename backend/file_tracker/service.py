@@ -61,17 +61,18 @@ class FileTrackerService:
     def _run_scan(self):
         """Shallow scan: for each configured path, track immediate children.
 
-        - Plain files under the root are tracked directly.
-        - Subdirectories are tracked as a single entry: last_active = max
-          mtime/atime of direct children, size = sum of direct children sizes.
+        - Plain files at the root are tracked with a timestamp determined by
+          the configured timestamp_rules (last_used or mtime).
+        - Subdirectories are tracked as a single entry whose last_active is
+          the max last_active of direct children, size = sum of their sizes.
 
-        After the scan, entries whose scan_time predates this run are pruned
-        (handles renames and deletions without a separate disk-existence check).
+        After the scan, entries not touched in this pass are pruned.
         """
         try:
             settings = settings_manager.load_settings()
             scan_paths = settings.get('scan_paths', [])
             ignore_patterns = settings.get('ignore_patterns', [])
+            ts_rules = settings.get('timestamp_rules', [])
             scan_time = time.time()
 
             for root_path in scan_paths:
@@ -96,16 +97,18 @@ class FileTrackerService:
                     try:
                         if os.path.isfile(entry_path):
                             st = os.stat(entry_path)
-                            mtime, atime = st.st_mtime, st.st_atime
+                            mtime = st.st_mtime
+                            atime = st.st_atime
                             size = st.st_size
-                            last_active = max(mtime, atime)
+                            last_active = _resolve_last_active(entry_path, mtime, ts_rules)
                             repository.upsert_file(
                                 entry_path, size, mtime, atime, last_active, scan_time
                             )
 
                         elif os.path.isdir(entry_path):
-                            # Aggregate direct children of the subdirectory
-                            size, last_active, mtime, atime = _stat_dir_shallow(entry_path)
+                            size, last_active, mtime, atime = _stat_dir_shallow(
+                                entry_path, ts_rules
+                            )
                             repository.upsert_file(
                                 entry_path, size, mtime, atime, last_active, scan_time
                             )
@@ -114,7 +117,6 @@ class FileTrackerService:
 
                     self._scanned += 1
 
-            # Mark-and-sweep: remove entries not touched in this scan pass
             repository.prune_by_scan_time(scan_time)
             self._last_scan_time = time.time()
         finally:
@@ -167,17 +169,60 @@ def _trash_via_osascript(path: str) -> None:
         raise RuntimeError(f'osascript trash failed: {result.stderr.decode()}')
 
 
-def _stat_dir_shallow(dir_path: str):
+def _ts_source_for(path: str, rules: list) -> str:
+    """Return 'last_used' or 'mtime' for the given file path based on rules.
+
+    Rules are evaluated in order; the first rule whose extensions list contains
+    the file's extension (case-insensitive) or '*' wins.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    for rule in rules:
+        for pattern in rule.get('extensions', []):
+            if pattern == '*' or pattern.lower() == ext:
+                return rule.get('source', 'mtime')
+    return 'mtime'
+
+
+def _get_last_used_macos(path: str) -> float | None:
+    """Query kMDItemLastUsedDate via mdls. Returns a Unix timestamp or None."""
+    try:
+        r = subprocess.run(
+            ['mdls', '-name', 'kMDItemLastUsedDate', '-raw', path],
+            capture_output=True, text=True, timeout=3,
+        )
+        val = r.stdout.strip()
+        if val and val != '(null)':
+            # Format: "2024-01-15 10:23:45 +0000"
+            from datetime import datetime
+            dt = datetime.strptime(val, '%Y-%m-%d %H:%M:%S %z')
+            return dt.timestamp()
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_last_active(path: str, mtime: float, rules: list) -> float:
+    """Determine last_active for a file according to the timestamp rules."""
+    source = _ts_source_for(path, rules)
+    if source == 'last_used' and platform.system() == 'Darwin':
+        lu = _get_last_used_macos(path)
+        if lu is not None:
+            return lu
+    return mtime
+
+
+def _stat_dir_shallow(dir_path: str, ts_rules: list = None):
     """Return (total_size, last_active, max_mtime, max_atime) for a directory.
 
-    Reads direct children only (one level deep) and aggregates:
-    - size = sum of child file sizes (subdirectories are counted by their own stat)
-    - last_active = max(mtime, atime) across all children
-    - mtime/atime = the maximum values seen
+    Reads direct children only. last_active for each child file is resolved
+    via ts_rules so directories also benefit from last_used timestamps.
     """
+    if ts_rules is None:
+        ts_rules = []
     total_size = 0
     max_mtime = 0.0
     max_atime = 0.0
+    max_last_active = 0.0
 
     try:
         for name in os.listdir(dir_path):
@@ -186,6 +231,9 @@ def _stat_dir_shallow(dir_path: str):
                 st = os.stat(child)
                 if os.path.isfile(child):
                     total_size += st.st_size
+                    la = _resolve_last_active(child, st.st_mtime, ts_rules)
+                    if la > max_last_active:
+                        max_last_active = la
                 if st.st_mtime > max_mtime:
                     max_mtime = st.st_mtime
                 if st.st_atime > max_atime:
@@ -206,5 +254,7 @@ def _stat_dir_shallow(dir_path: str):
         except OSError:
             pass
 
-    last_active = max(max_mtime, max_atime)
-    return total_size, last_active, max_mtime, max_atime
+    if max_last_active == 0.0:
+        max_last_active = max(max_mtime, max_atime)
+
+    return total_size, max_last_active, max_mtime, max_atime

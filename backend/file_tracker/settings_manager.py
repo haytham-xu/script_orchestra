@@ -20,6 +20,33 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         'warn': 180,
         'danger': 365,
     },
+    # Ordered rules: first matching extension wins; '*' is the catch-all.
+    # source values: 'last_used' (kMDItemLastUsedDate, fallback mtime), 'mtime'
+    'timestamp_rules': [
+        {
+            'extensions': ['.jpg', '.jpeg', '.png', '.gif', '.heic', '.webp',
+                           '.bmp', '.tiff', '.tif', '.svg', '.ico', '.avif'],
+            'source': 'last_used',
+        },
+        {
+            'extensions': ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv',
+                           '.m4v', '.webm', '.mpg', '.mpeg'],
+            'source': 'last_used',
+        },
+        {
+            'extensions': ['.mp3', '.flac', '.aac', '.wav', '.ogg', '.m4a',
+                           '.wma', '.opus'],
+            'source': 'last_used',
+        },
+        {
+            'extensions': ['.pdf', '.epub', '.mobi'],
+            'source': 'last_used',
+        },
+        {
+            'extensions': ['*'],
+            'source': 'mtime',
+        },
+    ],
 }
 
 

@@ -16,10 +16,16 @@ export interface ScanStatus {
   last_scan_time: number | null
 }
 
+export interface TimestampRule {
+  extensions: string[]   // e.g. ['.jpg', '.png'] or ['*']
+  source: 'last_used' | 'mtime'
+}
+
 export interface FileTrackerSettings {
   scan_paths: string[]
   ignore_patterns: string[]
   stale_thresholds_days: { archive: number; warn: number; danger: number }
+  timestamp_rules: TimestampRule[]
 }
 
 export interface FilesPage {
