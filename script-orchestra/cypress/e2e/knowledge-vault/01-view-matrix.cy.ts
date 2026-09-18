@@ -40,17 +40,17 @@
  *   - Fragments with group_id = null are NEVER shown in Normal view (any level).
  */
 
-const BASE = 'http://localhost:5001'
-const PAGE  = '/knowledge-vault/capture'
+const SEED_SCRIPT = '../backend/knowledge_vault/tests/e2e/seed_fixtures.py'
+const PAGE = '/knowledge-vault/capture'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function seedFixtures() {
-  cy.task('kvSeedFixtures')
+  cy.exec(`python3 ${SEED_SCRIPT} --seed`, { timeout: 30000 })
 }
 
 function clearFixtures() {
-  cy.task('kvClearFixtures')
+  cy.exec(`python3 ${SEED_SCRIPT} --clear`, { timeout: 30000 })
 }
 
 function visitCapture() {
