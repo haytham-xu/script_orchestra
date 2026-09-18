@@ -266,6 +266,39 @@ export default defineConfig({
           }
         },
 
+        // Knowledge Vault test fixture management
+        async kvSeedFixtures() {
+          try {
+            const response = await axios.post(`${BACKEND_URL}/knowledge-vault/test-fixtures`)
+            console.log(`✅ KV fixtures: ${response.data.message} (${response.data.seeded ?? 0} seeded)`)
+            return response.data
+          } catch (error) {
+            console.error('❌ Error seeding KV fixtures:', error.response?.data || error.message)
+            throw error
+          }
+        },
+
+        async kvClearFixtures() {
+          try {
+            const response = await axios.delete(`${BACKEND_URL}/knowledge-vault/test-fixtures`)
+            console.log(`✅ KV fixtures cleared (${response.data.deleted} deleted)`)
+            return response.data
+          } catch (error) {
+            console.error('❌ Error clearing KV fixtures:', error.response?.data || error.message)
+            throw error
+          }
+        },
+
+        async kvGetGroups() {
+          try {
+            const response = await axios.get(`${BACKEND_URL}/knowledge-vault/fragment-groups`)
+            return response.data.groups
+          } catch (error) {
+            console.error('❌ Error fetching KV groups:', error.message)
+            throw error
+          }
+        },
+
         // Check database using sqlite3 (for verification only)
         async checkDatabase({ dbPath, checks }) {
           // This task is kept for database verification in complex tests

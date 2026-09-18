@@ -2,33 +2,40 @@ import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/Requ
 import { KNOWLEDGE_VAULT_ENDPOINT } from '@/basic/Constants'
 import type {
   RawFragment, KnowledgeVaultSettings,
-  Label, AnalyzedFragment,
+  Label, FragmentGroup, ContentBlock,
 } from './Model'
 
 const B = KNOWLEDGE_VAULT_ENDPOINT
 
-export async function getFragments(): Promise<RawFragment[]> {
-  return (await getRequest<{ fragments: RawFragment[] }>(`${B}/fragments`)).fragments
+export async function getFragments(ungroupedOnly = false, archivedOnly = false): Promise<RawFragment[]> {
+  const params: Record<string, number> = {}
+  if (ungroupedOnly) params.ungrouped_only = 1
+  if (archivedOnly) params.archived = 1
+  return (await getRequest<{ fragments: RawFragment[] }>(`${B}/fragments`, params)).fragments
 }
-export async function addFragment(content: string, note = '', labelIds: number[] = []): Promise<RawFragment> {
-  return (await postRequest(`${B}/fragments`, {}, { content, note, label_ids: labelIds }) as { fragment: RawFragment }).fragment
+export async function getAllFragments(archivedOnly = false): Promise<RawFragment[]> {
+  const params = archivedOnly ? { archived: 1 } : {}
+  return (await getRequest<{ fragments: RawFragment[] }>(`${B}/fragments`, params)).fragments
 }
-export async function updateFragment(id: number, patch: { content?: string; note?: string; label_ids?: number[] }): Promise<RawFragment> {
+export async function archiveFragment(id: number): Promise<RawFragment> {
+  return (await putRequest<{ fragment: RawFragment }>(`${B}/fragments/${id}/archive`, {}, {})).fragment
+}
+export async function unarchiveFragment(id: number): Promise<RawFragment> {
+  return (await deleteRequest<{ fragment: RawFragment }>(`${B}/fragments/${id}/archive`)).fragment
+}
+export async function addFragment(
+  blocks: ContentBlock[], note = '', labelIds: number[] = [], header = ''
+): Promise<RawFragment> {
+  return (await postRequest(`${B}/fragments`, {}, { blocks, note, label_ids: labelIds, header }) as { fragment: RawFragment }).fragment
+}
+export async function updateFragment(
+  id: number,
+  patch: { blocks?: ContentBlock[]; note?: string; label_ids?: number[]; header?: string }
+): Promise<RawFragment> {
   return (await putRequest<{ fragment: RawFragment }>(`${B}/fragments/${id}`, {}, patch)).fragment
 }
 export async function deleteFragment(id: number) {
   return deleteRequest(`${B}/fragments/${id}`)
-}
-export async function batchChat(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  currentFragments: AnalyzedFragment[],
-): Promise<{ reply: string; fragments: AnalyzedFragment[]; suggested_labels: string[] }> {
-  return await postRequest(`${B}/fragments/batch-chat`, {}, {
-    messages, current_fragments: currentFragments,
-  }) as { reply: string; fragments: AnalyzedFragment[]; suggested_labels: string[] }
-}
-export async function batchCommit(fragments: AnalyzedFragment[], labelIds: number[] = []): Promise<number> {
-  return (await postRequest(`${B}/fragments/batch`, {}, { fragments, label_ids: labelIds }) as { count: number }).count
 }
 export async function getLabels(): Promise<Label[]> {
   return (await getRequest<{ labels: Label[] }>(`${B}/labels`)).labels
@@ -36,37 +43,45 @@ export async function getLabels(): Promise<Label[]> {
 export async function createLabel(name: string, color = '#8e8e93'): Promise<Label> {
   return (await postRequest(`${B}/labels`, {}, { name, color }) as { label: Label }).label
 }
+export async function updateLabel(id: number, name: string, color: string): Promise<Label> {
+  return (await putRequest<{ label: Label }>(`${B}/labels/${id}`, {}, { name, color })).label
+}
 export async function deleteLabel(id: number) {
   return deleteRequest(`${B}/labels/${id}`)
-}
-export async function rebuildLabels(): Promise<{ suggestions: { id: number; content: string; note: string; add_labels: string[] }[] }> {
-  return await postRequest(`${B}/labels/rebuild`, {}, {}) as { suggestions: { id: number; content: string; note: string; add_labels: string[] }[] }
-}
-export async function applyLabelSuggestions(assignments: { id: number; add_labels: string[] }[]): Promise<{ updated: number }> {
-  return await postRequest(`${B}/labels/rebuild/apply`, {}, { assignments }) as { updated: number }
 }
 export async function search(q: string, topK = 10): Promise<RawFragment[]> {
   return (await getRequest<{ results: RawFragment[] }>(`${B}/query`, { q, top_k: topK })).results
 }
-export async function aiQuery(q: string): Promise<{ answer: string; used: RawFragment[] }> {
-  return await postRequest(`${B}/query/ai`, {}, { q }) as { answer: string; used: RawFragment[] }
+export async function reindexAll(): Promise<{ message: string }> {
+  return await postRequest(`${B}/query/reindex`, {}, {}) as { message: string }
 }
-// Duplicate detection (on-demand). Vector pairs are zero-cost; ai-check spends tokens.
-export interface DupFrag { id: number; content: string; note: string; kind: string }
-export interface DupPair { a: DupFrag; b: DupFrag; sim: number }
-export interface DuplicatesResult { confident: DupPair[]; fuzzy: DupPair[] }
-export async function findDuplicates(): Promise<DuplicatesResult> {
-  return await getRequest<DuplicatesResult>(`${B}/duplicates`)
-}
-export async function aiCheckDuplicates(pairs: [number, number][]): Promise<[number, number][]> {
-  return (await postRequest(`${B}/duplicates/ai-check`, {}, { pairs }) as { duplicates: [number, number][] }).duplicates
-}
-export async function resolveDuplicate(keepId: number, dropId: number): Promise<DuplicatesResult> {
-  return await postRequest(`${B}/duplicates/resolve`, {}, { keep_id: keepId, drop_id: dropId }) as DuplicatesResult
+export async function getReindexStatus(): Promise<{ running: boolean; total: number; indexed: number }> {
+  return getRequest(`${B}/query/reindex/status`)
 }
 export async function getSettings(): Promise<KnowledgeVaultSettings> {
   return (await getRequest<{ settings: KnowledgeVaultSettings }>(`${B}/settings`)).settings
 }
 export async function updateSettings(patch: Partial<KnowledgeVaultSettings>): Promise<KnowledgeVaultSettings> {
   return (await putRequest<{ settings: KnowledgeVaultSettings }>(`${B}/settings`, {}, patch)).settings
+}
+
+// ---- Fragment Groups --------------------------------------------------
+
+export async function getGroups(): Promise<FragmentGroup[]> {
+  return (await getRequest<{ groups: FragmentGroup[] }>(`${B}/fragment-groups`)).groups
+}
+export async function createGroup(name: string, note = '', parentId?: number | null): Promise<FragmentGroup> {
+  return (await postRequest(`${B}/fragment-groups`, {}, { name, note, parent_id: parentId ?? null }) as { group: FragmentGroup }).group
+}
+export async function updateGroup(id: number, patch: { name?: string; note?: string; parent_id?: number | null }): Promise<FragmentGroup> {
+  return (await putRequest<{ group: FragmentGroup }>(`${B}/fragment-groups/${id}`, {}, patch)).group
+}
+export async function deleteGroup(id: number): Promise<void> {
+  await deleteRequest(`${B}/fragment-groups/${id}`)
+}
+export async function setGroupMembers(groupId: number, fragmentIds: number[]): Promise<number[]> {
+  return (await putRequest<{ fragment_ids: number[] }>(`${B}/fragment-groups/${groupId}/members`, {}, { fragment_ids: fragmentIds })).fragment_ids
+}
+export async function getGroupMembers(groupId: number): Promise<number[]> {
+  return (await getRequest<{ fragment_ids: number[] }>(`${B}/fragment-groups/${groupId}/members`)).fragment_ids
 }

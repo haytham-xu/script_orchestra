@@ -76,6 +76,8 @@ const TOOL_ROUTES: Record<string, RouteRecordRaw[]> = {
   ],
   'knowledge-vault': [
     { path: '/knowledge-vault', name: 'knowledge-vault', component: () => import('@/knowledge_vault/views/KnowledgeVaultView.vue') },
+    { path: '/knowledge-vault/capture', name: 'knowledge-vault-capture', component: () => import('@/knowledge_vault/views/KnowledgeVaultCaptureView.vue') },
+    { path: '/knowledge-vault/settings', name: 'knowledge-vault-settings', component: () => import('@/knowledge_vault/views/KnowledgeVaultSettingsView.vue') },
   ],
   'translator': [
     { path: '/translator', name: 'translator', component: () => import('@/translator/views/TranslatorView.vue') },

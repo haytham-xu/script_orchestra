@@ -3,31 +3,79 @@ from flask_restx import Namespace, Resource
 from flask import request
 
 from . import repository, settings_manager, query_service, ai_client
-from .entity import RawFragment
+from .entity import RawFragment, FragmentGroup, _blocks_to_storage, _blocks_to_plain, _parse_blocks
 import threading
 import json
 
+
+def _build_index_text(frag) -> str:
+    """Build rich index text for a fragment: header + note + label names + all block subtitles + bodies."""
+    parts = []
+    if frag.header:
+        parts.append(frag.header)
+    if frag.note:
+        parts.append(frag.note)
+    # resolve label names
+    if frag.label_ids:
+        all_labels = {l["id"]: l["name"] for l in repository.get_labels()}
+        label_names = [all_labels[lid] for lid in frag.label_ids if lid in all_labels]
+        if label_names:
+            parts.append(" ".join(label_names))
+    # blocks: subtitle + body
+    for blk in (frag.blocks or []):
+        if blk.get("subtitle"):
+            parts.append(blk["subtitle"])
+        if blk.get("body"):
+            parts.append(blk["body"])
+    return "\n".join(parts)
+
 ns = Namespace("")
+
+_reindex_status = {"running": False, "total": 0, "indexed": 0}
+
+
+def _blocks_from_request(data: dict):
+    """Extract and normalise blocks from a request payload.
+    Accepts either:
+      - {"blocks": [{type, body, lang?, subtitle?}, ...]}
+      - {"content": "plain text"}  (legacy / batch-chat compat → single text block)
+    Returns a list of block dicts.
+    """
+    if isinstance(data.get("blocks"), list) and data["blocks"]:
+        result = []
+        for b in data["blocks"]:
+            block = {"type": b.get("type", "text"), "body": b.get("body", "")}
+            if b.get("lang"):
+                block["lang"] = b["lang"]
+            if b.get("subtitle"):
+                block["subtitle"] = b["subtitle"]
+            result.append(block)
+        return result
+    content = (data.get("content") or "").strip()
+    return [{"type": "text", "body": content}]
 
 
 @ns.route("/fragments")
 class FragmentsResource(Resource):
     def get(self):
-        include_archived = request.args.get("archived") == "1"
-        frags = repository.get_fragments(include_archived=include_archived)
+        ungrouped_only = request.args.get("ungrouped_only") == "1"
+        archived_only = request.args.get("archived") == "1"
+        frags = repository.get_fragments(
+            archived_only=archived_only, ungrouped_only=ungrouped_only)
         return {"fragments": [f.to_dict() for f in frags]}, 200
 
     def post(self):
         data = request.json or {}
-        content = (data.get("content") or "").strip()
-        raw_text = (data.get("raw_text") or "").strip()
-        if not content and not raw_text:
-            return {"error": "content or raw_text is required"}, 400
+        blocks = _blocks_from_request(data)
+        plain = _blocks_to_plain(blocks)
+        if not plain.strip():
+            return {"error": "at least one block with content is required"}, 400
         frag = RawFragment.new_instance(
-            content=content or raw_text,
+            blocks=blocks,
             note=(data.get("note") or "").strip(),
-            raw_text=raw_text or content,
+            raw_text=plain,
             kind=(data.get("kind") or "").strip(),
+            header=(data.get("header") or "").strip(),
         )
         repository.insert_fragment(frag)
         if isinstance(data.get("label_ids"), list):
@@ -36,7 +84,7 @@ class FragmentsResource(Resource):
 
         def _post_ingest():
             try:
-                query_service.index_fragment(frag.id, f"{frag.content}\n{frag.note}")
+                query_service.index_fragment(frag.id, _build_index_text(frag))
             except Exception as exc:
                 print(f"[knowledge_vault] embed on ingest failed: {exc}")
 
@@ -54,22 +102,27 @@ class FragmentResource(Resource):
         return {"fragment": frag.to_dict()}, 200
 
     def put(self, fid):
-        """Edit content/note and label assignments (user-initiated)."""
+        """Edit blocks/note/header and label assignments (user-initiated)."""
         if repository.get_fragment(fid) is None:
             return {"error": "fragment not found"}, 404
         data = request.json or {}
-        content = data.get("content")
         note = data.get("note")
+        header = data.get("header")
+        new_content = None
+        if "blocks" in data or "content" in data:
+            blocks = _blocks_from_request(data)
+            new_content = _blocks_to_storage(blocks)
         repository.update_fragment(
             fid,
-            content=content.strip() if isinstance(content, str) else None,
+            content=new_content,
             note=note.strip() if isinstance(note, str) else None,
+            header=header.strip() if isinstance(header, str) else None,
         )
         if isinstance(data.get("label_ids"), list):
             repository.set_fragment_labels(fid, [int(x) for x in data["label_ids"]])
         updated = repository.get_fragment(fid)
         threading.Thread(
-            target=lambda: _safe_index(fid, f"{updated.content}\n{updated.note}"),
+            target=lambda: _safe_index(fid, _build_index_text(updated)),
             daemon=True).start()
         return {"fragment": updated.to_dict()}, 200
 
@@ -78,6 +131,22 @@ class FragmentResource(Resource):
             return {"error": "fragment not found"}, 404
         repository.delete_fragment(fid)
         return {"message": "deleted"}, 200
+
+
+@ns.route("/fragments/<int:fid>/archive")
+class FragmentArchiveResource(Resource):
+    def put(self, fid):
+        if repository.get_fragment(fid) is None:
+            return {"error": "fragment not found"}, 404
+        repository.archive_fragment(fid)
+        return {"fragment": repository.get_fragment(fid).to_dict()}, 200
+
+    def delete(self, fid):
+        """Unarchive (restore) a fragment."""
+        if repository.get_fragment(fid) is None:
+            return {"error": "fragment not found"}, 404
+        repository.unarchive_fragment(fid)
+        return {"fragment": repository.get_fragment(fid).to_dict()}, 200
 
 
 def _safe_index(fid, text):
@@ -171,17 +240,19 @@ class BatchCommitResource(Resource):
             content = (it.get("content") or "").strip()
             if not content:
                 continue
+            blocks = [{"type": "text", "body": content}]
             frag = RawFragment.new_instance(
-                content=content,
+                blocks=blocks,
                 note=(it.get("note") or "").strip(),
                 raw_text=content,
                 kind=(it.get("kind") or "").strip(),
+                header=(it.get("header") or "").strip(),
             )
             repository.insert_fragment(frag)
             if label_ids:
                 repository.set_fragment_labels(frag.id, label_ids)
             created.append(frag)
-        ids_texts = [(f.id, f"{f.content}\n{f.note}") for f in created]
+        ids_texts = [(f.id, f"{f.raw_text}\n{f.note}") for f in created]
 
         def _index_all():
             for fid, text in ids_texts:
@@ -201,7 +272,10 @@ class LabelsResource(Resource):
         if not name:
             return {"error": "name is required"}, 400
         color = (data.get("color") or "#8e8e93").strip()
-        return {"label": repository.create_label(name, color)}, 201
+        result = repository.create_label(name, color)
+        if result.pop("existing", False):
+            return {"error": f"Label '{result['name']}' already exists (case-insensitive match)", "label": result}, 409
+        return {"label": result}, 201
 
 
 @ns.route("/labels/rebuild")
@@ -218,12 +292,11 @@ class LabelsRebuildResource(Resource):
         label_names = [l["name"] for l in labels]
         label_by_name = {l["name"].lower(): l["id"] for l in labels}
 
-        # Build compact fragment list for the prompt (cap at 200 fragments to stay in context)
         frag_lines = []
         for f in fragments[:200]:
             current = [l["name"] for l in labels if l["id"] in (f.label_ids or [])]
             frag_lines.append(
-                f'  {{"id":{f.id},"content":{json.dumps(f.content[:120], ensure_ascii=False)},'
+                f'  {{"id":{f.id},"content":{json.dumps(f.raw_text[:120], ensure_ascii=False)},'
                 f'"note":{json.dumps((f.note or "")[:60], ensure_ascii=False)},'
                 f'"current_labels":{json.dumps(current)}}}'
             )
@@ -251,7 +324,6 @@ class LabelsRebuildResource(Resource):
             else:
                 return {"error": "AI returned unexpected format"}, 502
 
-        # Return suggestions with fragment preview — do NOT write anything yet
         frag_map = {f.id: f for f in fragments}
         suggestions = []
         for item in result:
@@ -269,7 +341,7 @@ class LabelsRebuildResource(Resource):
                 continue
             suggestions.append({
                 "id": fid,
-                "content": frag.content[:120],
+                "content": frag.raw_text[:120],
                 "note": frag.note or "",
                 "add_labels": valid_names,
             })
@@ -312,6 +384,17 @@ class LabelsRebuildApplyResource(Resource):
 
 @ns.route("/labels/<int:label_id>")
 class LabelResource(Resource):
+    def put(self, label_id):
+        data = request.json or {}
+        name = (data.get("name") or "").strip()
+        color = data.get("color")
+        if not name:
+            return {"error": "name is required"}, 400
+        result = repository.update_label(label_id, name=name, color=color)
+        if not result:
+            return {"error": "Label not found"}, 404
+        return {"label": result}, 200
+
     def delete(self, label_id):
         repository.delete_label(label_id)
         return {"message": "deleted"}, 200
@@ -328,25 +411,27 @@ class QueryResource(Resource):
         return {"results": query_service.search(q, top_k)}, 200
 
 
-@ns.route("/query/ai")
-class AiQueryResource(Resource):
+@ns.route("/query/reindex")
+class ReindexResource(Resource):
     def post(self):
-        """Recall fragments then let Claude answer."""
-        data = request.json or {}
-        q = (data.get("q") or "").strip()
-        if not q:
-            return {"error": "q is required"}, 400
-        hits = query_service.search(q, top_k=int(data.get("top_k", 8)))
-        context = "\n".join(f"- {h['content']} ({h['note']})" for h in hits)
-        prompt = (
-            "Answer the question using these knowledge fragments. If none apply, "
-            f"say so.\n\nQuestion: {q}\n\nFragments:\n{context}"
-        )
-        try:
-            answer = ai_client.ask_text(prompt, max_tokens=512)
-        except Exception as exc:
-            return {"error": f"AI query failed: {exc}"}, 502
-        return {"answer": answer, "used": hits}, 200
+        """Re-index all non-archived fragments with the full rich index text."""
+        frags = repository.get_fragments(include_archived=False)
+        _reindex_status.update({"running": True, "total": len(frags), "indexed": 0})
+
+        def _do_reindex():
+            for frag in frags:
+                _safe_index(frag.id, _build_index_text(frag))
+                _reindex_status["indexed"] += 1
+            _reindex_status["running"] = False
+
+        threading.Thread(target=_do_reindex, daemon=True).start()
+        return {"message": f"Re-indexing {len(frags)} fragments in background"}, 202
+
+
+@ns.route("/query/reindex/status")
+class ReindexStatusResource(Resource):
+    def get(self):
+        return dict(_reindex_status), 200
 
 
 @ns.route("/duplicates")
@@ -396,3 +481,234 @@ class SettingsResource(Resource):
             return {"settings": updated, "message": "Settings updated"}, 200
         except ValueError as e:
             return {"error": str(e)}, 400
+
+
+# ---- fragment groups --------------------------------------------------
+
+def _aggregate_labels(groups, all_frags):
+    """Build a map of group_id -> aggregated label_ids from all descendants."""
+    # Build fragment membership map: group_id -> [fragment]
+    frag_by_group = {}
+    for f in all_frags:
+        if f.group_id is not None:
+            frag_by_group.setdefault(f.group_id, []).append(f)
+
+    # Build children map: parent_id -> [group]
+    children_map = {}
+    for g in groups:
+        if g.parent_id is not None:
+            children_map.setdefault(g.parent_id, []).append(g)
+
+    def _collect_label_ids(gid):
+        ids = set()
+        for f in frag_by_group.get(gid, []):
+            ids.update(f.label_ids or [])
+        for child in children_map.get(gid, []):
+            ids.update(_collect_label_ids(child.id))
+        return ids
+
+    return {g.id: sorted(_collect_label_ids(g.id)) for g in groups}
+
+
+@ns.route("/fragment-groups")
+class FragmentGroupsResource(Resource):
+    def get(self):
+        groups = repository.get_groups()
+        all_frags = repository.get_fragments()
+        agg = _aggregate_labels(groups, all_frags)
+        result = []
+        for g in groups:
+            d = g.to_dict()
+            d["label_ids"] = agg.get(g.id, [])
+            result.append(d)
+        return {"groups": result}, 200
+
+    def post(self):
+        data = request.json or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return {"error": "name is required"}, 400
+        note = (data.get("note") or "").strip()
+        parent_id = data.get("parent_id")
+        if parent_id is not None:
+            try:
+                parent_id = int(parent_id)
+            except (TypeError, ValueError):
+                return {"error": "parent_id must be an integer"}, 400
+            if repository.get_group(parent_id) is None:
+                return {"error": "parent group not found"}, 404
+        g = FragmentGroup.new_instance(name=name, note=note, parent_id=parent_id)
+        repository.insert_group(g)
+        d = g.to_dict()
+        d["label_ids"] = []
+        return {"group": d}, 201
+
+
+@ns.route("/fragment-groups/<int:gid>")
+class FragmentGroupResource(Resource):
+    def get(self, gid):
+        g = repository.get_group(gid)
+        if g is None:
+            return {"error": "group not found"}, 404
+        all_frags = repository.get_fragments()
+        all_groups = repository.get_groups()
+        agg = _aggregate_labels(all_groups, all_frags)
+        d = g.to_dict()
+        d["label_ids"] = agg.get(gid, [])
+        return {"group": d}, 200
+
+    def put(self, gid):
+        if repository.get_group(gid) is None:
+            return {"error": "group not found"}, 404
+        data = request.json or {}
+        name = data.get("name")
+        note = data.get("note")
+        _missing = object()
+        raw_parent = data.get("parent_id", _missing)
+        if raw_parent is _missing:
+            # parent_id not in payload — leave it unchanged
+            new_parent = repository._UNSET
+        elif raw_parent is None:
+            new_parent = None
+        else:
+            try:
+                new_parent = int(raw_parent)
+            except (TypeError, ValueError):
+                return {"error": "parent_id must be an integer or null"}, 400
+            if new_parent == gid:
+                return {"error": "group cannot be its own parent"}, 400
+            if repository.get_group(new_parent) is None:
+                return {"error": "parent group not found"}, 404
+        repository.update_group(
+            gid,
+            name=name.strip() if isinstance(name, str) else None,
+            note=note.strip() if isinstance(note, str) else None,
+            parent_id=new_parent,
+        )
+        g = repository.get_group(gid)
+        all_frags = repository.get_fragments()
+        all_groups = repository.get_groups()
+        agg = _aggregate_labels(all_groups, all_frags)
+        d = g.to_dict()
+        d["label_ids"] = agg.get(gid, [])
+        return {"group": d}, 200
+
+    def delete(self, gid):
+        if repository.get_group(gid) is None:
+            return {"error": "group not found"}, 404
+        members = repository.get_group_members(gid)
+        if members:
+            return {"error": f"Group has {len(members)} member(s). Move or remove them first."}, 409
+        # Also check for sub-groups
+        all_groups = repository.get_groups()
+        children = [g for g in all_groups if g.parent_id == gid]
+        if children:
+            return {"error": f"Group has {len(children)} sub-group(s). Delete them first."}, 409
+        repository.delete_group(gid)
+        return {"message": "deleted"}, 200
+
+
+_TEST_FIXTURE_TAG = "__kv_e2e_fixture__"
+
+@ns.route("/test-fixtures")
+class TestFixturesResource(Resource):
+    """Seed / teardown the canonical 10-fragment E2E test dataset.
+
+    The fixtures encode the full 8-column × 10-row visibility matrix used in
+    the Cypress view-matrix spec.  All seeded fragments carry the note tag
+    "__kv_e2e_fixture__" so teardown can delete them without touching real data.
+
+    Fixture layout (ROOT_GROUP_ID = 1):
+      non-archived
+        Example-Top Group   group_id=1 (root)   archived=0
+        Example-L1-1        group_id=<l1-1>      archived=0
+        Example-L1-2        group_id=<l1-2>      archived=0
+        Example-L2-1        group_id=<l2-1>      archived=0
+        Example-ungroup     group_id=null        archived=0
+      archived
+        Archive-Example-Top Group   group_id=1 (root)   archived=1
+        Archive-Example-L1-1        group_id=<l1-1>      archived=1
+        Archive-Example-L1-2        group_id=<l1-2>      archived=1
+        Archive-Example-L2-1        group_id=<l2-1>      archived=1
+        Archive-Example-ungroup     group_id=null        archived=1
+    """
+
+    ROOT_GROUP_ID = 1
+
+    def post(self):
+        """Seed the 10 canonical test fragments.  Idempotent — skips if already present."""
+        # Resolve named groups (l1-1, l1-2, l2-1).  They must already exist.
+        groups = {g.name: g.id for g in repository.get_groups()}
+        missing = [n for n in ("l1-1", "l1-2", "l2-1") if n not in groups]
+        if missing:
+            return {"error": f"Required groups not found: {missing}. Create them first."}, 400
+
+        def _make(header, group_id, archived):
+            from .entity import RawFragment
+            frag = RawFragment.new_instance(
+                blocks=[{"type": "text", "body": header}],
+                note=_TEST_FIXTURE_TAG,
+                raw_text=header,
+                kind="note",
+                header=header,
+            )
+            repository.insert_fragment(frag)
+            if archived:
+                repository.archive_fragment(frag.id)
+            if group_id is not None:
+                existing = repository.get_group_members(group_id)
+                repository.set_group_members(group_id, existing + [frag.id])
+            return frag.id
+
+        # Check if already seeded
+        existing_frags = repository.get_fragments(include_archived=True)
+        existing_headers = {f.header for f in existing_frags if f.note == _TEST_FIXTURE_TAG}
+        if existing_headers:
+            return {"message": "fixtures already present", "seeded": 0}, 200
+
+        seeded = []
+        seeded.append(_make("Example-Top Group",         self.ROOT_GROUP_ID, False))
+        seeded.append(_make("Example-L1-1",              groups["l1-1"],     False))
+        seeded.append(_make("Example-L1-2",              groups["l1-2"],     False))
+        seeded.append(_make("Example-L2-1",              groups["l2-1"],     False))
+        seeded.append(_make("Example-ungroup",           None,               False))
+        seeded.append(_make("Archive-Example-Top Group", self.ROOT_GROUP_ID, True))
+        seeded.append(_make("Archive-Example-L1-1",      groups["l1-1"],     True))
+        seeded.append(_make("Archive-Example-L1-2",      groups["l1-2"],     True))
+        seeded.append(_make("Archive-Example-L2-1",      groups["l2-1"],     True))
+        seeded.append(_make("Archive-Example-ungroup",   None,               True))
+
+        return {"message": "fixtures seeded", "seeded": len(seeded), "ids": seeded}, 201
+
+    def delete(self):
+        """Delete all fragments tagged as E2E fixtures."""
+        frags = repository.get_fragments(include_archived=True)
+        deleted = []
+        for f in frags:
+            if f.note == _TEST_FIXTURE_TAG:
+                repository.delete_fragment(f.id)
+                deleted.append(f.id)
+        return {"message": "fixtures removed", "deleted": len(deleted), "ids": deleted}, 200
+
+
+@ns.route("/fragment-groups/<int:gid>/members")
+class FragmentGroupMembersResource(Resource):
+    def get(self, gid):
+        if repository.get_group(gid) is None:
+            return {"error": "group not found"}, 404
+        return {"fragment_ids": repository.get_group_members(gid)}, 200
+
+    def put(self, gid):
+        """Set the complete member list for this group."""
+        if repository.get_group(gid) is None:
+            return {"error": "group not found"}, 404
+        data = request.json or {}
+        fragment_ids = data.get("fragment_ids")
+        if not isinstance(fragment_ids, list):
+            return {"error": "fragment_ids must be a list"}, 400
+        try:
+            fids = [int(x) for x in fragment_ids]
+        except (TypeError, ValueError):
+            return {"error": "fragment_ids must be a list of integers"}, 400
+        repository.set_group_members(gid, fids)
+        return {"fragment_ids": repository.get_group_members(gid)}, 200

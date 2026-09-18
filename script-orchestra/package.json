@@ -18,7 +18,7 @@
     "test:e2e:duplicate": "cypress run --spec 'cypress/e2e/duplicate-finder/**/*.cy.ts'",
     "test:e2e:unzip": "cypress run --spec 'cypress/e2e/unzip/**/*.cy.ts'",
     "test:e2e:pdf": "cypress run --spec 'cypress/e2e/pdf-converter/**/*.cy.ts'",
-    "test:e2e:manga": "cypress run --spec 'cypress/e2e/manga-viewer/**/*.cy.ts'",
+    "test:e2e:kv": "cypress run --spec 'cypress/e2e/knowledge-vault/**/*.cy.ts'",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix",

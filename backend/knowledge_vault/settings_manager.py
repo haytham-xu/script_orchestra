@@ -8,7 +8,7 @@ SETTINGS_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "embed_model": "",   # sentence-transformers model name — set in Settings
+    "embed_model": "paraphrase-multilingual-MiniLM-L12-v2",
     "ai_model": "claude-haiku-4-5-20251001",
 }
 

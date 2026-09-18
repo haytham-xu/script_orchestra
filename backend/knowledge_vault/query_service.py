@@ -12,16 +12,18 @@ from . import repository, settings_manager
 # ---- lazy embedder -------------------------------------------------------
 
 _model = None
+_model_name = ""
 
 
 def _get_model():
-    global _model
-    if _model is None:
+    global _model, _model_name
+    name = settings_manager.load_settings().get("embed_model", "").strip()
+    if not name:
+        raise RuntimeError("embed_model is not configured in knowledge_vault settings")
+    if _model is None or name != _model_name:
         from sentence_transformers import SentenceTransformer  # type: ignore
-        name = settings_manager.load_settings().get("embed_model", "").strip()
-        if not name:
-            raise RuntimeError("embed_model is not configured in knowledge_vault settings")
         _model = SentenceTransformer(name)
+        _model_name = name
     return _model
 
 
