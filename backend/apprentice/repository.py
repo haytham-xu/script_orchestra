@@ -3,12 +3,12 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import settings_manager
+from shared.db import get_conn
 from .entity import Task, MemoryShort, MemoryLong, HumanMessage, RedLine
 
 _SCHEMA = [
     """
-    CREATE TABLE IF NOT EXISTS task (
+    CREATE TABLE IF NOT EXISTS apprentice_task (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
@@ -21,7 +21,7 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS memory_short (
+    CREATE TABLE IF NOT EXISTS apprentice_memory_short (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER NOT NULL,
         raw_log TEXT NOT NULL,
@@ -32,14 +32,14 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS memory_long (
+    CREATE TABLE IF NOT EXISTS apprentice_memory_long (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         content TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS human_message (
+    CREATE TABLE IF NOT EXISTS apprentice_human_message (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER NOT NULL,
         direction TEXT NOT NULL,
@@ -49,7 +49,7 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS integration_event (
+    CREATE TABLE IF NOT EXISTS apprentice_integration_event (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id INTEGER NOT NULL,
         source TEXT NOT NULL,
@@ -60,7 +60,7 @@ _SCHEMA = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS red_line (
+    CREATE TABLE IF NOT EXISTS apprentice_red_line (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rule TEXT NOT NULL,
         created_at TEXT NOT NULL
@@ -70,9 +70,7 @@ _SCHEMA = [
 
 
 def _conn() -> sqlite3.Connection:
-    db_path = settings_manager.get_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn()
     conn.execute("PRAGMA journal_mode=WAL")
     for stmt in _SCHEMA:
         conn.execute(stmt)
@@ -95,25 +93,25 @@ def create_task(title: str, description: str, repo_path: str) -> Task:
     conn = _conn()
     now = _now()
     cur = conn.execute(
-        "INSERT INTO task (title, description, repo_path, status, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO apprentice_task (title, description, repo_path, status, created_at) VALUES (?,?,?,?,?)",
         (title, description, repo_path, "pending", now),
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM task WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_task WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
     return Task.from_row(row)
 
 
 def get_task(task_id: int) -> Optional[Task]:
     conn = _conn()
-    row = conn.execute("SELECT * FROM task WHERE id=?", (task_id,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_task WHERE id=?", (task_id,)).fetchone()
     conn.close()
     return Task.from_row(row) if row else None
 
 
 def list_tasks() -> list:
     conn = _conn()
-    rows = conn.execute("SELECT * FROM task ORDER BY id DESC").fetchall()
+    rows = conn.execute("SELECT * FROM apprentice_task ORDER BY id DESC").fetchall()
     conn.close()
     return [Task.from_row(r) for r in rows]
 
@@ -123,16 +121,16 @@ def update_task_status(task_id: int, status: str, pid: Optional[int] = None) -> 
     now = _now()
     if status == "running":
         conn.execute(
-            "UPDATE task SET status=?, started_at=?, pid=? WHERE id=?",
+            "UPDATE apprentice_task SET status=?, started_at=?, pid=? WHERE id=?",
             (status, now, pid, task_id),
         )
     elif status in ("done", "failed", "stopped"):
         conn.execute(
-            "UPDATE task SET status=?, ended_at=? WHERE id=?",
+            "UPDATE apprentice_task SET status=?, ended_at=? WHERE id=?",
             (status, now, task_id),
         )
     else:
-        conn.execute("UPDATE task SET status=? WHERE id=?", (status, task_id))
+        conn.execute("UPDATE apprentice_task SET status=? WHERE id=?", (status, task_id))
     conn.commit()
     conn.close()
 
@@ -143,11 +141,11 @@ def append_short_memory(task_id: int, narrative: str) -> MemoryShort:
     conn = _conn()
     now = _now()
     cur = conn.execute(
-        "INSERT INTO memory_short (task_id, raw_log, created_at) VALUES (?,?,?)",
+        "INSERT INTO apprentice_memory_short (task_id, raw_log, created_at) VALUES (?,?,?)",
         (task_id, narrative, now),
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM memory_short WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_memory_short WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
     return MemoryShort.from_row(row)
 
@@ -155,7 +153,7 @@ def append_short_memory(task_id: int, narrative: str) -> MemoryShort:
 def update_short_memory_feedback(entry_id: int, score: Optional[int], note: Optional[str]) -> None:
     conn = _conn()
     conn.execute(
-        "UPDATE memory_short SET user_score=?, user_note=? WHERE id=?",
+        "UPDATE apprentice_memory_short SET user_score=?, user_note=? WHERE id=?",
         (score, note, entry_id),
     )
     conn.commit()
@@ -164,7 +162,7 @@ def update_short_memory_feedback(entry_id: int, score: Optional[int], note: Opti
 
 def list_short_memory() -> list:
     conn = _conn()
-    rows = conn.execute("SELECT * FROM memory_short ORDER BY id DESC").fetchall()
+    rows = conn.execute("SELECT * FROM apprentice_memory_short ORDER BY id DESC").fetchall()
     conn.close()
     return [MemoryShort.from_row(r) for r in rows]
 
@@ -172,7 +170,7 @@ def list_short_memory() -> list:
 def get_undistilled_short_memory() -> list:
     conn = _conn()
     rows = conn.execute(
-        "SELECT * FROM memory_short WHERE distilled=0 ORDER BY id"
+        "SELECT * FROM apprentice_memory_short WHERE distilled=0 ORDER BY id"
     ).fetchall()
     conn.close()
     return [MemoryShort.from_row(r) for r in rows]
@@ -184,7 +182,7 @@ def mark_distilled(entry_ids: list) -> None:
     conn = _conn()
     placeholders = ",".join("?" * len(entry_ids))
     conn.execute(
-        f"UPDATE memory_short SET distilled=1 WHERE id IN ({placeholders})", entry_ids
+        f"UPDATE apprentice_memory_short SET distilled=1 WHERE id IN ({placeholders})", entry_ids
     )
     conn.commit()
     conn.close()
@@ -194,7 +192,7 @@ def mark_distilled(entry_ids: list) -> None:
 
 def get_long_memory() -> Optional[MemoryLong]:
     conn = _conn()
-    row = conn.execute("SELECT * FROM memory_long ORDER BY id DESC LIMIT 1").fetchone()
+    row = conn.execute("SELECT * FROM apprentice_memory_long ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     return MemoryLong.from_row(row) if row else None
 
@@ -202,20 +200,20 @@ def get_long_memory() -> Optional[MemoryLong]:
 def upsert_long_memory(content: str) -> MemoryLong:
     conn = _conn()
     now = _now()
-    existing = conn.execute("SELECT id FROM memory_long LIMIT 1").fetchone()
+    existing = conn.execute("SELECT id FROM apprentice_memory_long LIMIT 1").fetchone()
     if existing:
         conn.execute(
-            "UPDATE memory_long SET content=?, updated_at=? WHERE id=?",
+            "UPDATE apprentice_memory_long SET content=?, updated_at=? WHERE id=?",
             (content, now, existing["id"]),
         )
         row_id = existing["id"]
     else:
         cur = conn.execute(
-            "INSERT INTO memory_long (content, updated_at) VALUES (?,?)", (content, now)
+            "INSERT INTO apprentice_memory_long (content, updated_at) VALUES (?,?)", (content, now)
         )
         row_id = cur.lastrowid
     conn.commit()
-    row = conn.execute("SELECT * FROM memory_long WHERE id=?", (row_id,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_memory_long WHERE id=?", (row_id,)).fetchone()
     conn.close()
     return MemoryLong.from_row(row)
 
@@ -226,11 +224,11 @@ def post_human_message(task_id: int, direction: str, content: str) -> HumanMessa
     conn = _conn()
     now = _now()
     cur = conn.execute(
-        "INSERT INTO human_message (task_id, direction, content, created_at) VALUES (?,?,?,?)",
+        "INSERT INTO apprentice_human_message (task_id, direction, content, created_at) VALUES (?,?,?,?)",
         (task_id, direction, content, now),
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM human_message WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_human_message WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
     return HumanMessage.from_row(row)
 
@@ -238,7 +236,7 @@ def post_human_message(task_id: int, direction: str, content: str) -> HumanMessa
 def list_human_messages(task_id: int) -> list:
     conn = _conn()
     rows = conn.execute(
-        "SELECT * FROM human_message WHERE task_id=? ORDER BY id", (task_id,)
+        "SELECT * FROM apprentice_human_message WHERE task_id=? ORDER BY id", (task_id,)
     ).fetchall()
     conn.close()
     return [HumanMessage.from_row(r) for r in rows]
@@ -247,7 +245,7 @@ def list_human_messages(task_id: int) -> list:
 def get_unread_user_messages(task_id: int) -> list:
     conn = _conn()
     rows = conn.execute(
-        "SELECT * FROM human_message WHERE task_id=? AND direction='user_to_cmd' AND read_by_cmd=0 ORDER BY id",
+        "SELECT * FROM apprentice_human_message WHERE task_id=? AND direction='user_to_cmd' AND read_by_cmd=0 ORDER BY id",
         (task_id,),
     ).fetchall()
     conn.close()
@@ -260,7 +258,7 @@ def mark_messages_read(message_ids: list) -> None:
     conn = _conn()
     placeholders = ",".join("?" * len(message_ids))
     conn.execute(
-        f"UPDATE human_message SET read_by_cmd=1 WHERE id IN ({placeholders})", message_ids
+        f"UPDATE apprentice_human_message SET read_by_cmd=1 WHERE id IN ({placeholders})", message_ids
     )
     conn.commit()
     conn.close()
@@ -272,24 +270,24 @@ def add_red_line(rule: str) -> RedLine:
     conn = _conn()
     now = _now()
     cur = conn.execute(
-        "INSERT INTO red_line (rule, created_at) VALUES (?,?)", (rule, now)
+        "INSERT INTO apprentice_red_line (rule, created_at) VALUES (?,?)", (rule, now)
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM red_line WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = conn.execute("SELECT * FROM apprentice_red_line WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
     return RedLine.from_row(row)
 
 
 def list_red_lines() -> list:
     conn = _conn()
-    rows = conn.execute("SELECT * FROM red_line ORDER BY id").fetchall()
+    rows = conn.execute("SELECT * FROM apprentice_red_line ORDER BY id").fetchall()
     conn.close()
     return [RedLine.from_row(r) for r in rows]
 
 
 def delete_red_line(red_line_id: int) -> bool:
     conn = _conn()
-    cur = conn.execute("DELETE FROM red_line WHERE id=?", (red_line_id,))
+    cur = conn.execute("DELETE FROM apprentice_red_line WHERE id=?", (red_line_id,))
     conn.commit()
     conn.close()
     return cur.rowcount > 0

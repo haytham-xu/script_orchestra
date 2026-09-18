@@ -11,9 +11,7 @@ try:
 except ImportError:
     from models import Task, TaskStatus, TaskPriority, TaskSize, TaskCategory
 
-# Database file path
-STORAGE_DIR = Path(__file__).parent
-DB_FILE = STORAGE_DIR / "tasks.db"
+from shared.db import get_conn
 
 
 def calculate_task_order(task: Task) -> int:
@@ -89,11 +87,11 @@ class TaskStorage:
 
     def _init_database(self):
         """Initialize database and create tables if not exist"""
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tasks (
+            CREATE TABLE IF NOT EXISTS roadmap_tasks (
                 id TEXT PRIMARY KEY,
                 header TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -153,10 +151,10 @@ class TaskStorage:
 
     def get_all_tasks(self) -> List[Task]:
         """Get all tasks"""
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM tasks ORDER BY order_num')
+        cursor.execute('SELECT * FROM roadmap_tasks ORDER BY order_num')
         rows = cursor.fetchall()
 
         conn.close()
@@ -165,10 +163,10 @@ class TaskStorage:
 
     def get_task_by_id(self, task_id: str) -> Optional[Task]:
         """Get task by ID"""
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM tasks WHERE id = ?', (task_id,))
+        cursor.execute('SELECT * FROM roadmap_tasks WHERE id = ?', (task_id,))
         row = cursor.fetchone()
 
         conn.close()
@@ -209,13 +207,13 @@ class TaskStorage:
             raise
 
         print(f"[Storage] Opening database connection...")
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
         print(f"[Storage] Executing INSERT statement...")
         try:
             cursor.execute('''
-                INSERT INTO tasks (
+                INSERT INTO roadmap_tasks (
                     id, header, content, status, priority, size, eta, category,
                     created_at, order_num, in_progress_at, returned_from_in_progress, done_at, returned_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -300,12 +298,12 @@ class TaskStorage:
             task.order = calculate_task_order(task)
 
         # Save to database
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
         row_data = self._task_to_row(task)
         cursor.execute('''
-            UPDATE tasks SET
+            UPDATE roadmap_tasks SET
                 header = ?, content = ?, status = ?, priority = ?, size = ?,
                 eta = ?, category = ?, created_at = ?, order_num = ?,
                 in_progress_at = ?, returned_from_in_progress = ?, done_at = ?, returned_at = ?
@@ -319,10 +317,10 @@ class TaskStorage:
 
     def delete_task(self, task_id: str) -> bool:
         """Delete task"""
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
-        cursor.execute('DELETE FROM tasks WHERE id = ?', (task_id,))
+        cursor.execute('DELETE FROM roadmap_tasks WHERE id = ?', (task_id,))
         deleted = cursor.rowcount > 0
 
         conn.commit()
@@ -335,7 +333,7 @@ class TaskStorage:
         Batch update task orders and statuses
         task_updates: [{"id": "xxx", "status": "todo", "order": 0}, ...]
         """
-        conn = sqlite3.connect(str(DB_FILE))
+        conn = get_conn()
         cursor = conn.cursor()
 
         for update in task_updates:
@@ -344,7 +342,7 @@ class TaskStorage:
                 continue
 
             # Get current task
-            cursor.execute('SELECT * FROM tasks WHERE id = ?', (task_id,))
+            cursor.execute('SELECT * FROM roadmap_tasks WHERE id = ?', (task_id,))
             row = cursor.fetchone()
             if not row:
                 continue
@@ -375,7 +373,7 @@ class TaskStorage:
             # Save to database
             row_data = self._task_to_row(task)
             cursor.execute('''
-                UPDATE tasks SET
+                UPDATE roadmap_tasks SET
                     header = ?, content = ?, status = ?, priority = ?, size = ?,
                     eta = ?, category = ?, created_at = ?, order_num = ?,
                     in_progress_at = ?, returned_from_in_progress = ?, done_at = ?, returned_at = ?

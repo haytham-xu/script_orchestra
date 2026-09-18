@@ -51,9 +51,12 @@ Newest modules (`memory_curve`, `knowledge_vault`) are the cleanest templates. A
 - **Settings**: every tool's runtime config file is named exactly **`settings.json`** inside its module dir.
   Never use `user_settings.json`, `<tool>_settings.json`, or any other variant.
   The `.gitignore` rule `backend/**/settings.json` covers all of them automatically.
-- **SQLite DB**: every tool's DB file lives inside its module dir. Name it `<tool_name>.db` or a clear
-  semantic name (e.g. `queues.db`, `phash_cache.db`). The `.gitignore` rule `**/*.db` covers all of them.
-  Never commit a `.db` file. Never merge tool DBs together — each tool owns its own file.
+- **SQLite DB**: all tools share a single database at **`backend/data/script_orchestra.db`**, configurable
+  via the `DB_PATH` environment variable. Use `from shared.db import get_conn` to open connections.
+  Never open SQLite directly in tool code. Never commit a `.db` file.
+- **Table naming**: every table must be prefixed with `<tool_name>_`, e.g. `knowledge_vault_raw_fragment`,
+  `roadmap_tasks`, `memory_curve_card`. This ensures tables are identifiable by tool and simplifies future
+  tool extraction into separate services. Always follow this convention when adding new tables.
 
 ---
 
@@ -201,6 +204,18 @@ Note: `-s` is required for `STEP_PAUSE=1` so that `input()` is not captured by p
 - Frontend entry/router: `src/main.ts`, `src/router/index.ts`, `vite.config.ts`
 - Frontend shared: `src/basic/{RequestService,Constants}.ts`
 - Dashboard: `src/dashboard/views/OrchestraView.vue`, `src/dashboard/icons/toolIcons.ts`
+
+---
+
+## Browser extension (`browser_agent_extension/`)
+
+The Chrome extension bridges the browser to the backend. Its manifest is at
+`browser_agent_extension/manifest.json` and its version follows semver (`"version": "X.Y.Z"`).
+
+**Rule: bump the patch version in `manifest.json` every time any file under `browser_agent_extension/` is modified.**
+Use minor bumps for new capabilities (new command types, new permissions), patch bumps for fixes or
+additions within existing commands. After editing the extension, remind the user to reload it at
+`chrome://extensions`.
 
 ---
 

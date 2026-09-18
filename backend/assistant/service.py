@@ -442,8 +442,9 @@ def stream_regenerate(conv_id: str):
         last = all_msgs[-1]
         if last["role"] == "assistant":
             import sqlite3 as _sqlite3
-            with _sqlite3.connect(str(db.DB_PATH)) as _c:
-                _c.execute("DELETE FROM messages WHERE id = ?", (last["id"],))
+            from shared.db import get_conn as _get_conn
+            with _get_conn() as _c:
+                _c.execute("DELETE FROM assistant_messages WHERE id = ?", (last["id"],))
             all_msgs = all_msgs[:-1]
             if not all_msgs:
                 yield {"type": "error", "message": "Nothing left after cleanup"}

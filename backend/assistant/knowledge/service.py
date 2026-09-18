@@ -2,16 +2,16 @@
 Knowledge Base service — sources, scan, retrieval.
 
 Data model recap:
-  kb_sources    (id, name, path, enabled, last_scanned_at, counts)
-  kb_documents  (id, source_id, relpath, mtime, byte_size, sha256, indexed_at)
-  kb_chunks     (id, document_id, source_id, ordinal, text, embedding blob)
+  assistant_kb_sources    (id, name, path, enabled, last_scanned_at, counts)
+  assistant_kb_documents  (id, source_id, relpath, mtime, byte_size, sha256, indexed_at)
+  assistant_kb_chunks     (id, document_id, source_id, ordinal, text, embedding blob)
 
 `refresh_source(source_id)` walks the folder, compares mtime + sha256
-against `kb_documents`, deletes stale rows, adds new ones. Embeddings
+against `assistant_kb_documents`, deletes stale rows, adds new ones. Embeddings
 are computed only for changed / new chunks.
 
 `retrieve(query, top_k)` embeds the query and does a cosine-similarity
-scan over `kb_chunks.embedding`. For small knowledge bases (<50k chunks)
+scan over `assistant_kb_chunks.embedding`. For small knowledge bases (<50k chunks)
 a plain scan is fast enough and avoids adding an FAISS/pgvector
 dependency.
 """
@@ -50,20 +50,20 @@ def _supported_exts() -> set:
 
 def list_sources() -> List[Dict]:
     adb.init_schema()
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT * FROM kb_sources ORDER BY created_at ASC"
+            "SELECT * FROM assistant_kb_sources ORDER BY created_at ASC"
         ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_source(source_id: str) -> Optional[Dict]:
     adb.init_schema()
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT * FROM kb_sources WHERE id = ?", (source_id,)
+            "SELECT * FROM assistant_kb_sources WHERE id = ?", (source_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -75,10 +75,10 @@ def create_source(name: str, path: str) -> Dict:
         raise ValueError(f"Not a directory: {folder}")
 
     source_id = str(uuid.uuid4())
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         try:
             conn.execute(
-                "INSERT INTO kb_sources "
+                "INSERT INTO assistant_kb_sources "
                 "(id, name, path, enabled, last_scanned_at, "
                 " file_count, chunk_count, created_at) "
                 "VALUES (?, ?, ?, 1, NULL, 0, 0, ?)",
@@ -94,18 +94,18 @@ def update_source(source_id: str, **fields) -> Optional[Dict]:
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_source(source_id)
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         sets = ", ".join(f"{k} = ?" for k in updates)
         conn.execute(
-            f"UPDATE kb_sources SET {sets} WHERE id = ?",
+            f"UPDATE assistant_kb_sources SET {sets} WHERE id = ?",
             (*updates.values(), source_id),
         )
     return get_source(source_id)
 
 
 def delete_source(source_id: str) -> bool:
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
-        cur = conn.execute("DELETE FROM kb_sources WHERE id = ?", (source_id,))
+    with adb.get_conn() as conn:
+        cur = conn.execute("DELETE FROM assistant_kb_sources WHERE id = ?", (source_id,))
         return cur.rowcount > 0
 
 
@@ -163,12 +163,12 @@ def refresh_source(source_id: str) -> Dict:
     added = 0
     unchanged = 0
 
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         existing = {
             row["relpath"]: dict(row) for row in conn.execute(
-                "SELECT * FROM kb_documents WHERE source_id = ?",
+                "SELECT * FROM assistant_kb_documents WHERE source_id = ?",
                 (source_id,),
             ).fetchall()
         }
@@ -194,9 +194,9 @@ def refresh_source(source_id: str) -> Dict:
 
         if prior and prior["sha256"] == sha:
             # Content actually unchanged (mtime lied); update stat only.
-            with sqlite3.connect(str(adb.DB_PATH)) as conn:
+            with adb.get_conn() as conn:
                 conn.execute(
-                    "UPDATE kb_documents SET mtime = ?, byte_size = ?, "
+                    "UPDATE assistant_kb_documents SET mtime = ?, byte_size = ?, "
                     "indexed_at = ? WHERE id = ?",
                     (stat.st_mtime, stat.st_size, _now(), prior["id"]),
                 )
@@ -213,22 +213,22 @@ def refresh_source(source_id: str) -> Dict:
         vectors = embed.embed_texts(chunks)
 
         doc_id = prior["id"] if prior else str(uuid.uuid4())
-        with sqlite3.connect(str(adb.DB_PATH)) as conn:
+        with adb.get_conn() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
             if prior:
                 conn.execute(
-                    "DELETE FROM kb_chunks WHERE document_id = ?",
+                    "DELETE FROM assistant_kb_chunks WHERE document_id = ?",
                     (doc_id,),
                 )
                 conn.execute(
-                    "UPDATE kb_documents SET mtime = ?, byte_size = ?, "
+                    "UPDATE assistant_kb_documents SET mtime = ?, byte_size = ?, "
                     "sha256 = ?, indexed_at = ? WHERE id = ?",
                     (stat.st_mtime, stat.st_size, sha, _now(), doc_id),
                 )
                 changed += 1
             else:
                 conn.execute(
-                    "INSERT INTO kb_documents "
+                    "INSERT INTO assistant_kb_documents "
                     "(id, source_id, relpath, mtime, byte_size, sha256, "
                     " indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (doc_id, source_id, relpath, stat.st_mtime,
@@ -237,7 +237,7 @@ def refresh_source(source_id: str) -> Dict:
                 added += 1
             for i, (chunk, vec) in enumerate(zip(chunks, vectors)):
                 conn.execute(
-                    "INSERT INTO kb_chunks "
+                    "INSERT INTO assistant_kb_chunks "
                     "(document_id, source_id, ordinal, text, embedding) "
                     "VALUES (?, ?, ?, ?, ?)",
                     (doc_id, source_id, i, chunk, vec),
@@ -247,25 +247,25 @@ def refresh_source(source_id: str) -> Dict:
     deleted = 0
     for relpath, prior in existing.items():
         if relpath not in seen_relpaths:
-            with sqlite3.connect(str(adb.DB_PATH)) as conn:
+            with adb.get_conn() as conn:
                 conn.execute("PRAGMA foreign_keys = ON")
                 conn.execute(
-                    "DELETE FROM kb_documents WHERE id = ?", (prior["id"],)
+                    "DELETE FROM assistant_kb_documents WHERE id = ?", (prior["id"],)
                 )
             deleted += 1
 
     # Recount and update the source row.
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         file_count = conn.execute(
-            "SELECT COUNT(*) FROM kb_documents WHERE source_id = ?",
+            "SELECT COUNT(*) FROM assistant_kb_documents WHERE source_id = ?",
             (source_id,),
         ).fetchone()[0]
         chunk_count = conn.execute(
-            "SELECT COUNT(*) FROM kb_chunks WHERE source_id = ?",
+            "SELECT COUNT(*) FROM assistant_kb_chunks WHERE source_id = ?",
             (source_id,),
         ).fetchone()[0]
         conn.execute(
-            "UPDATE kb_sources SET last_scanned_at = ?, "
+            "UPDATE assistant_kb_sources SET last_scanned_at = ?, "
             "file_count = ?, chunk_count = ? WHERE id = ?",
             (_now(), file_count, chunk_count, source_id),
         )
@@ -296,15 +296,15 @@ def retrieve(query: str,
 
     adb.init_schema()
 
-    with sqlite3.connect(str(adb.DB_PATH)) as conn:
+    with adb.get_conn() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT c.id, c.document_id, c.source_id, c.ordinal, c.text, "
             "       c.embedding, d.relpath, s.name AS source_name, "
             "       s.path AS source_path "
-            "FROM kb_chunks c "
-            "JOIN kb_documents d ON d.id = c.document_id "
-            "JOIN kb_sources s ON s.id = c.source_id "
+            "FROM assistant_kb_chunks c "
+            "JOIN assistant_kb_documents d ON d.id = c.document_id "
+            "JOIN assistant_kb_sources s ON s.id = c.source_id "
             "WHERE s.enabled = 1"
         ).fetchall()
 

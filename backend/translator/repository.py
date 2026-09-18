@@ -14,10 +14,10 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from .entity import TranslationHistory, LearningPoint
-from . import settings_manager
+from shared.db import get_conn
 
 _SCHEMA = [
-    """CREATE TABLE IF NOT EXISTS translation_history (
+    """CREATE TABLE IF NOT EXISTS translator_translation_history (
         id INTEGER PRIMARY KEY,
         scene TEXT NOT NULL,                 -- 'zh2en' | 'en2zh'
         source_text TEXT NOT NULL,
@@ -27,7 +27,7 @@ _SCHEMA = [
         created_at TEXT,
         usage_json TEXT DEFAULT '{}'         -- aggregated Copilot usage for this row
     )""",
-    """CREATE TABLE IF NOT EXISTS learning_point (
+    """CREATE TABLE IF NOT EXISTS translator_learning_point (
         id INTEGER PRIMARY KEY,
         history_id INTEGER NOT NULL,
         original TEXT NOT NULL,
@@ -35,8 +35,8 @@ _SCHEMA = [
         explanation TEXT DEFAULT '',
         created_at TEXT
     )""",
-    "CREATE INDEX IF NOT EXISTS idx_history_scene ON translation_history(scene)",
-    "CREATE INDEX IF NOT EXISTS idx_lp_history ON learning_point(history_id)",
+    "CREATE INDEX IF NOT EXISTS idx_translator_history_scene ON translator_translation_history(scene)",
+    "CREATE INDEX IF NOT EXISTS idx_translator_lp_history ON translator_learning_point(history_id)",
 ]
 
 _HIST_COLS = "id, scene, source_text, result_text, back_translation, model, created_at, usage_json"
@@ -44,16 +44,13 @@ _LP_COLS = "id, history_id, original, suggestion, explanation, created_at"
 
 
 def _migrate(conn) -> None:
-    """Idempotent column-level migrations (self-healing schema can't add columns
-    to a table that already exists). Cheap: PRAGMA reads are in-memory. Mirrors
-    knowledge_vault/repository.py._migrate."""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(translation_history)")}
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(translator_translation_history)")}
     if "usage_json" not in cols:
-        conn.execute("ALTER TABLE translation_history ADD COLUMN usage_json TEXT DEFAULT '{}'")
+        conn.execute("ALTER TABLE translator_translation_history ADD COLUMN usage_json TEXT DEFAULT '{}'")
 
 
 def _conn():
-    conn = sqlite3.connect(settings_manager.get_db_path())
+    conn = get_conn()
     for stmt in _SCHEMA:
         conn.execute(stmt)
     _migrate(conn)
@@ -72,7 +69,7 @@ def insert_history(h: TranslationHistory) -> TranslationHistory:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO translation_history
+        """INSERT INTO translator_translation_history
            (scene, source_text, result_text, back_translation, model, created_at, usage_json)
            VALUES (?,?,?,?,?,?,?)""",
         (h.scene, h.source_text, h.result_text, h.back_translation, h.model,
@@ -89,7 +86,7 @@ def get_history(scene: Optional[str] = None, limit: int = 100) -> List[Translati
     hydrated with their learning points."""
     conn = _conn()
     cur = conn.cursor()
-    q = f"SELECT {_HIST_COLS} FROM translation_history"
+    q = f"SELECT {_HIST_COLS} FROM translator_translation_history"
     params = []
     if scene:
         q += " WHERE scene = ?"
@@ -106,7 +103,7 @@ def get_history(scene: Optional[str] = None, limit: int = 100) -> List[Translati
     if ids:
         placeholders = ",".join("?" * len(ids))
         cur.execute(
-            f"SELECT {_LP_COLS} FROM learning_point WHERE history_id IN ({placeholders}) ORDER BY id",
+            f"SELECT {_LP_COLS} FROM translator_learning_point WHERE history_id IN ({placeholders}) ORDER BY id",
             ids,
         )
         for r in cur.fetchall():
@@ -123,7 +120,7 @@ def usage_summary(scene: Optional[str] = None) -> dict:
     Returns totals plus a per-scene breakdown (always both scenes present)."""
     conn = _conn()
     cur = conn.cursor()
-    q = "SELECT scene, usage_json FROM translation_history"
+    q = "SELECT scene, usage_json FROM translator_translation_history"
     params = []
     if scene:
         q += " WHERE scene = ?"
@@ -163,7 +160,7 @@ def insert_learning_points(history_id: int, points: List[LearningPoint]) -> List
     for p in points:
         p.history_id = history_id
         cur.execute(
-            """INSERT INTO learning_point
+            """INSERT INTO translator_learning_point
                (history_id, original, suggestion, explanation, created_at)
                VALUES (?,?,?,?,?)""",
             (p.history_id, p.original, p.suggestion, p.explanation, p.created_at),
@@ -184,12 +181,12 @@ def cleanup_older_than(days: int) -> int:
     cur = conn.cursor()
     # Find victims first so we can cascade learning points explicitly (no FK
     # pragma reliance — keeps behavior identical across sqlite builds).
-    cur.execute("SELECT id FROM translation_history WHERE created_at < ?", (cutoff,))
+    cur.execute("SELECT id FROM translator_translation_history WHERE created_at < ?", (cutoff,))
     victim_ids = [r[0] for r in cur.fetchall()]
     if victim_ids:
         placeholders = ",".join("?" * len(victim_ids))
-        cur.execute(f"DELETE FROM learning_point WHERE history_id IN ({placeholders})", victim_ids)
-        cur.execute(f"DELETE FROM translation_history WHERE id IN ({placeholders})", victim_ids)
+        cur.execute(f"DELETE FROM translator_learning_point WHERE history_id IN ({placeholders})", victim_ids)
+        cur.execute(f"DELETE FROM translator_translation_history WHERE id IN ({placeholders})", victim_ids)
     conn.commit()
     conn.close()
     return len(victim_ids)

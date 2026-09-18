@@ -13,8 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
 
-
-_DB_PATH = os.path.join(os.path.dirname(__file__), 'file_git.db')
+from shared.db import get_conn
 
 VALID_MODES = ("ORIGINAL", "ENCRYPTED")
 VALID_STATUSES = ("ready", "syncing", "error", "locked")
@@ -23,7 +22,7 @@ VALID_STATUSES = ("ready", "syncing", "error", "locked")
 def init_db() -> None:
     with _conn() as conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS repos (
+            CREATE TABLE IF NOT EXISTS file_git_repos (
                 id           TEXT PRIMARY KEY,
                 name         TEXT NOT NULL,
                 local_path   TEXT NOT NULL UNIQUE,
@@ -38,8 +37,7 @@ def init_db() -> None:
 
 @contextmanager
 def _conn():
-    conn = sqlite3.connect(_DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn()
     try:
         yield conn
         conn.commit()
@@ -55,14 +53,14 @@ def _row_to_dict(row) -> Dict:
 
 def _load_repos() -> List[Dict]:
     with _conn() as conn:
-        rows = conn.execute("SELECT * FROM repos ORDER BY created_at").fetchall()
+        rows = conn.execute("SELECT * FROM file_git_repos ORDER BY created_at").fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
 def _save_repo(repo: Dict) -> None:
     with _conn() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO repos
+            INSERT OR REPLACE INTO file_git_repos
                 (id, name, local_path, mode, created_at, last_updated, initialized, status)
             VALUES
                 (:id, :name, :local_path, :mode, :created_at, :last_updated, :initialized, :status)
@@ -71,7 +69,7 @@ def _save_repo(repo: Dict) -> None:
 
 def _delete_repo_row(repo_id: str) -> None:
     with _conn() as conn:
-        conn.execute("DELETE FROM repos WHERE id = ?", (repo_id,))
+        conn.execute("DELETE FROM file_git_repos WHERE id = ?", (repo_id,))
 
 
 def _default_config(mode: str, local_path: str) -> Dict:
@@ -140,7 +138,7 @@ class RepositoryManager:
     @staticmethod
     def get_repo_by_id(repo_id: str) -> Optional[Dict]:
         with _conn() as conn:
-            row = conn.execute("SELECT * FROM repos WHERE id = ?", (repo_id,)).fetchone()
+            row = conn.execute("SELECT * FROM file_git_repos WHERE id = ?", (repo_id,)).fetchone()
         return _row_to_dict(row) if row else None
 
     @staticmethod
@@ -169,7 +167,7 @@ class RepositoryManager:
 
         with _conn() as conn:
             existing = conn.execute(
-                "SELECT id FROM repos WHERE local_path = ?", (local_path,)
+                "SELECT id FROM file_git_repos WHERE local_path = ?", (local_path,)
             ).fetchone()
         if existing:
             raise ValueError(f"Repository already registered: {local_path}")
@@ -234,7 +232,7 @@ class RepositoryManager:
     @staticmethod
     def _patch_repo(repo_id: str, patch: Dict) -> bool:
         with _conn() as conn:
-            row = conn.execute("SELECT * FROM repos WHERE id = ?", (repo_id,)).fetchone()
+            row = conn.execute("SELECT * FROM file_git_repos WHERE id = ?", (repo_id,)).fetchone()
             if not row:
                 return False
             repo = _row_to_dict(row)

@@ -4,9 +4,9 @@ from datetime import datetime, date
 from typing import List, Optional
 
 from .entity import Card
-from . import settings_manager
+from shared.db import get_conn
 
-TABLE = "card"
+TABLE = "memory_curve_card"
 
 _CREATE_SQL = f"""
     CREATE TABLE IF NOT EXISTS {TABLE} (
@@ -29,7 +29,7 @@ _CREATE_SQL = f"""
 def _conn():
     # Self-healing: ensure the table exists on every connection, so a deleted
     # or freshly-created db file recovers without a server restart.
-    conn = sqlite3.connect(settings_manager.get_db_path())
+    conn = get_conn()
     conn.execute(_CREATE_SQL)
     return conn
 

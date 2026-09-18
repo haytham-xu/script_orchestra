@@ -11,10 +11,11 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from .config import DB_PATH, DEFAULT_SYSTEM_PROMPT
+from .config import DEFAULT_SYSTEM_PROMPT
+from shared.db import get_conn
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE IF NOT EXISTS assistant_conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     system_prompt TEXT NOT NULL,
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS assistant_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id TEXT NOT NULL,
     role TEXT NOT NULL,             -- 'user' | 'assistant'
@@ -33,12 +34,12 @@ CREATE TABLE IF NOT EXISTS messages (
     input_tokens INTEGER,
     output_tokens INTEGER,
     created_at TEXT NOT NULL,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    FOREIGN KEY (conversation_id) REFERENCES assistant_conversations(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_assistant_messages_conv ON assistant_messages(conversation_id, id);
 
-CREATE TABLE IF NOT EXISTS attachments (
+CREATE TABLE IF NOT EXISTS assistant_attachments (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     message_id INTEGER,              -- filled once the message is inserted
@@ -49,15 +50,15 @@ CREATE TABLE IF NOT EXISTS attachments (
     sha256 TEXT NOT NULL,
     storage_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
+    FOREIGN KEY (conversation_id) REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES assistant_messages(id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_attachments_conv ON attachments(conversation_id, id);
-CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_attachments_conv ON assistant_attachments(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_assistant_attachments_msg ON assistant_attachments(message_id);
 
 -- Knowledge base: registered source folders
-CREATE TABLE IF NOT EXISTS kb_sources (
+CREATE TABLE IF NOT EXISTS assistant_kb_sources (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
@@ -69,7 +70,7 @@ CREATE TABLE IF NOT EXISTS kb_sources (
 );
 
 -- Knowledge base: one row per source file
-CREATE TABLE IF NOT EXISTS kb_documents (
+CREATE TABLE IF NOT EXISTS assistant_kb_documents (
     id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL,
     relpath TEXT NOT NULL,
@@ -77,49 +78,49 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     byte_size INTEGER NOT NULL,
     sha256 TEXT NOT NULL,
     indexed_at TEXT NOT NULL,
-    FOREIGN KEY (source_id) REFERENCES kb_sources(id) ON DELETE CASCADE
+    FOREIGN KEY (source_id) REFERENCES assistant_kb_sources(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_kb_docs_source ON kb_documents(source_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_kb_docs_source ON assistant_kb_documents(source_id);
 
 -- Knowledge base: chunks + embeddings (blob, cosine-normalized float32)
-CREATE TABLE IF NOT EXISTS kb_chunks (
+CREATE TABLE IF NOT EXISTS assistant_kb_chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id TEXT NOT NULL,
     source_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL,
     text TEXT NOT NULL,
     embedding BLOB NOT NULL,
-    FOREIGN KEY (document_id) REFERENCES kb_documents(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_id) REFERENCES kb_sources(id) ON DELETE CASCADE
+    FOREIGN KEY (document_id) REFERENCES assistant_kb_documents(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_id) REFERENCES assistant_kb_sources(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(document_id);
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_source ON kb_chunks(source_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_kb_chunks_doc ON assistant_kb_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_kb_chunks_source ON assistant_kb_chunks(source_id);
 
 -- Per-conversation opt-in flag for RAG (default off).
--- Stored as an extra column on conversations via ALTER — see migrations
+-- Stored as an extra column on assistant_conversations via ALTER — see migrations
 -- block in init_schema.
 
--- Full-text search index over messages.content. `content=messages` +
--- `content_rowid=id` keeps the actual text in `messages` (no duplication);
+-- Full-text search index over assistant_messages.content. `content=assistant_messages` +
+-- `content_rowid=id` keeps the actual text in `assistant_messages` (no duplication);
 -- FTS just holds the search index.
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS assistant_messages_fts USING fts5(
     content,
-    content='messages',
+    content='assistant_messages',
     content_rowid='id',
     tokenize='unicode61 remove_diacritics 2'
 );
 
-CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+CREATE TRIGGER IF NOT EXISTS assistant_messages_ai AFTER INSERT ON assistant_messages BEGIN
+    INSERT INTO assistant_messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
-CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
+CREATE TRIGGER IF NOT EXISTS assistant_messages_ad AFTER DELETE ON assistant_messages BEGIN
+    INSERT INTO assistant_messages_fts(assistant_messages_fts, rowid, content)
       VALUES ('delete', old.id, old.content);
 END;
-CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
+CREATE TRIGGER IF NOT EXISTS assistant_messages_au AFTER UPDATE ON assistant_messages BEGIN
+    INSERT INTO assistant_messages_fts(assistant_messages_fts, rowid, content)
       VALUES ('delete', old.id, old.content);
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+    INSERT INTO assistant_messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
 """
 
@@ -132,8 +133,7 @@ def _now() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    conn = get_conn()
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -143,13 +143,12 @@ def init_schema() -> None:
     with _init_lock:
         if _initialized:
             return
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with _connect() as conn:
             # Detect whether FTS index needs a backfill BEFORE running the
             # schema (which creates the empty FTS table if missing).
             existed = conn.execute(
                 "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='messages_fts'"
+                "WHERE type='table' AND name='assistant_messages_fts'"
             ).fetchone() is not None
 
             conn.executescript(_SCHEMA)
@@ -157,38 +156,38 @@ def init_schema() -> None:
             if not existed:
                 # First time this DB gets an FTS index — backfill.
                 conn.execute(
-                    "INSERT INTO messages_fts(rowid, content) "
-                    "SELECT id, content FROM messages"
+                    "INSERT INTO assistant_messages_fts(rowid, content) "
+                    "SELECT id, content FROM assistant_messages"
                 )
 
             # Idempotent column additions for older DBs.
             cols = {
                 r[1] for r in conn.execute(
-                    "PRAGMA table_info(conversations)"
+                    "PRAGMA table_info(assistant_conversations)"
                 ).fetchall()
             }
             if "kb_enabled" not in cols:
                 conn.execute(
-                    "ALTER TABLE conversations "
+                    "ALTER TABLE assistant_conversations "
                     "ADD COLUMN kb_enabled INTEGER NOT NULL DEFAULT 0"
                 )
             if "pinned" not in cols:
                 conn.execute(
-                    "ALTER TABLE conversations "
+                    "ALTER TABLE assistant_conversations "
                     "ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
                 )
             if "archived" not in cols:
                 conn.execute(
-                    "ALTER TABLE conversations "
+                    "ALTER TABLE assistant_conversations "
                     "ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"
                 )
             if "summary" not in cols:
                 conn.execute(
-                    "ALTER TABLE conversations ADD COLUMN summary TEXT"
+                    "ALTER TABLE assistant_conversations ADD COLUMN summary TEXT"
                 )
             if "summary_up_to_id" not in cols:
                 conn.execute(
-                    "ALTER TABLE conversations "
+                    "ALTER TABLE assistant_conversations "
                     "ADD COLUMN summary_up_to_id INTEGER"
                 )
         _initialized = True
@@ -206,7 +205,7 @@ def create_conversation(
     ts = _now()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO conversations "
+            "INSERT INTO assistant_conversations "
             "(id, title, system_prompt, model_alias, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (conv_id, title, system_prompt, model_alias, ts, ts),
@@ -220,7 +219,7 @@ def list_conversations() -> List[Dict]:
         rows = conn.execute(
             "SELECT id, title, model_alias, kb_enabled, pinned, archived, "
             "       created_at, updated_at "
-            "FROM conversations "
+            "FROM assistant_conversations "
             "ORDER BY pinned DESC, archived ASC, updated_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -230,7 +229,7 @@ def get_conversation(conv_id: str) -> Optional[Dict]:
     init_schema()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conv_id,)
+            "SELECT * FROM assistant_conversations WHERE id = ?", (conv_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -273,7 +272,7 @@ def update_conversation(
 
     with _connect() as conn:
         cur = conn.execute(
-            f"UPDATE conversations SET {', '.join(fields)} WHERE id = ?",
+            f"UPDATE assistant_conversations SET {', '.join(fields)} WHERE id = ?",
             values,
         )
         if cur.rowcount == 0:
@@ -285,7 +284,7 @@ def delete_conversation(conv_id: str) -> bool:
     init_schema()
     with _connect() as conn:
         cur = conn.execute(
-            "DELETE FROM conversations WHERE id = ?", (conv_id,)
+            "DELETE FROM assistant_conversations WHERE id = ?", (conv_id,)
         )
         return cur.rowcount > 0
 
@@ -293,7 +292,7 @@ def delete_conversation(conv_id: str) -> bool:
 def touch_conversation(conv_id: str) -> None:
     with _connect() as conn:
         conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            "UPDATE assistant_conversations SET updated_at = ? WHERE id = ?",
             (_now(), conv_id),
         )
 
@@ -313,7 +312,7 @@ def add_message(
     ts = _now()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO messages "
+            "INSERT INTO assistant_messages "
             "(conversation_id, role, content, model, complexity, "
             " input_tokens, output_tokens, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -322,7 +321,7 @@ def add_message(
         )
         msg_id = cur.lastrowid
         conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            "UPDATE assistant_conversations SET updated_at = ? WHERE id = ?",
             (ts, conv_id),
         )
     return get_message(msg_id)
@@ -331,14 +330,14 @@ def add_message(
 def get_message(msg_id: int) -> Optional[Dict]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM messages WHERE id = ?", (msg_id,)
+            "SELECT * FROM assistant_messages WHERE id = ?", (msg_id,)
         ).fetchone()
     return dict(row) if row else None
 
 
 def list_messages(conv_id: str, limit: Optional[int] = None) -> List[Dict]:
     init_schema()
-    query = ("SELECT * FROM messages WHERE conversation_id = ? "
+    query = ("SELECT * FROM assistant_messages WHERE conversation_id = ? "
              "ORDER BY id ASC")
     params = [conv_id]
     if limit is not None:
@@ -356,7 +355,7 @@ def recent_messages_for_context(conv_id: str, limit: int) -> List[Dict]:
     """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT role, content FROM messages "
+            "SELECT role, content FROM assistant_messages "
             "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
             (conv_id, limit),
         ).fetchall()
@@ -378,7 +377,7 @@ def create_attachment(
     init_schema()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO attachments "
+            "INSERT INTO assistant_attachments "
             "(id, conversation_id, message_id, kind, mime_type, filename, "
             " byte_size, sha256, storage_path, created_at) "
             "VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
@@ -391,7 +390,7 @@ def create_attachment(
 def get_attachment(attachment_id: str) -> Optional[Dict]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
+            "SELECT * FROM assistant_attachments WHERE id = ?", (attachment_id,)
         ).fetchone()
     return dict(row) if row else None
 
@@ -399,7 +398,7 @@ def get_attachment(attachment_id: str) -> Optional[Dict]:
 def list_attachments_for_conversation(conv_id: str) -> List[Dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM attachments WHERE conversation_id = ? "
+            "SELECT * FROM assistant_attachments WHERE conversation_id = ? "
             "ORDER BY created_at ASC",
             (conv_id,),
         ).fetchall()
@@ -409,7 +408,7 @@ def list_attachments_for_conversation(conv_id: str) -> List[Dict]:
 def list_attachments_for_message(msg_id: int) -> List[Dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM attachments WHERE message_id = ? ORDER BY id",
+            "SELECT * FROM assistant_attachments WHERE message_id = ? ORDER BY id",
             (msg_id,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -422,7 +421,7 @@ def attach_to_message(attachment_ids: List[str], msg_id: int) -> None:
     placeholders = ",".join("?" * len(attachment_ids))
     with _connect() as conn:
         conn.execute(
-            f"UPDATE attachments SET message_id = ? WHERE id IN ({placeholders})",
+            f"UPDATE assistant_attachments SET message_id = ? WHERE id IN ({placeholders})",
             (msg_id, *attachment_ids),
         )
 
@@ -435,7 +434,7 @@ def set_conversation_summary(conv_id: str, summary: str,
     init_schema()
     with _connect() as conn:
         conn.execute(
-            "UPDATE conversations SET summary = ?, summary_up_to_id = ? "
+            "UPDATE assistant_conversations SET summary = ?, summary_up_to_id = ? "
             "WHERE id = ?",
             (summary, summary_up_to_id, conv_id),
         )
@@ -460,22 +459,22 @@ def edit_user_message_and_truncate(
 
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, conversation_id, role FROM messages WHERE id = ?",
+            "SELECT id, conversation_id, role FROM assistant_messages WHERE id = ?",
             (message_id,),
         ).fetchone()
         if row is None or row["conversation_id"] != conv_id or row["role"] != "user":
             return None
 
         conn.execute(
-            "UPDATE messages SET content = ? WHERE id = ?",
+            "UPDATE assistant_messages SET content = ? WHERE id = ?",
             (new_content, message_id),
         )
         conn.execute(
-            "DELETE FROM messages WHERE conversation_id = ? AND id > ?",
+            "DELETE FROM assistant_messages WHERE conversation_id = ? AND id > ?",
             (conv_id, message_id),
         )
         conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            "UPDATE assistant_conversations SET updated_at = ? WHERE id = ?",
             (_now(), conv_id),
         )
     return get_message(message_id)
@@ -512,7 +511,7 @@ def fork_conversation(
     init_schema()
     with _connect() as conn:
         target = conn.execute(
-            "SELECT id, conversation_id FROM messages WHERE id = ?",
+            "SELECT id, conversation_id FROM assistant_messages WHERE id = ?",
             (up_to_message_id,),
         ).fetchone()
         if target is None or target["conversation_id"] != source_conv_id:
@@ -520,7 +519,7 @@ def fork_conversation(
 
         boundary_op = "<=" if include_target else "<"
         rows = conn.execute(
-            f"SELECT * FROM messages WHERE conversation_id = ? "
+            f"SELECT * FROM assistant_messages WHERE conversation_id = ? "
             f"  AND id {boundary_op} ? ORDER BY id ASC",
             (source_conv_id, up_to_message_id),
         ).fetchall()
@@ -537,7 +536,7 @@ def fork_conversation(
     with _connect() as conn:
         for row in rows:
             cur = conn.execute(
-                "INSERT INTO messages "
+                "INSERT INTO assistant_messages "
                 "(conversation_id, role, content, model, complexity, "
                 " input_tokens, output_tokens, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -551,13 +550,13 @@ def fork_conversation(
         # insert new DB rows pointing at the same storage_path.
         for old_msg_id, new_msg_id in id_remap.items():
             atts = conn.execute(
-                "SELECT * FROM attachments WHERE message_id = ?",
+                "SELECT * FROM assistant_attachments WHERE message_id = ?",
                 (old_msg_id,),
             ).fetchall()
             for a in atts:
                 new_id = str(uuid.uuid4())
                 conn.execute(
-                    "INSERT INTO attachments "
+                    "INSERT INTO assistant_attachments "
                     "(id, conversation_id, message_id, kind, mime_type, "
                     " filename, byte_size, sha256, storage_path, created_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -567,7 +566,7 @@ def fork_conversation(
                 )
 
         conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            "UPDATE assistant_conversations SET updated_at = ? WHERE id = ?",
             (ts_now, new_conv["id"]),
         )
 
@@ -587,20 +586,20 @@ def usage_totals() -> Dict:
             "SELECT COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages WHERE role='assistant'"
+            "FROM assistant_messages WHERE role='assistant'"
         ).fetchone()
         today = conn.execute(
             "SELECT COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages WHERE role='assistant' "
+            "FROM assistant_messages WHERE role='assistant' "
             "AND date(created_at) = date('now', 'localtime')"
         ).fetchone()
         last7 = conn.execute(
             "SELECT COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages WHERE role='assistant' "
+            "FROM assistant_messages WHERE role='assistant' "
             "AND date(created_at) >= date('now', '-6 days', 'localtime')"
         ).fetchone()
         by_model = conn.execute(
@@ -608,11 +607,11 @@ def usage_totals() -> Dict:
             "       COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages WHERE role='assistant' AND model IS NOT NULL "
+            "FROM assistant_messages WHERE role='assistant' AND model IS NOT NULL "
             "GROUP BY model ORDER BY output DESC"
         ).fetchall()
         conv_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM conversations"
+            "SELECT COUNT(*) AS n FROM assistant_conversations"
         ).fetchone()["n"]
     return {
         "conversation_count": conv_count,
@@ -629,7 +628,7 @@ def usage_for_conversation(conv_id: str) -> Dict:
             "SELECT COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages WHERE role='assistant' AND conversation_id = ?",
+            "FROM assistant_messages WHERE role='assistant' AND conversation_id = ?",
             (conv_id,),
         ).fetchone()
         by_model = conn.execute(
@@ -637,7 +636,7 @@ def usage_for_conversation(conv_id: str) -> Dict:
             "       COALESCE(SUM(input_tokens), 0) AS input, "
             "       COALESCE(SUM(output_tokens), 0) AS output, "
             "       COUNT(*) AS message_count "
-            "FROM messages "
+            "FROM assistant_messages "
             "WHERE role='assistant' AND model IS NOT NULL "
             "  AND conversation_id = ? "
             "GROUP BY model ORDER BY output DESC",
@@ -700,12 +699,12 @@ def search_messages(user_query: str, limit: int = 30) -> List[Dict]:
                 "       m.role, "
                 "       m.created_at, "
                 "       m.model, "
-                "       snippet(messages_fts, 0, '<mark>', '</mark>', '…', 15) AS snippet, "
-                "       bm25(messages_fts) AS score "
-                "FROM messages_fts "
-                "JOIN messages m ON m.id = messages_fts.rowid "
-                "JOIN conversations c ON c.id = m.conversation_id "
-                "WHERE messages_fts MATCH ? "
+                "       snippet(assistant_messages_fts, 0, '<mark>', '</mark>', '…', 15) AS snippet, "
+                "       bm25(assistant_messages_fts) AS score "
+                "FROM assistant_messages_fts "
+                "JOIN assistant_messages m ON m.id = assistant_messages_fts.rowid "
+                "JOIN assistant_conversations c ON c.id = m.conversation_id "
+                "WHERE assistant_messages_fts MATCH ? "
                 "ORDER BY score ASC "
                 "LIMIT ?",
                 (fts_query, limit),
@@ -724,8 +723,8 @@ def search_messages(user_query: str, limit: int = 30) -> List[Dict]:
                 "       m.model, "
                 "       substr(m.content, 1, 240) AS snippet, "
                 "       0.0 AS score "
-                "FROM messages m "
-                "JOIN conversations c ON c.id = m.conversation_id "
+                "FROM assistant_messages m "
+                "JOIN assistant_conversations c ON c.id = m.conversation_id "
                 "WHERE m.content LIKE ? "
                 "ORDER BY m.created_at DESC "
                 "LIMIT ?",

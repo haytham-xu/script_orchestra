@@ -76,10 +76,8 @@ claude-agent-sdk==0.2.148
 # (no pip dep, no API key). Prerequisite: the Claude CLI must be installed and
 # logged in on the host; see https://docs.claude.com/claude-code
 
-# assistant/knowledge — PDF parsing + semantic search
-# (sentence-transformers pulls in torch — a large, multi-GB dependency)
+# assistant/knowledge — PDF parsing
 pypdf==6.16.2
-sentence-transformers==5.7.0
 
 # assistant/wake — wake-word detection
 openwakeword==0.6.0

@@ -2,25 +2,24 @@
 Settings database service for Roadmap
 """
 import sqlite3
-import os
 from .settings_models import RoadmapSettings
+from shared.db import get_conn
 
 
 class SettingsDatabase:
     """SQLite database for roadmap settings"""
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self):
         self.init_db()
 
     def init_db(self):
         """Initialize database tables"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_conn()
         cursor = conn.cursor()
 
         # Create settings table (single row)
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS settings (
+            CREATE TABLE IF NOT EXISTS roadmap_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 in_progress_timeout_hours REAL NOT NULL DEFAULT 4.0,
                 done_auto_remove_days INTEGER DEFAULT NULL
@@ -28,10 +27,10 @@ class SettingsDatabase:
         ''')
 
         # Insert default settings if not exists
-        cursor.execute('SELECT COUNT(*) FROM settings WHERE id = 1')
+        cursor.execute('SELECT COUNT(*) FROM roadmap_settings WHERE id = 1')
         if cursor.fetchone()[0] == 0:
             cursor.execute('''
-                INSERT INTO settings (id, in_progress_timeout_hours, done_auto_remove_days)
+                INSERT INTO roadmap_settings (id, in_progress_timeout_hours, done_auto_remove_days)
                 VALUES (1, 4.0, NULL)
             ''')
 
@@ -40,12 +39,12 @@ class SettingsDatabase:
 
     def get_settings(self) -> RoadmapSettings:
         """Get settings"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_conn()
         cursor = conn.cursor()
 
         cursor.execute('''
             SELECT in_progress_timeout_hours, done_auto_remove_days
-            FROM settings
+            FROM roadmap_settings
             WHERE id = 1
         ''')
 
@@ -63,11 +62,11 @@ class SettingsDatabase:
 
     def update_settings(self, settings: RoadmapSettings) -> RoadmapSettings:
         """Update settings"""
-        conn = sqlite3.connect(self.db_path)
+        conn = get_conn()
         cursor = conn.cursor()
 
         cursor.execute('''
-            UPDATE settings
+            UPDATE roadmap_settings
             SET in_progress_timeout_hours = ?,
                 done_auto_remove_days = ?
             WHERE id = 1
@@ -83,5 +82,4 @@ class SettingsDatabase:
 
 
 # Global database instance
-_db_path = os.path.join(os.path.dirname(__file__), 'tasks.db')
-settings_db = SettingsDatabase(_db_path)
+settings_db = SettingsDatabase()
