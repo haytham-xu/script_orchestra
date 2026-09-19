@@ -1,8 +1,8 @@
-import { defineComponent, ref } from 'vue'
+import { defineComponent, ref, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { marked } from 'marked'
 import * as api from '../service/KnowledgeVaultService'
-import type { RawFragment, Label } from '../service/Model'
+import type { RawFragment, Label, ContentBlock } from '../service/Model'
 import { fragmentSummary } from '../service/Model'
 
 export default defineComponent({
@@ -51,6 +51,13 @@ export default defineComponent({
       return marked.parse(text || '', { async: false }) as string
     }
 
+    const expandedLongs = ref(new Set<ContentBlock>())
+    function toggleLong(blk: ContentBlock) {
+      if (expandedLongs.value.has(blk)) expandedLongs.value.delete(blk)
+      else expandedLongs.value.add(blk)
+      expandedLongs.value = new Set(expandedLongs.value)
+    }
+
     // Load labels for tag display in results
     loadLabels()
 
@@ -59,6 +66,7 @@ export default defineComponent({
       labelMap, labels,
       queryText, results, searched, searching, searchDetail,
       runSearch, fmtDate, fragmentSummary, renderMd,
+      expandedLongs, toggleLong,
     }
   },
 })

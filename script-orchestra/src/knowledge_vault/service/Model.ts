@@ -1,4 +1,4 @@
-export type BlockType = 'text' | 'code' | 'url'
+export type BlockType = 'text' | 'code' | 'url' | 'long'
 
 export interface ContentBlock {
   type: BlockType

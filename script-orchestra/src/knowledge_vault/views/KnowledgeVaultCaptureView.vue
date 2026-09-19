@@ -155,20 +155,24 @@
 
           <div class="kv-blocks">
             <div v-for="(blk, i) in selectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : 'kv-blk-bar--text'">
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+                @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
                   <el-button text size="small" class="kv-copy-inline" @click.stop="copyBlock(blk.subtitle)">Copy</el-button>
                 </span>
+                <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(selectedFrag.created_at) }}</span>
-                <el-button text size="small" @click="copyBlock(blk.body)">Copy</el-button>
+                <el-button text size="small" @click.stop="copyBlock(blk.body)">Copy</el-button>
+                <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
               <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
               </div>
+              <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
             </div>
           </div>
         </div>
@@ -187,7 +191,7 @@
             <div v-for="(blk, i) in editingBlocks" :key="i" class="kv-block-edit">
               <div class="kv-bk-toolbar">
                 <div class="kv-bk-type-group">
-                  <button v-for="t in ['text','code','url']" :key="t"
+                  <button v-for="t in ['text','code','url','long']" :key="t"
                     class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                     @click="setBlockType(editingBlocks, i, t)">{{ t }}</button>
                 </div>
@@ -208,6 +212,7 @@
               <el-button text size="small" @click="addBlock('text')">+ Text</el-button>
               <el-button text size="small" @click="addBlock('code')">+ Code</el-button>
               <el-button text size="small" @click="addBlock('url')">+ URL</el-button>
+              <el-button text size="small" @click="addBlock('long')">+ Long</el-button>
             </div>
           </div>
         </div>
@@ -295,20 +300,24 @@
           </div>
           <div class="kv-blocks">
             <div v-for="(blk, i) in organizeSelectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : 'kv-blk-bar--text'">
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+                @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
                   <el-button text size="small" class="kv-copy-inline" @click.stop="copyBlock(blk.subtitle)">Copy</el-button>
                 </span>
+                <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(organizeSelectedFrag.created_at) }}</span>
-                <el-button text size="small" @click="copyBlock(blk.body)">Copy</el-button>
+                <el-button text size="small" @click.stop="copyBlock(blk.body)">Copy</el-button>
+                <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
               <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
               </div>
+              <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
             </div>
           </div>
         </div>
@@ -336,7 +345,7 @@
         <div v-for="(blk, i) in draftBlocks" :key="i" class="kv-block-edit">
           <div class="kv-bk-toolbar">
             <div class="kv-bk-type-group">
-              <button v-for="t in ['text','code','url']" :key="t"
+              <button v-for="t in ['text','code','url','long']" :key="t"
                 class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                 @click="setBlockType(draftBlocks, i, t)">{{ t }}</button>
             </div>
@@ -355,6 +364,7 @@
           <el-button text size="small" @click="addDraftBlock('text')">+ Text</el-button>
           <el-button text size="small" @click="addDraftBlock('code')">+ Code</el-button>
           <el-button text size="small" @click="addDraftBlock('url')">+ URL</el-button>
+          <el-button text size="small" @click="addDraftBlock('long')">+ Long</el-button>
         </div>
       </div>
       <template #footer>
@@ -534,6 +544,7 @@
 .kv-blk-bar--text { background: #f5f5f7; }
 .kv-blk-bar--code { background: #2d2d2d; }
 .kv-blk-bar--url { background: #f0f7ff; }
+.kv-blk-bar--long { background: #f5f0ff; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-date { font-size: 11px; color: #86868b; white-space: nowrap; flex-shrink: 0; }
 .kv-blk-bar--code .kv-blk-date { color: #888; }
@@ -569,8 +580,14 @@
   display: flex; align-items: center; gap: 4px; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.kv-blk-subtitle--long { color: #7c4dbd; }
 .kv-blk-bar--code .kv-blk-subtitle { color: #bbb; }
 .kv-blk-bar--code .kv-copy-inline { color: #bbb !important; }
+.kv-long-chevron {
+  font-size: 16px; color: #7c4dbd; font-style: normal; margin-left: 4px;
+  display: inline-block; transform: rotate(0deg); transition: transform .2s;
+}
+.kv-long-chevron.expanded { transform: rotate(90deg); }
 
 /* blocks edit */
 .kv-blocks-edit { display: flex; flex-direction: column; gap: 10px; }

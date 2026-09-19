@@ -415,6 +415,13 @@ export default defineComponent({
 
     onUnmounted(() => { if (reindexPoll) { clearInterval(reindexPoll); reindexPoll = null } })
 
+    const expandedLongs = ref(new Set<ContentBlock>())
+    function toggleLong(blk: ContentBlock) {
+      if (expandedLongs.value.has(blk)) expandedLongs.value.delete(blk)
+      else expandedLongs.value.add(blk)
+      expandedLongs.value = new Set(expandedLongs.value)
+    }
+
     return {
       goBack, goSearch, goSettings,
       ROOT_GROUP_ID,
@@ -440,6 +447,7 @@ export default defineComponent({
       organizeDeleteOne, organizeDeleteSelected,
       reindexStatus, triggerReindex,
       fmtDate, fragmentSummary, copyBlock, setBlockType, renderMd,
+      expandedLongs, toggleLong,
     }
   },
 })

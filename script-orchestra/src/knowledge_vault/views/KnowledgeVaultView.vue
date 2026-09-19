@@ -86,16 +86,20 @@
             </div>
             <div class="kv-blocks">
               <div v-for="(blk, i) in searchDetail.blocks" :key="i" class="kv-block">
-                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : 'kv-blk-bar--text'">
+                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+                  @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                   <span class="kv-blk-subtitle" v-if="blk.subtitle">{{ blk.subtitle }}</span>
+                  <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                   <span v-else style="flex:1" />
-                  <el-button text size="small" @click="$navigator?.clipboard?.writeText(blk.body)">Copy</el-button>
+                  <el-button text size="small" @click.stop="$navigator?.clipboard?.writeText(blk.body)">Copy</el-button>
+                  <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
                 </div>
                 <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
                 <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
                 <div v-else-if="blk.type === 'url'" class="kv-url-body">
                   <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
                 </div>
+                <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               </div>
             </div>
           </div>
@@ -193,12 +197,19 @@
 .kv-blk-bar--text { background: #f5f5f7; }
 .kv-blk-bar--code { background: #2d2d2d; }
 .kv-blk-bar--url { background: #f0f7ff; }
+.kv-blk-bar--long { background: #f5f0ff; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-subtitle {
   flex: 1; font-size: 12px; color: #555; font-style: italic;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.kv-blk-subtitle--long { color: #7c4dbd; }
 .kv-blk-bar--code .kv-blk-subtitle { color: #bbb; }
+.kv-long-chevron {
+  font-size: 16px; color: #7c4dbd; font-style: normal; margin-left: 4px;
+  display: inline-block; transform: rotate(0deg); transition: transform .2s;
+}
+.kv-long-chevron.expanded { transform: rotate(90deg); }
 .kv-blk-text-body {
   padding: 8px 12px; font-size: 13px; color: #1d1d1f;
   white-space: pre-wrap; word-break: break-word; line-height: 1.6;
