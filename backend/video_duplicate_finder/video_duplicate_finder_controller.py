@@ -65,22 +65,9 @@ def get_workflow():
     """Return the process-wide VideoDuplicateFinderWorkflow singleton."""
     global _workflow
     if _workflow is None:
-        # Local import keeps blueprint.py's import-time cheap and avoids
-        # circular imports if controller is imported before workflow ready.
         from .video_workflow import VideoDuplicateFinderWorkflow
-
-        db_path = settings_manager.get_video_db_path()
-        _workflow = VideoDuplicateFinderWorkflow(db_path=db_path)
-        print(f"[Video Workflow] Initialized with DB: {db_path}")
-    else:
-        try:
-            cur = settings_manager.get_video_db_path()
-            if str(_workflow.db_path) != str(cur):
-                print(f"[Video Workflow] WARNING: configured DB path "
-                      f"changed from {_workflow.db_path} to {cur} — "
-                      f"keeping existing workflow to preserve stop event")
-        except Exception:
-            pass
+        _workflow = VideoDuplicateFinderWorkflow()
+        print(f"[Video Workflow] Initialized with shared DB")
     return _workflow
 
 
@@ -288,7 +275,7 @@ class Phase1StopResource(Resource):
 
 
 # ---------------------------------------------------------------------------
-# /phase2/build — compute pairwise distance, write video_similarities
+# /phase2/build — compute pairwise distance, write video_duplicate_finder_video_similarities
 # ---------------------------------------------------------------------------
 #
 # Request body (all optional):
@@ -647,8 +634,8 @@ class Phase3StopResource(Resource):
 #   2. For each file: move video + matching companion files (.srt, .nfo, ...)
 #      to delete_target_path (mirroring the relative path under scan folder).
 #      Collisions resolved via `_N` suffix.
-#   3. DELETE FROM video_hashes WHERE id = ?  → CASCADE clears similarities
-#      + duplicate_video_groups + whitelist memberships
+#   3. DELETE FROM video_duplicate_finder_video_hashes WHERE id = ?  → CASCADE clears similarities
+#      + video_duplicate_finder_duplicate_video_groups + whitelist memberships
 #   4. Stats repair using the pre-captured state
 #
 # Response: { success, failed, errors, companions_moved, stats_repair }
@@ -716,7 +703,7 @@ class DeleteResource(Resource):
             chunk = abs_files[i:i + BATCH]
             ph = ','.join('?' * len(chunk))
             cur.execute(
-                f"SELECT id FROM video_hashes WHERE file_path IN ({ph})",
+                f"SELECT id FROM video_duplicate_finder_video_hashes WHERE file_path IN ({ph})",
                 chunk,
             )
             video_ids.extend(r[0] for r in cur.fetchall())
@@ -775,18 +762,18 @@ class DeleteResource(Resource):
                 errors.append(f'Move failed for {fp}: {e}')
                 print(f"[Delete API] FAILED move {fp}: {e}")
 
-        # --- Step 3: DELETE FROM video_hashes (CASCADE) ---
+        # --- Step 3: DELETE FROM video_duplicate_finder_video_hashes (CASCADE) ---
         if video_ids:
             try:
                 for i in range(0, len(video_ids), BATCH):
                     chunk = video_ids[i:i + BATCH]
                     ph = ','.join('?' * len(chunk))
                     cur.execute(
-                        f"DELETE FROM video_hashes WHERE id IN ({ph})",
+                        f"DELETE FROM video_duplicate_finder_video_hashes WHERE id IN ({ph})",
                         chunk,
                     )
                 conn.commit()
-                print(f"[Delete API] removed {len(video_ids)} video_hashes rows (CASCADE)")
+                print(f"[Delete API] removed {len(video_ids)} video_duplicate_finder_video_hashes rows (CASCADE)")
             except Exception as e:
                 conn.rollback()
                 print(f"[Delete API] DB DELETE failed after file moves: {e}")
@@ -827,7 +814,7 @@ class WhitelistResource(Resource):
         """Return all whitelist groups + individual whitelisted videos."""
         try:
             wf = get_workflow()
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             return {
                 'whitelist_groups':   cache.get_whitelist_groups(),
                 'whitelist':          cache.get_whitelist(),
@@ -849,12 +836,12 @@ class WhitelistResource(Resource):
             wf = get_workflow()
             affected = wf.stats_collect_affected_before_mutation(video_ids)
 
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             added_gid = cache.add_group_to_whitelist(video_ids)
 
             # Compensating rollback: if stats_repair fails, remove the
             # just-added whitelist row so the DB isn't left in a state
-            # where the group is whitelisted but duplicate_video_groups
+            # where the group is whitelisted but video_duplicate_finder_duplicate_video_groups
             # still holds those video_ids (Tier-2 review D-25).
             try:
                 repair = wf.stats_repair_after_mutation(
@@ -890,7 +877,7 @@ class WhitelistResource(Resource):
             return {'error': 'group_id (query param) required'}, 400
         try:
             wf = get_workflow()
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             cache.remove_whitelist_group(int(group_id))
             return {'message': f'Removed whitelist group {group_id}'}
         except ValueError:
@@ -905,7 +892,7 @@ class WhitelistCleanupResource(Resource):
         """Remove whitelist groups that fell below 2 members (defensive)."""
         try:
             wf = get_workflow()
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             removed = cache.cleanup_whitelist_groups()
             return {
                 'removed_count': removed,
@@ -985,8 +972,8 @@ class WhitelistPreviewByPathResource(Resource):
             like_prefix_pattern = like_stem + os.sep + '%'
             cur.execute('''
                 SELECT DISTINCT dg.group_id, v.dir_path
-                FROM duplicate_video_groups dg
-                JOIN video_hashes v ON dg.video_id = v.id
+                FROM video_duplicate_finder_duplicate_video_groups dg
+                JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
                 WHERE v.dir_path = ? OR v.dir_path LIKE ? ESCAPE '\\'
             ''', (deep_path_abs.rstrip(os.sep), like_prefix_pattern))
             rows = cur.fetchall()
@@ -1018,8 +1005,8 @@ class WhitelistPreviewByPathResource(Resource):
                 cur.execute(f'''
                     SELECT dg.group_id, v.id, v.filename, v.filesize, v.file_path,
                            v.video_hash, v.duration, v.width, v.height, v.vcodec
-                    FROM duplicate_video_groups dg
-                    JOIN video_hashes v ON dg.video_id = v.id
+                    FROM video_duplicate_finder_duplicate_video_groups dg
+                    JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
                     WHERE dg.group_id IN ({ph})
                 ''', chunk)
                 for gid, vid, filename, filesize, fp, vh, dur, w, h, vc in cur.fetchall():
@@ -1108,7 +1095,7 @@ class WhitelistBulkAddGroupsResource(Resource):
             wf = get_workflow()
             affected = wf.stats_collect_affected_before_mutation(all_video_ids)
 
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             added = 0
             added_gids: list = []   # capture returned ids for compensating rollback
             failed_gids: list = []
@@ -1126,7 +1113,7 @@ class WhitelistBulkAddGroupsResource(Resource):
 
             # Round-2 review: only include succeeded ids in the stats-repair
             # affected set — otherwise ids from FAILED groups would still be
-            # stripped from duplicate_video_groups by remove_from_groups=True.
+            # stripped from video_duplicate_finder_duplicate_video_groups by remove_from_groups=True.
             filtered_affected = {
                 'video_ids':           [v for v in (affected.get('video_ids') or [])
                                         if v in succeeded_video_ids],
@@ -1144,7 +1131,7 @@ class WhitelistBulkAddGroupsResource(Resource):
                 # Round-2 review: compensating rollback. Unwind each
                 # successfully-added whitelist group so the DB isn't left
                 # in a state where groups are whitelisted but
-                # duplicate_video_groups still holds those video_ids.
+                # video_duplicate_finder_duplicate_video_groups still holds those video_ids.
                 import traceback; traceback.print_exc()
                 unwind_errors: list = []
                 for unwind_gid in added_gids:
@@ -1183,7 +1170,7 @@ class CompareFoldersResource(Resource):
         """FOCUSED pairwise comparison of just the given folders.
 
         Reuses existing hashes from the DB; computes new hashes only for
-        files on disk not yet in the DB. Never deletes any video_hashes
+        files on disk not yet in the DB. Never deletes any video_duplicate_finder_video_hashes
         rows; never touches data outside the scope. After compare, runs
         Phase 2.5 so Phase 3 immediately reflects the new edges.
 
@@ -1317,8 +1304,8 @@ class CompareFoldersAllResource(Resource):
             # Step 1: pull every (group_id, dir_path) pair
             cur.execute('''
                 SELECT dg.group_id, v.dir_path
-                FROM duplicate_video_groups dg
-                JOIN video_hashes v ON dg.video_id = v.id
+                FROM video_duplicate_finder_duplicate_video_groups dg
+                JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
                 WHERE v.dir_path IS NOT NULL
             ''')
             rows = cur.fetchall()
@@ -1596,7 +1583,7 @@ class ReplaceResource(Resource):
             id_by_path: dict = {}
             ph = ','.join('?' * len(group_abs))
             cur.execute(
-                f"SELECT id, file_path FROM video_hashes WHERE file_path IN ({ph})",
+                f"SELECT id, file_path FROM video_duplicate_finder_video_hashes WHERE file_path IN ({ph})",
                 group_abs,
             )
             for vid, fp in cur.fetchall():
@@ -1714,12 +1701,12 @@ class ReplaceResource(Resource):
                     for i in range(0, len(to_delete_ids), BATCH):
                         chunk = to_delete_ids[i:i + BATCH]
                         ph2 = ','.join('?' * len(chunk))
-                        cur.execute(f"DELETE FROM video_hashes WHERE id IN ({ph2})", chunk)
+                        cur.execute(f"DELETE FROM video_duplicate_finder_video_hashes WHERE id IN ({ph2})", chunk)
                 if do_rename and new_selected_path and selected_id is not None:
                     new_filename = os.path.basename(new_selected_path)
                     new_dir = os.path.dirname(new_selected_path)
                     cur.execute(
-                        "UPDATE video_hashes "
+                        "UPDATE video_duplicate_finder_video_hashes "
                         "SET file_path = ?, filename = ?, dir_path = ? "
                         "WHERE id = ?",
                         (new_selected_path, new_filename, new_dir, selected_id),
@@ -1819,7 +1806,7 @@ class ReplaceBatchResource(Resource):
                 chunk = all_paths_list[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT id, file_path FROM video_hashes WHERE file_path IN ({ph})",
+                    f"SELECT id, file_path FROM video_duplicate_finder_video_hashes WHERE file_path IN ({ph})",
                     chunk,
                 )
                 for vid, fp in cur.fetchall():
@@ -1967,12 +1954,12 @@ class ReplaceBatchResource(Resource):
                         for j in range(0, len(to_delete_ids), 900):
                             chunk = to_delete_ids[j:j + 900]
                             ph = ','.join('?' * len(chunk))
-                            cur.execute(f"DELETE FROM video_hashes WHERE id IN ({ph})", chunk)
+                            cur.execute(f"DELETE FROM video_duplicate_finder_video_hashes WHERE id IN ({ph})", chunk)
                     sel_id = op_success.get('sel_id_to_update')
                     new_path = op_success.get('new_path')
                     if sel_id is not None and new_path:
                         cur.execute(
-                            "UPDATE video_hashes "
+                            "UPDATE video_duplicate_finder_video_hashes "
                             "SET file_path = ?, filename = ?, dir_path = ? "
                             "WHERE id = ?",
                             (new_path, os.path.basename(new_path),
@@ -2134,9 +2121,9 @@ class BatchDeleteByPathResource(Resource):
             # Find all rows under deep_path that participate in similarities.
             # Python-side filter avoids LIKE wildcards.
             cur.execute('''
-                SELECT DISTINCT v.file_path FROM video_hashes v
+                SELECT DISTINCT v.file_path FROM video_duplicate_finder_video_hashes v
                 WHERE EXISTS (
-                    SELECT 1 FROM video_similarities s
+                    SELECT 1 FROM video_duplicate_finder_video_similarities s
                     WHERE s.video_id_a = v.id OR s.video_id_b = v.id
                 )
             ''')
@@ -2172,7 +2159,7 @@ class BatchDeleteByPathResource(Resource):
                 for i in range(0, len(matched_files), 900):
                     chunk = [os.path.abspath(f) for f in matched_files[i:i + 900]]
                     ph = ','.join('?' * len(chunk))
-                    cur.execute(f"SELECT id FROM video_hashes WHERE file_path IN ({ph})", chunk)
+                    cur.execute(f"SELECT id FROM video_duplicate_finder_video_hashes WHERE file_path IN ({ph})", chunk)
                     video_ids.extend(r[0] for r in cur.fetchall())
                 affected_capture = wf.stats_collect_affected_before_mutation(video_ids)
             except Exception as e:
@@ -2228,7 +2215,7 @@ class BatchDeleteByPathResource(Resource):
                 for i in range(0, len(successfully_moved), 900):
                     chunk = successfully_moved[i:i + 900]
                     ph = ','.join('?' * len(chunk))
-                    cur.execute(f"DELETE FROM video_hashes WHERE file_path IN ({ph})", chunk)
+                    cur.execute(f"DELETE FROM video_duplicate_finder_video_hashes WHERE file_path IN ({ph})", chunk)
                 conn.commit()
             except Exception as e:
                 try:
@@ -2653,7 +2640,7 @@ class OpenFolderResource(Resource):
 @ns.route('/cleanup')
 class CleanupResource(Resource):
     def post(self):
-        """Remove video_hashes rows for files that no longer exist on disk.
+        """Remove video_duplicate_finder_video_hashes rows for files that no longer exist on disk.
 
         Scans `folder_paths` from settings to determine which files
         currently exist. Anything in the DB that isn't in that set gets
@@ -2676,7 +2663,7 @@ class CleanupResource(Resource):
                             existing_files.add(os.path.abspath(os.path.join(dirpath, f)))
 
             wf = get_workflow()
-            cache = VideoHashCache(str(wf.db_path))
+            cache = VideoHashCache()
             # Pass folder_paths as scope so cleanup_missing_files only
             # considers rows inside the scanned area — a partial FS
             # enumeration cannot wipe unrelated DB rows.

@@ -10,7 +10,6 @@ mid-process (DECISION pattern E1 — preserves the stop event).
 import os
 import time
 from multiprocessing import Manager, Pool
-from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from .settings_manager import settings_manager
@@ -31,12 +30,9 @@ class VideoDuplicateFinderWorkflow:
     class just keeps a reference and exposes Phase 1/2/2.5/3 entry points.
     """
 
-    def __init__(self, db_path: str):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
+    def __init__(self):
         # Ensure schema is up-to-date.
-        self._cache = VideoHashCache(str(self.db_path))
+        self._cache = VideoHashCache()
 
         # Cross-process stop signal. Manager().Event() is process-safe and
         # survives Pool worker spawn (a plain threading.Event would not).
@@ -44,7 +40,7 @@ class VideoDuplicateFinderWorkflow:
         self._manager = Manager()
         self._stop_event = self._manager.Event()
 
-        print(f"[Video Workflow] __init__: db_path={self.db_path}")
+        print(f"[Video Workflow] __init__: db={self._cache._get_connection()}")
 
     # ---- shared accessors ----
 
@@ -87,7 +83,7 @@ class VideoDuplicateFinderWorkflow:
         """Phase 1: scan FS, sync DB, compute N-frame video signatures.
 
         Workflow:
-          1. Delete `video_hashes` rows whose `file_path` is in DB but not in
+          1. Delete `video_duplicate_finder_video_hashes` rows whose `file_path` is in DB but not in
              the provided list (= "files vanished from disk"). When
              `scope_dir_paths` is set, this delete is RESTRICTED to rows
              whose dir_path is inside that scope — critical for partial
@@ -100,8 +96,8 @@ class VideoDuplicateFinderWorkflow:
 
         Returns:
             {
-              'added':   int,   # rows freshly inserted to video_hashes
-              'removed': int,   # rows deleted from video_hashes
+              'added':   int,   # rows freshly inserted to video_duplicate_finder_video_hashes
+              'removed': int,   # rows deleted from video_duplicate_finder_video_hashes
               'skipped': int,   # files already 'computed', not re-processed
               'errors':  list,  # worker error dicts (per-file)
               'elapsed': float,
@@ -164,7 +160,7 @@ class VideoDuplicateFinderWorkflow:
             # `C:\myXmovies` because `_` is a single-char wildcard).
             # Solution: pull ALL rows, then Python-filter the candidate
             # set using os.path prefix logic with an os.sep boundary.
-            cursor.execute("SELECT id, file_path, dir_path FROM video_hashes")
+            cursor.execute("SELECT id, file_path, dir_path FROM video_duplicate_finder_video_hashes")
             all_rows = cursor.fetchall()
             scope_abs = [os.path.abspath(f).rstrip(os.sep) for f in scope_dir_paths]
 
@@ -180,7 +176,7 @@ class VideoDuplicateFinderWorkflow:
             print(f"[Phase 1] Step 1 SCOPED: limited to {len(scope_dir_paths)} dir_path roots "
                   f"— {len(db_rows)} of {len(all_rows)} rows in scope")
         else:
-            cursor.execute("SELECT id, file_path FROM video_hashes")
+            cursor.execute("SELECT id, file_path FROM video_duplicate_finder_video_hashes")
             db_rows = cursor.fetchall()
         db_path_set = {fp for _, fp in db_rows}
         fs_path_set = set(file_paths_abs)
@@ -192,7 +188,7 @@ class VideoDuplicateFinderWorkflow:
         DELETE_COMMIT_THRESHOLD = 100
         for db_id, file_path in db_rows:
             if file_path in missing_paths:
-                cursor.execute('DELETE FROM video_hashes WHERE id = ?', (db_id,))
+                cursor.execute('DELETE FROM video_duplicate_finder_video_hashes WHERE id = ?', (db_id,))
                 removed_count += 1
                 if removed_count % DELETE_COMMIT_THRESHOLD == 0:
                     conn.commit()
@@ -203,7 +199,7 @@ class VideoDuplicateFinderWorkflow:
         # ----------------------------------------------------------------
         # Step 2: Diff DB to find files needing compute
         # ----------------------------------------------------------------
-        cursor.execute("SELECT file_path, status FROM video_hashes")
+        cursor.execute("SELECT file_path, status FROM video_duplicate_finder_video_hashes")
         db_status = {fp: status for fp, status in cursor.fetchall()}
 
         files_to_compute: List[str] = []
@@ -391,13 +387,13 @@ class VideoDuplicateFinderWorkflow:
     # ------------------------------------------------------------------
     # Distinct from VideoHashCache.set_hash_batch (which uses OR REPLACE).
     # REPLACE on UNIQUE conflict drops + re-inserts, triggering CASCADE on
-    # video_similarities — wiping any edges we computed previously. For
+    # video_duplicate_finder_video_similarities — wiping any edges we computed previously. For
     # Phase 1 (which may re-run on the same folder), we want OR IGNORE so
     # existing rows are preserved untouched.
     # ------------------------------------------------------------------
 
     def _insert_videos_batch(self, batch: List[Dict]) -> int:
-        """INSERT OR IGNORE batch into video_hashes. Returns the NUMBER OF
+        """INSERT OR IGNORE batch into video_duplicate_finder_video_hashes. Returns the NUMBER OF
         ROWS ACTUALLY INSERTED (UNIQUE conflicts are skipped → not counted).
 
         Implementation note: `cursor.rowcount` after `executemany` is
@@ -442,11 +438,11 @@ class VideoDuplicateFinderWorkflow:
         cur = conn.cursor()
 
         # Count diff: snapshot BEFORE
-        cur.execute('SELECT COUNT(*) FROM video_hashes')
+        cur.execute('SELECT COUNT(*) FROM video_duplicate_finder_video_hashes')
         before_count = int(cur.fetchone()[0])
 
         cur.executemany(
-            '''INSERT OR IGNORE INTO video_hashes
+            '''INSERT OR IGNORE INTO video_duplicate_finder_video_hashes
                  (filename, filesize, file_path, dir_path, mtime,
                   duration, width, height, fps, bitrate, vcodec, acodec, container,
                   video_hash, n_frames, thumbnail_path, status)
@@ -455,7 +451,7 @@ class VideoDuplicateFinderWorkflow:
         )
         conn.commit()
 
-        cur.execute('SELECT COUNT(*) FROM video_hashes')
+        cur.execute('SELECT COUNT(*) FROM video_duplicate_finder_video_hashes')
         after_count = int(cur.fetchone()[0])
         inserted = after_count - before_count
         skipped = len(rows) - inserted
@@ -469,7 +465,7 @@ class VideoDuplicateFinderWorkflow:
     # ========================================================================
 
     # ========================================================================
-    # Phase 2: build video_similarities
+    # Phase 2: build video_duplicate_finder_video_similarities
     # ========================================================================
     #
     # Mirrors image-version `phase2_build_similarities`. Apply_async throttling
@@ -484,7 +480,7 @@ class VideoDuplicateFinderWorkflow:
     #   - This method's `threshold_distance` parameter sets the WIDTH of edges
     #     stored. Default is VIDEO_HASH_BITS * 0.2 = 102, which covers at
     #     least the "80% similarity" UI threshold.
-    #   - The `threshold` column in video_similarities is the SCHEMA-fixed
+    #   - The `threshold` column in video_duplicate_finder_video_similarities is the SCHEMA-fixed
     #     value 80 (constant per-row). Phase 2.5 filters at query time by
     #     `distance <= max_distance_for_ui_threshold`.
     #   - So Phase 2 stores broad-net coverage; UI threshold is applied
@@ -494,7 +490,7 @@ class VideoDuplicateFinderWorkflow:
     def phase2_build_similarities(self,
                                   threshold_distance: int = 102,
                                   progress_callback: Optional[Callable] = None) -> Dict:
-        """Compute pairwise distances among videos, write `video_similarities`.
+        """Compute pairwise distances among videos, write `video_duplicate_finder_video_similarities`.
 
         Workflow:
           1. Snapshot all `status='pending'` rows (the work queue).
@@ -534,7 +530,7 @@ class VideoDuplicateFinderWorkflow:
         # ----------------------------------------------------------------
         # Step 1: snapshot pending work
         # ----------------------------------------------------------------
-        cursor.execute("SELECT id, video_hash FROM video_hashes WHERE status = 'pending'")
+        cursor.execute("SELECT id, video_hash FROM video_duplicate_finder_video_hashes WHERE status = 'pending'")
         pending = cursor.fetchall()
         if not pending:
             elapsed = time.time() - start_time
@@ -551,7 +547,7 @@ class VideoDuplicateFinderWorkflow:
         # ----------------------------------------------------------------
         # Step 2: snapshot full comparison set
         # ----------------------------------------------------------------
-        cursor.execute("SELECT id, video_hash FROM video_hashes")
+        cursor.execute("SELECT id, video_hash FROM video_duplicate_finder_video_hashes")
         all_videos = cursor.fetchall()
         n_pending = len(pending)
         n_total = len(all_videos)
@@ -631,7 +627,7 @@ class VideoDuplicateFinderWorkflow:
                         if sims_list:
                             rows = [(a, b, SCHEMA_THRESHOLD, d) for (a, b, d) in sims_list]
                             cursor.executemany(
-                                '''INSERT OR REPLACE INTO video_similarities
+                                '''INSERT OR REPLACE INTO video_duplicate_finder_video_similarities
                                      (video_id_a, video_id_b, threshold, distance)
                                    VALUES (?, ?, ?, ?)''',
                                 rows,
@@ -649,7 +645,7 @@ class VideoDuplicateFinderWorkflow:
                                   f"({unique_edges} unique-new edges, total_count={similarities_count})")
 
                         cursor.execute(
-                            "UPDATE video_hashes SET status = 'computed' WHERE id = ?",
+                            "UPDATE video_duplicate_finder_video_hashes SET status = 'computed' WHERE id = ?",
                             (result_src_id,),
                         )
                         conn.commit()
@@ -716,15 +712,15 @@ class VideoDuplicateFinderWorkflow:
         }
 
     # ========================================================================
-    # Phase 2.5: materialize duplicate_video_groups + video_group_stats
+    # Phase 2.5: materialize video_duplicate_finder_duplicate_video_groups + video_duplicate_finder_video_group_stats
     # ========================================================================
     #
     # Mirrors image-version `phase2_5_materialize_groups`. Five-step flow:
     #   1. SQL filter edges (UI threshold + per-video whitelist + optional same-folder)
     #   2. BFS over the edge list to find connected components → groups
-    #   3. Drop groups that exactly match a `video_whitelist_groups` entry
-    #   4. Rewrite duplicate_video_groups membership rows
-    #   5. Compute video_group_stats (5a: SQL aggregates; 5b: per-group anchor)
+    #   3. Drop groups that exactly match a `video_duplicate_finder_video_whitelist_groups` entry
+    #   4. Rewrite video_duplicate_finder_duplicate_video_groups membership rows
+    #   5. Compute video_duplicate_finder_video_group_stats (5a: SQL aggregates; 5b: per-group anchor)
     #
     # The anchor (Step 5b) is a SINGLE member per group whose folder has the
     # MOST duplicate files in the DB. Tie-break: smaller folder (curated), then
@@ -738,7 +734,7 @@ class VideoDuplicateFinderWorkflow:
                                     threshold_percent: int = 80,
                                     same_folder_filter: bool = True,
                                     progress_callback: Optional[Callable] = None) -> Dict:
-        """Build duplicate_video_groups + video_group_stats from current edges."""
+        """Build video_duplicate_finder_duplicate_video_groups + video_duplicate_finder_video_group_stats from current edges."""
         import sqlite3 as _sqlite3   # only for OperationalError type
 
         self.clear_stop()
@@ -766,12 +762,12 @@ class VideoDuplicateFinderWorkflow:
 
         # Pre-flight DB stats (mostly for debugging large datasets)
         try:
-            n_videos = cur.execute("SELECT COUNT(*) FROM video_hashes").fetchone()[0]
-            n_pending = cur.execute("SELECT COUNT(*) FROM video_hashes WHERE status='pending'").fetchone()[0]
-            n_computed = cur.execute("SELECT COUNT(*) FROM video_hashes WHERE status='computed'").fetchone()[0]
-            n_edges = cur.execute("SELECT COUNT(*) FROM video_similarities WHERE threshold=80").fetchone()[0]
-            n_wl_individual = cur.execute("SELECT COUNT(*) FROM video_whitelist").fetchone()[0]
-            n_wl_groups = cur.execute("SELECT COUNT(*) FROM video_whitelist_groups").fetchone()[0]
+            n_videos = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_hashes").fetchone()[0]
+            n_pending = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_hashes WHERE status='pending'").fetchone()[0]
+            n_computed = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_hashes WHERE status='computed'").fetchone()[0]
+            n_edges = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_similarities WHERE threshold=80").fetchone()[0]
+            n_wl_individual = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_whitelist").fetchone()[0]
+            n_wl_groups = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_whitelist_groups").fetchone()[0]
             print(f"[Phase 2.5] pre-flight: videos={n_videos} (pending={n_pending}, "
                   f"computed={n_computed}), edges={n_edges} (threshold=80), "
                   f"whitelist={n_wl_individual} videos / {n_wl_groups} groups")
@@ -790,11 +786,11 @@ class VideoDuplicateFinderWorkflow:
             same_folder_sql = "AND a.dir_path <> b.dir_path" if same_folder_filter else ""
             sql = f"""
                 SELECT s.video_id_a, s.video_id_b, s.distance
-                FROM video_similarities s
-                JOIN video_hashes a ON s.video_id_a = a.id
-                JOIN video_hashes b ON s.video_id_b = b.id
-                LEFT JOIN video_whitelist wa ON wa.video_id = s.video_id_a
-                LEFT JOIN video_whitelist wb ON wb.video_id = s.video_id_b
+                FROM video_duplicate_finder_video_similarities s
+                JOIN video_duplicate_finder_video_hashes a ON s.video_id_a = a.id
+                JOIN video_duplicate_finder_video_hashes b ON s.video_id_b = b.id
+                LEFT JOIN video_duplicate_finder_video_whitelist wa ON wa.video_id = s.video_id_a
+                LEFT JOIN video_duplicate_finder_video_whitelist wb ON wb.video_id = s.video_id_b
                 WHERE s.threshold = 80
                   AND s.distance <= ?
                   AND wa.video_id IS NULL
@@ -847,12 +843,12 @@ class VideoDuplicateFinderWorkflow:
                 return {'stopped': True, 'elapsed': time.time() - start_time}
 
             # ----------------------------------------------------------------
-            # Step 4: rewrite duplicate_video_groups
+            # Step 4: rewrite video_duplicate_finder_duplicate_video_groups
             # ----------------------------------------------------------------
-            cb(60, "Step 4/5: writing duplicate_video_groups")
+            cb(60, "Step 4/5: writing video_duplicate_finder_duplicate_video_groups")
             t = time.time()
-            cur.execute("DELETE FROM video_group_stats")
-            cur.execute("DELETE FROM duplicate_video_groups")
+            cur.execute("DELETE FROM video_duplicate_finder_video_group_stats")
+            cur.execute("DELETE FROM video_duplicate_finder_duplicate_video_groups")
 
             dg_rows = []
             for group_id, member_ids in enumerate(filtered_groups, start=1):
@@ -860,7 +856,7 @@ class VideoDuplicateFinderWorkflow:
                     dg_rows.append((group_id, video_id))
             if dg_rows:
                 cur.executemany(
-                    "INSERT INTO duplicate_video_groups (group_id, video_id) VALUES (?, ?)",
+                    "INSERT INTO video_duplicate_finder_duplicate_video_groups (group_id, video_id) VALUES (?, ?)",
                     dg_rows,
                 )
             print(f"[Phase 2.5] Step 4 DONE: wrote {len(dg_rows)} rows "
@@ -880,7 +876,7 @@ class VideoDuplicateFinderWorkflow:
             cb(75, "Step 5/5: computing group_stats (5a base aggregates)")
             t = time.time()
             cur.execute('''
-                INSERT INTO video_group_stats (
+                INSERT INTO video_duplicate_finder_video_group_stats (
                     group_id, member_count,
                     max_filesize, min_filesize,
                     max_duration, min_duration,
@@ -894,11 +890,11 @@ class VideoDuplicateFinderWorkflow:
                     MAX(v.duration), MIN(v.duration),
                     MAX(v.bitrate), MIN(v.bitrate),
                     MAX(v.mtime), MIN(v.mtime)
-                FROM duplicate_video_groups dg
-                JOIN video_hashes v ON dg.video_id = v.id
+                FROM video_duplicate_finder_duplicate_video_groups dg
+                JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
                 GROUP BY dg.group_id
             ''')
-            n_gs = cur.execute("SELECT COUNT(*) FROM video_group_stats").fetchone()[0]
+            n_gs = cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_group_stats").fetchone()[0]
             print(f"[Phase 2.5] Step 5a DONE: {n_gs} group_stats rows "
                   f"in {time.time() - t:.2f}s")
 
@@ -913,15 +909,15 @@ class VideoDuplicateFinderWorkflow:
             t = time.time()
 
             # 5b-i: total files per dir_path (used for display tie-break)
-            cur.execute("SELECT dir_path, COUNT(*) FROM video_hashes "
+            cur.execute("SELECT dir_path, COUNT(*) FROM video_duplicate_finder_video_hashes "
                         "WHERE dir_path IS NOT NULL GROUP BY dir_path")
             folder_total: Dict[str, int] = {dp: cnt for dp, cnt in cur.fetchall()}
 
             # 5b-ii: duplicate files per dir_path (drives "hot folder" sort)
             cur.execute('''
                 SELECT v.dir_path, COUNT(*)
-                FROM duplicate_video_groups dg
-                JOIN video_hashes v ON dg.video_id = v.id
+                FROM video_duplicate_finder_duplicate_video_groups dg
+                JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
                 WHERE v.dir_path IS NOT NULL
                 GROUP BY v.dir_path
             ''')
@@ -934,8 +930,8 @@ class VideoDuplicateFinderWorkflow:
             read_cur = conn.cursor()
             read_cur.execute('''
                 SELECT dg.group_id, v.file_path, v.dir_path, v.filename
-                FROM duplicate_video_groups dg
-                JOIN video_hashes v ON dg.video_id = v.id
+                FROM video_duplicate_finder_duplicate_video_groups dg
+                JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
             ''')
             members_by_group: Dict[int, List[tuple]] = {}
             for gid, fp, dp, fn in read_cur:
@@ -963,7 +959,7 @@ class VideoDuplicateFinderWorkflow:
             write_cur = conn.cursor()
             for i in range(0, len(updates), BATCH):
                 write_cur.executemany(
-                    '''UPDATE video_group_stats
+                    '''UPDATE video_duplicate_finder_video_group_stats
                        SET representative_file_path = ?,
                            primary_folder = ?,
                            folder_dup_count = ?
@@ -1107,7 +1103,7 @@ class VideoDuplicateFinderWorkflow:
                               sort_order: str = 'desc',
                               folder_paths: Optional[List[str]] = None,
                               progress_callback: Optional[Callable] = None) -> Dict:
-        """Paginated read of materialized duplicate_video_groups + video_group_stats.
+        """Paginated read of materialized video_duplicate_finder_duplicate_video_groups + video_duplicate_finder_video_group_stats.
 
         Strict mode: returns structured error marker if no materialization
         exists or threshold doesn't match. Controller maps to HTTP 409.
@@ -1146,7 +1142,7 @@ class VideoDuplicateFinderWorkflow:
         # Pre-compute total files (carried even on error paths so the UI
         # summary panel doesn't show 0 just because of a mismatch)
         try:
-            _pre_total = int(cur.execute("SELECT COUNT(*) FROM video_hashes").fetchone()[0])
+            _pre_total = int(cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_hashes").fetchone()[0])
         except Exception:
             _pre_total = 0
 
@@ -1194,11 +1190,11 @@ class VideoDuplicateFinderWorkflow:
         # ----------------------------------------------------------------
         if sort_by not in self.PHASE3_ALLOWED_SORTS:
             sort_by = 'folder_dup_count'
-        cur.execute("PRAGMA table_info(video_group_stats)")
+        cur.execute("PRAGMA table_info(video_duplicate_finder_video_group_stats)")
         existing_cols = {row[1] for row in cur.fetchall()}
         if sort_by not in existing_cols:
             print(f"[Phase 3] WARNING: sort column {sort_by!r} missing from "
-                  f"video_group_stats (have {sorted(existing_cols)}). "
+                  f"video_duplicate_finder_video_group_stats (have {sorted(existing_cols)}). "
                   f"Falling back to group_id.")
             sort_by = 'group_id'
         sort_order_sql = 'DESC' if str(sort_order).lower() == 'desc' else 'ASC'
@@ -1215,10 +1211,10 @@ class VideoDuplicateFinderWorkflow:
         # ----------------------------------------------------------------
         # 3. Totals (counts before paging)
         # ----------------------------------------------------------------
-        cur.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM video_group_stats")
+        cur.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM video_duplicate_finder_video_group_stats")
         total_groups_all, total_duplicates = cur.fetchone()
         total_duplicates = int(total_duplicates)
-        total_files_in_db = int(cur.execute("SELECT COUNT(*) FROM video_hashes").fetchone()[0])
+        total_files_in_db = int(cur.execute("SELECT COUNT(*) FROM video_duplicate_finder_video_hashes").fetchone()[0])
         print(f"[Phase 3] DEBUG: total_groups={total_groups_all}, total_duplicates={total_duplicates}, "
               f"total_files_in_db={total_files_in_db}")
 
@@ -1241,7 +1237,7 @@ class VideoDuplicateFinderWorkflow:
             total_pages = max(1, math.ceil(total_groups_all / page_size)) if page_size > 0 else 1
             offset = max(0, (page - 1) * page_size)
             cur.execute(
-                f"SELECT group_id FROM video_group_stats "
+                f"SELECT group_id FROM video_duplicate_finder_video_group_stats "
                 f"ORDER BY {sort_by} {sort_order_sql}{tb_sql} "
                 f"LIMIT ? OFFSET ?",
                 (page_size, offset),
@@ -1249,7 +1245,7 @@ class VideoDuplicateFinderWorkflow:
         else:
             total_pages = 1
             cur.execute(
-                f"SELECT group_id FROM video_group_stats "
+                f"SELECT group_id FROM video_duplicate_finder_video_group_stats "
                 f"ORDER BY {sort_by} {sort_order_sql}{tb_sql}"
             )
 
@@ -1281,8 +1277,8 @@ class VideoDuplicateFinderWorkflow:
                 f"       v.video_hash, v.duration, v.width, v.height, v.fps, "
                 f"       v.bitrate, v.vcodec, v.acodec, v.container, "
                 f"       v.thumbnail_path, v.dir_path, v.mtime "
-                f"FROM duplicate_video_groups dg "
-                f"JOIN video_hashes v ON dg.video_id = v.id "
+                f"FROM video_duplicate_finder_duplicate_video_groups dg "
+                f"JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id "
                 f"WHERE dg.group_id IN ({ph})",
                 chunk,
             )
@@ -1327,7 +1323,7 @@ class VideoDuplicateFinderWorkflow:
                 chunk = distinct_dirs[i:i + batch_size]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT dir_path, COUNT(*) FROM video_hashes "
+                    f"SELECT dir_path, COUNT(*) FROM video_duplicate_finder_video_hashes "
                     f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
                     chunk,
                 )
@@ -1335,8 +1331,8 @@ class VideoDuplicateFinderWorkflow:
                     folder_counts[dp] = cnt
                 cur.execute(
                     f"SELECT v.dir_path, COUNT(*) "
-                    f"FROM duplicate_video_groups dg "
-                    f"JOIN video_hashes v ON dg.video_id = v.id "
+                    f"FROM video_duplicate_finder_duplicate_video_groups dg "
+                    f"JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id "
                     f"WHERE v.dir_path IN ({ph}) GROUP BY v.dir_path",
                     chunk,
                 )
@@ -1549,7 +1545,7 @@ class VideoDuplicateFinderWorkflow:
         """Scoped pairwise comparison limited to the given folders.
 
         Contract (no global side-effects):
-          - reads video_hashes rows whose dir_path is inside the scope
+          - reads video_duplicate_finder_video_hashes rows whose dir_path is inside the scope
             (exact match OR any subdirectory)
           - walks the filesystem under each scope folder, respecting
             exclude_folder_paths
@@ -1558,8 +1554,8 @@ class VideoDuplicateFinderWorkflow:
           - for files in DB whose video_hash column happens to be
             NULL/empty: also compute and UPDATE (defensive)
           - pairwise compares EVERY video in scope (old + newly-inserted)
-            and INSERT OR IGNORE the matching pairs into video_similarities
-          - NEVER deletes any video_hashes row
+            and INSERT OR IGNORE the matching pairs into video_duplicate_finder_video_similarities
+          - NEVER deletes any video_duplicate_finder_video_hashes row
           - NEVER touches scope-outside rows or scope-outside similarities
 
         Caller is expected to run phase2_5_materialize_groups afterwards
@@ -1613,7 +1609,7 @@ class VideoDuplicateFinderWorkflow:
         # (Same Tier-1 fix as Phase 1: LIKE `_` wildcard would over-match
         # underscores in folder names like `C:\my_movies`.)
         cb(5, "Step 1/4: Reading scoped DB rows")
-        cur.execute("SELECT id, file_path, video_hash, dir_path FROM video_hashes")
+        cur.execute("SELECT id, file_path, video_hash, dir_path FROM video_duplicate_finder_video_hashes")
         all_db = cur.fetchall()
 
         scope_abs_rstrip = [f.rstrip(os.sep) for f in folders_abs]
@@ -1712,7 +1708,7 @@ class VideoDuplicateFinderWorkflow:
             filename = os.path.basename(fs_file)
             dir_path = os.path.dirname(fs_file)
             cur.execute('''
-                INSERT OR IGNORE INTO video_hashes
+                INSERT OR IGNORE INTO video_duplicate_finder_video_hashes
                 (filename, filesize, file_path, dir_path, mtime,
                  duration, width, height, fps, bitrate, vcodec, acodec, container,
                  video_hash, n_frames, thumbnail_path, status)
@@ -1731,7 +1727,7 @@ class VideoDuplicateFinderWorkflow:
             # stored hash (which might differ from our just-computed one)
             # for Step-4 comparisons — and NOT increment `new_computed`.
             inserted_now = (cur.rowcount == 1)
-            cur.execute("SELECT id, video_hash FROM video_hashes WHERE file_path = ?", (fs_file,))
+            cur.execute("SELECT id, video_hash FROM video_duplicate_finder_video_hashes WHERE file_path = ?", (fs_file,))
             row = cur.fetchone()
             if row:
                 db_id, db_hash = row[0], row[1]
@@ -1763,7 +1759,7 @@ class VideoDuplicateFinderWorkflow:
                 errors += 1
                 continue
             cur.execute('''
-                UPDATE video_hashes
+                UPDATE video_duplicate_finder_video_hashes
                 SET video_hash = ?, duration = ?, width = ?, height = ?, fps = ?,
                     bitrate = ?, vcodec = ?, acodec = ?, container = ?,
                     filesize = ?, mtime = ?, thumbnail_path = ?,
@@ -1831,7 +1827,7 @@ class VideoDuplicateFinderWorkflow:
         cb(90, "Inserting similarity edges")
 
         # COUNT-diff for the "new_similarities_inserted" metric
-        cur.execute('SELECT COUNT(*) FROM video_similarities')
+        cur.execute('SELECT COUNT(*) FROM video_duplicate_finder_video_similarities')
         before_count = int(cur.fetchone()[0])
 
         new_inserted = 0
@@ -1840,12 +1836,12 @@ class VideoDuplicateFinderWorkflow:
             for i in range(0, len(pairs), BATCH):
                 chunk = pairs[i:i + BATCH]
                 cur.executemany('''
-                    INSERT OR IGNORE INTO video_similarities
+                    INSERT OR IGNORE INTO video_duplicate_finder_video_similarities
                     (video_id_a, video_id_b, threshold, distance)
                     VALUES (?, ?, ?, ?)
                 ''', chunk)
             conn.commit()
-            cur.execute('SELECT COUNT(*) FROM video_similarities')
+            cur.execute('SELECT COUNT(*) FROM video_duplicate_finder_video_similarities')
             after_count = int(cur.fetchone()[0])
             new_inserted = after_count - before_count
         print(f"[Compare Focused] Step 5: {new_inserted} new edges inserted "
@@ -1877,9 +1873,9 @@ class VideoDuplicateFinderWorkflow:
     #
     #   1. BEFORE the mutation (delete / whitelist-add / replace), snapshot
     #      the groups + folders that will be affected.
-    #   2. Do the actual mutation (DELETE FROM video_hashes, or whitelist
+    #   2. Do the actual mutation (DELETE FROM video_duplicate_finder_video_hashes, or whitelist
     #      INSERT, etc.). CASCADE handles dependent rows.
-    #   3. AFTER the mutation, repair video_group_stats incrementally — only
+    #   3. AFTER the mutation, repair video_duplicate_finder_video_group_stats incrementally — only
     #      touching the groups/folders captured in step 1.
     #
     # Why incremental: re-running Phase 2.5 in full after every delete would
@@ -1922,14 +1918,14 @@ class VideoDuplicateFinderWorkflow:
             chunk = ids_list[i:i + BATCH]
             ph = ','.join('?' * len(chunk))
             cur.execute(
-                f"SELECT DISTINCT group_id FROM duplicate_video_groups "
+                f"SELECT DISTINCT group_id FROM video_duplicate_finder_duplicate_video_groups "
                 f"WHERE video_id IN ({ph})",
                 chunk,
             )
             affected_groups.update(r[0] for r in cur.fetchall())
 
             cur.execute(
-                f"SELECT DISTINCT dir_path FROM video_hashes "
+                f"SELECT DISTINCT dir_path FROM video_duplicate_finder_video_hashes "
                 f"WHERE id IN ({ph}) AND dir_path IS NOT NULL",
                 chunk,
             )
@@ -1941,7 +1937,7 @@ class VideoDuplicateFinderWorkflow:
             chunk = ag_list[i:i + BATCH]
             ph = ','.join('?' * len(chunk))
             cur.execute(
-                f"SELECT DISTINCT primary_folder FROM video_group_stats "
+                f"SELECT DISTINCT primary_folder FROM video_duplicate_finder_video_group_stats "
                 f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
                 chunk,
             )
@@ -1962,7 +1958,7 @@ class VideoDuplicateFinderWorkflow:
     def stats_repair_after_mutation(self,
                                      affected: Dict,
                                      remove_from_groups: bool = False) -> Dict:
-        """Repair video_group_stats + duplicate_video_groups for the
+        """Repair video_duplicate_finder_video_group_stats + video_duplicate_finder_duplicate_video_groups for the
         previously-captured `affected` state.
 
         Wrapped in try/except with rollback: multi-statement failure
@@ -1972,10 +1968,10 @@ class VideoDuplicateFinderWorkflow:
 
         Args:
             affected: result of `stats_collect_affected_before_mutation`
-            remove_from_groups: True for the whitelist case (video_hashes
-                row STAYS — we must manually DELETE FROM duplicate_video_groups).
+            remove_from_groups: True for the whitelist case (video_duplicate_finder_video_hashes
+                row STAYS — we must manually DELETE FROM video_duplicate_finder_duplicate_video_groups).
                 False for the delete-file case (image_hashes row is gone,
-                CASCADE already removed from duplicate_video_groups).
+                CASCADE already removed from video_duplicate_finder_duplicate_video_groups).
 
         Returns counts for caller logging.
         """
@@ -2019,9 +2015,9 @@ class VideoDuplicateFinderWorkflow:
         BATCH = 900
 
         # ------------------------------------------------------------------
-        # Step A: whitelist mode → manually DELETE from duplicate_video_groups
+        # Step A: whitelist mode → manually DELETE from video_duplicate_finder_duplicate_video_groups
         # ------------------------------------------------------------------
-        # CASCADE doesn't fire here because the video_hashes row still exists
+        # CASCADE doesn't fire here because the video_duplicate_finder_video_hashes row still exists
         # (we just whitelisted it). We must explicitly remove its memberships.
         if remove_from_groups and video_ids:
             removed_dvg = 0
@@ -2029,11 +2025,11 @@ class VideoDuplicateFinderWorkflow:
                 chunk = video_ids[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"DELETE FROM duplicate_video_groups WHERE video_id IN ({ph})",
+                    f"DELETE FROM video_duplicate_finder_duplicate_video_groups WHERE video_id IN ({ph})",
                     chunk,
                 )
                 removed_dvg += cur.rowcount
-            print(f"[Stats Repair] (whitelist) removed {removed_dvg} rows from duplicate_video_groups")
+            print(f"[Stats Repair] (whitelist) removed {removed_dvg} rows from video_duplicate_finder_duplicate_video_groups")
 
         # ------------------------------------------------------------------
         # Step B: classify affected groups into orphan (<2) vs survivor (≥2)
@@ -2046,9 +2042,9 @@ class VideoDuplicateFinderWorkflow:
             ph = ','.join('?' * len(chunk))
             cur.execute(
                 f"SELECT gs.group_id, COALESCE(dg.cnt, 0) "
-                f"FROM video_group_stats gs "
+                f"FROM video_duplicate_finder_video_group_stats gs "
                 f"LEFT JOIN ("
-                f"  SELECT group_id, COUNT(*) AS cnt FROM duplicate_video_groups "
+                f"  SELECT group_id, COUNT(*) AS cnt FROM video_duplicate_finder_duplicate_video_groups "
                 f"  WHERE group_id IN ({ph}) GROUP BY group_id"
                 f") dg ON gs.group_id = dg.group_id "
                 f"WHERE gs.group_id IN ({ph})",
@@ -2068,8 +2064,8 @@ class VideoDuplicateFinderWorkflow:
             for i in range(0, len(ol), BATCH):
                 chunk = ol[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
-                cur.execute(f"DELETE FROM duplicate_video_groups WHERE group_id IN ({ph})", chunk)
-                cur.execute(f"DELETE FROM video_group_stats WHERE group_id IN ({ph})", chunk)
+                cur.execute(f"DELETE FROM video_duplicate_finder_duplicate_video_groups WHERE group_id IN ({ph})", chunk)
+                cur.execute(f"DELETE FROM video_duplicate_finder_video_group_stats WHERE group_id IN ({ph})", chunk)
             print(f"[Stats Repair] dropped {len(orphan_groups)} orphan groups (< 2 members)")
 
         # ------------------------------------------------------------------
@@ -2082,50 +2078,50 @@ class VideoDuplicateFinderWorkflow:
                 chunk = sl[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(f'''
-                    UPDATE video_group_stats
+                    UPDATE video_duplicate_finder_video_group_stats
                     SET member_count = (
-                            SELECT COUNT(*) FROM duplicate_video_groups dg
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT COUNT(*) FROM video_duplicate_finder_duplicate_video_groups dg
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         max_filesize = (
-                            SELECT MAX(v.filesize) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MAX(v.filesize) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         min_filesize = (
-                            SELECT MIN(v.filesize) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MIN(v.filesize) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         max_duration = (
-                            SELECT MAX(v.duration) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MAX(v.duration) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         min_duration = (
-                            SELECT MIN(v.duration) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MIN(v.duration) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         max_bitrate = (
-                            SELECT MAX(v.bitrate) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MAX(v.bitrate) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         min_bitrate = (
-                            SELECT MIN(v.bitrate) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MIN(v.bitrate) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         max_mtime = (
-                            SELECT MAX(v.mtime) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MAX(v.mtime) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         ),
                         min_mtime = (
-                            SELECT MIN(v.mtime) FROM duplicate_video_groups dg
-                            JOIN video_hashes v ON dg.video_id = v.id
-                            WHERE dg.group_id = video_group_stats.group_id
+                            SELECT MIN(v.mtime) FROM video_duplicate_finder_duplicate_video_groups dg
+                            JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id
+                            WHERE dg.group_id = video_duplicate_finder_video_group_stats.group_id
                         )
                         -- primary_folder/representative_file_path/folder_dup_count
                         -- are refreshed in Step E below (anchor reselection).
@@ -2146,8 +2142,8 @@ class VideoDuplicateFinderWorkflow:
                 chunk = sl[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT DISTINCT v.dir_path FROM duplicate_video_groups dg "
-                    f"JOIN video_hashes v ON dg.video_id = v.id "
+                    f"SELECT DISTINCT v.dir_path FROM video_duplicate_finder_duplicate_video_groups dg "
+                    f"JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id "
                     f"WHERE dg.group_id IN ({ph}) AND v.dir_path IS NOT NULL",
                     chunk,
                 )
@@ -2162,7 +2158,7 @@ class VideoDuplicateFinderWorkflow:
                 chunk = mdl[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT dir_path, COUNT(*) FROM video_hashes "
+                    f"SELECT dir_path, COUNT(*) FROM video_duplicate_finder_video_hashes "
                     f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
                     chunk,
                 )
@@ -2170,7 +2166,7 @@ class VideoDuplicateFinderWorkflow:
                     folder_total_repair[dp] = cnt
                 cur.execute(
                     f"SELECT v.dir_path, COUNT(*) "
-                    f"FROM duplicate_video_groups dg JOIN video_hashes v ON dg.video_id = v.id "
+                    f"FROM video_duplicate_finder_duplicate_video_groups dg JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id "
                     f"WHERE v.dir_path IN ({ph}) GROUP BY v.dir_path",
                     chunk,
                 )
@@ -2184,8 +2180,8 @@ class VideoDuplicateFinderWorkflow:
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
                     f"SELECT dg.group_id, v.file_path, v.dir_path, v.filename "
-                    f"FROM duplicate_video_groups dg "
-                    f"JOIN video_hashes v ON dg.video_id = v.id "
+                    f"FROM video_duplicate_finder_duplicate_video_groups dg "
+                    f"JOIN video_duplicate_finder_video_hashes v ON dg.video_id = v.id "
                     f"WHERE dg.group_id IN ({ph})",
                     chunk,
                 )
@@ -2210,7 +2206,7 @@ class VideoDuplicateFinderWorkflow:
             if anchor_updates:
                 for i in range(0, len(anchor_updates), BATCH):
                     cur.executemany(
-                        "UPDATE video_group_stats "
+                        "UPDATE video_duplicate_finder_video_group_stats "
                         "SET representative_file_path = ?, primary_folder = ?, folder_dup_count = ? "
                         "WHERE group_id = ?",
                         anchor_updates[i:i + BATCH],
@@ -2231,7 +2227,7 @@ class VideoDuplicateFinderWorkflow:
                 chunk = list(survivor_groups)[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT DISTINCT primary_folder FROM video_group_stats "
+                    f"SELECT DISTINCT primary_folder FROM video_duplicate_finder_video_group_stats "
                     f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
                     chunk,
                 )
@@ -2244,12 +2240,12 @@ class VideoDuplicateFinderWorkflow:
                 chunk = ftr[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(f'''
-                    UPDATE video_group_stats
+                    UPDATE video_duplicate_finder_video_group_stats
                     SET folder_dup_count = (
                         SELECT COUNT(*)
-                        FROM duplicate_video_groups dg2
-                        JOIN video_hashes v2 ON dg2.video_id = v2.id
-                        WHERE v2.dir_path = video_group_stats.primary_folder
+                        FROM video_duplicate_finder_duplicate_video_groups dg2
+                        JOIN video_duplicate_finder_video_hashes v2 ON dg2.video_id = v2.id
+                        WHERE v2.dir_path = video_duplicate_finder_video_group_stats.primary_folder
                     )
                     WHERE primary_folder IN ({ph})
                 ''', chunk)

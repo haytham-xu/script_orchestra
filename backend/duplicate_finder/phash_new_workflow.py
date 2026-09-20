@@ -2,20 +2,21 @@
 New 3-phase workflow for duplicate finder (DATABASE_SCHEMA.md)
 
 Phase 1: Refresh images - Scan filesystem, sync DB, compute phash
-Phase 2: Build similarities - Compute distances, populate phash_similarities
+Phase 2: Build similarities - Compute distances, populate duplicate_finder_phash_similarities
 Phase 3: Get duplicates - Generate duplicate groups from similarities
 """
 import sqlite3
 import os
 import time
-from pathlib import Path
 from typing import List, Dict, Optional, Callable, Tuple
 from multiprocessing import Pool, cpu_count, Manager
 
 try:
-    from .phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay, PHashCache
+    from .phash_cache import _compute_single_hash_with_delay, set_compute_delay, PHashCache
+    from shared.db import get_conn
 except ImportError:
-    from phash_cache import _compute_single_hash_with_delay, get_default_cache_path, set_compute_delay, PHashCache
+    from phash_cache import _compute_single_hash_with_delay, set_compute_delay, PHashCache
+    from shared.db import get_conn
 
 # Global variables for performance settings (accessible by multiprocessing workers)
 _SCAN_DELAY = 0.0
@@ -157,13 +158,8 @@ class DuplicateFinderWorkflow:
     Implements 3-phase process with stop control.
     """
 
-    def __init__(self, db_path: str = None):
-        if db_path:
-            self.db_path = Path(db_path)
-        else:
-            self.db_path = get_default_cache_path()
-
-        print(f"[Workflow] Using database: {self.db_path}")
+    def __init__(self):
+        print(f"[Workflow] Using shared database")
         self._conn = None
         # Use multiprocessing Manager for cross-process Event
         self._manager = Manager()
@@ -177,7 +173,7 @@ class DuplicateFinderWorkflow:
 
         # Create tables
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS image_hashes (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_image_hashes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
                 filesize INTEGER NOT NULL,
@@ -191,51 +187,51 @@ class DuplicateFinderWorkflow:
             )
         ''')
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dir_path ON image_hashes(dir_path)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mtime ON image_hashes(mtime)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON duplicate_finder_image_hashes(phash)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON duplicate_finder_image_hashes(filename, filesize)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON duplicate_finder_image_hashes(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dir_path ON duplicate_finder_image_hashes(dir_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mtime ON duplicate_finder_image_hashes(mtime)')
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS whitelist (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_whitelist (
                 image_id INTEGER PRIMARY KEY,
                 added_time REAL NOT NULL,
                 note TEXT,
-                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (image_id) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS phash_similarities (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_phash_similarities (
                 image_id_a INTEGER NOT NULL,
                 image_id_b INTEGER NOT NULL,
                 threshold INTEGER NOT NULL,
                 distance INTEGER NOT NULL,
                 PRIMARY KEY (image_id_a, image_id_b, threshold),
                 CHECK (image_id_a < image_id_b),
-                FOREIGN KEY (image_id_a) REFERENCES image_hashes(id) ON DELETE CASCADE,
-                FOREIGN KEY (image_id_b) REFERENCES image_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (image_id_a) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE,
+                FOREIGN KEY (image_id_b) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_a_threshold ON phash_similarities(image_id_a, threshold)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_b_threshold ON phash_similarities(image_id_b, threshold)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_threshold ON phash_similarities(threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_a_threshold ON duplicate_finder_phash_similarities(image_id_a, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_b_threshold ON duplicate_finder_phash_similarities(image_id_b, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_threshold ON duplicate_finder_phash_similarities(threshold)')
 
         # Materialized groups (Phase 2.5 output)
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS duplicate_groups (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_duplicate_groups (
                 group_id INTEGER NOT NULL,
                 image_id INTEGER NOT NULL,
                 PRIMARY KEY (group_id, image_id),
-                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (image_id) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE
             )
         ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dg_image_id ON duplicate_groups(image_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dg_image_id ON duplicate_finder_duplicate_groups(image_id)')
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS group_stats (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_group_stats (
                 group_id INTEGER PRIMARY KEY,
                 member_count INTEGER NOT NULL,
                 max_filesize INTEGER,
@@ -247,12 +243,12 @@ class DuplicateFinderWorkflow:
                 representative_file_path TEXT
             )
         ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_folder_dup_count ON group_stats(folder_dup_count)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_filesize ON group_stats(max_filesize)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_mtime ON group_stats(max_mtime)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_member_count ON group_stats(member_count)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_primary_folder ON group_stats(primary_folder)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_representative_file_path ON group_stats(representative_file_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_folder_dup_count ON duplicate_finder_group_stats(folder_dup_count)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_filesize ON duplicate_finder_group_stats(max_filesize)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_max_mtime ON duplicate_finder_group_stats(max_mtime)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_member_count ON duplicate_finder_group_stats(member_count)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_primary_folder ON duplicate_finder_group_stats(primary_folder)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_gs_representative_file_path ON duplicate_finder_group_stats(representative_file_path)')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS duplicate_finder_meta (
@@ -262,20 +258,19 @@ class DuplicateFinderWorkflow:
         ''')
 
         cursor.execute('''
-            CREATE VIEW IF NOT EXISTS phash_similarities_view AS
+            CREATE VIEW IF NOT EXISTS duplicate_finder_phash_similarities_view AS
             SELECT image_id_a as image_id, image_id_b as neighbor_id, threshold, distance
-            FROM phash_similarities
+            FROM duplicate_finder_phash_similarities
             UNION ALL
             SELECT image_id_b as image_id, image_id_a as neighbor_id, threshold, distance
-            FROM phash_similarities
+            FROM duplicate_finder_phash_similarities
         ''')
 
         conn.commit()
 
     def _get_connection(self):
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            # Enable foreign key constraints (required for CASCADE DELETE)
+            self._conn = get_conn()
             self._conn.execute('PRAGMA foreign_keys = ON')
         return self._conn
 
@@ -378,10 +373,10 @@ class DuplicateFinderWorkflow:
                 params.append(fa)
                 params.append(fa.rstrip(os.sep) + os.sep + '%')
             where = ' OR '.join(clauses)
-            cursor.execute(f"SELECT id, file_path FROM image_hashes WHERE {where}", params)
+            cursor.execute(f"SELECT id, file_path FROM duplicate_finder_image_hashes WHERE {where}", params)
             print(f"[Phase 1] Step 1 SCOPED: limiting to {len(scope_dir_paths)} dir_path roots")
         else:
-            cursor.execute("SELECT id, file_path FROM image_hashes")
+            cursor.execute("SELECT id, file_path FROM duplicate_finder_image_hashes")
         db_files = cursor.fetchall()
         print(f"[Phase 1] Found {len(db_files)} files in DB (scope={'limited' if scope_dir_paths else 'global'})")
 
@@ -394,7 +389,7 @@ class DuplicateFinderWorkflow:
 
         for db_id, file_path in db_files:
             if file_path in missing_files:
-                cursor.execute("DELETE FROM image_hashes WHERE id = ?", (db_id,))
+                cursor.execute("DELETE FROM duplicate_finder_image_hashes WHERE id = ?", (db_id,))
                 removed_count += 1
 
                 # Commit every 100 deletes
@@ -407,7 +402,7 @@ class DuplicateFinderWorkflow:
 
         # Step 2: Check existing files
         print(f"[Phase 1] Step 2: Checking which files need computation...")
-        cursor.execute("SELECT file_path, status FROM image_hashes")
+        cursor.execute("SELECT file_path, status FROM duplicate_finder_image_hashes")
         db_status = {row[0]: row[1] for row in cursor.fetchall()}
 
         files_to_compute = []
@@ -612,7 +607,7 @@ class DuplicateFinderWorkflow:
 
         # Use executemany for better performance
         cursor.executemany('''
-            INSERT OR IGNORE INTO image_hashes
+            INSERT OR IGNORE INTO duplicate_finder_image_hashes
             (filename, filesize, file_path, phash, resolution, dir_path, mtime, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
         ''', batch_data)
@@ -628,10 +623,10 @@ class DuplicateFinderWorkflow:
         progress_callback: Optional[Callable] = None
     ) -> Dict:
         """
-        Phase 2: Build phash_similarities table
+        Phase 2: Build duplicate_finder_phash_similarities table
         - Get all status='pending' images
         - Compute distance with ALL images (brute force + multiprocessing)
-        - If distance ≤ threshold_distance, save to phash_similarities
+        - If distance ≤ threshold_distance, save to duplicate_finder_phash_similarities
         - Mark images as status='computed'
 
         Args:
@@ -679,7 +674,7 @@ class DuplicateFinderWorkflow:
 
         # Get pending images
         print(f"[Phase 2] Step 1: Getting pending images...")
-        cursor.execute("SELECT id, phash FROM image_hashes WHERE status = 'pending'")
+        cursor.execute("SELECT id, phash FROM duplicate_finder_image_hashes WHERE status = 'pending'")
         pending_images = cursor.fetchall()
 
         if not pending_images:
@@ -688,7 +683,7 @@ class DuplicateFinderWorkflow:
 
         # Get all images (for distance comparison)
         print(f"[Phase 2] Step 2: Getting all images for comparison...")
-        cursor.execute("SELECT id, phash FROM image_hashes")
+        cursor.execute("SELECT id, phash FROM duplicate_finder_image_hashes")
         all_images = cursor.fetchall()
 
         print(f"[Phase 2] Step 2 DONE: Processing {len(pending_images)} pending images against {len(all_images)} total images")
@@ -747,7 +742,7 @@ class DuplicateFinderWorkflow:
                             # ⚠️ CRITICAL: Commit similarities BEFORE updating status
                             if similarities_list:
                                 cursor.executemany('''
-                                    INSERT OR REPLACE INTO phash_similarities
+                                    INSERT OR REPLACE INTO duplicate_finder_phash_similarities
                                     (image_id_a, image_id_b, threshold, distance)
                                     VALUES (?, ?, 80, ?)
                                 ''', similarities_list)
@@ -759,7 +754,7 @@ class DuplicateFinderWorkflow:
                                     print(f"[Phase 2 Main] ✓ Committed {len(similarities_list)} similarities for image {result_img_id}")
 
                             # 2. NOW it's safe to update status to 'computed'
-                            cursor.execute("UPDATE image_hashes SET status = 'computed' WHERE id = ?", (result_img_id,))
+                            cursor.execute("UPDATE duplicate_finder_image_hashes SET status = 'computed' WHERE id = ?", (result_img_id,))
                             conn.commit()
 
                             # Progress update
@@ -832,7 +827,7 @@ class DuplicateFinderWorkflow:
         Focused pairwise comparison limited to the given folders.
 
         Contract (no global side-effects):
-          - reads `image_hashes` rows whose `dir_path` is inside the scope
+          - reads `duplicate_finder_image_hashes` rows whose `dir_path` is inside the scope
             (exact match OR any subdirectory)
           - walks the filesystem under each scope folder, respecting
             `exclude_folder_paths`
@@ -841,8 +836,8 @@ class DuplicateFinderWorkflow:
           - for files in DB whose phash column happens to be NULL/empty:
             also compute and UPDATE (defensive)
           - pairwise compares EVERY image in scope (old + newly-inserted)
-            and INSERT OR IGNORE the matching pairs into `phash_similarities`
-          - never deletes any image_hashes row (use global Phase 1 for that)
+            and INSERT OR IGNORE the matching pairs into `duplicate_finder_phash_similarities`
+          - never deletes any duplicate_finder_image_hashes row (use global Phase 1 for that)
           - never touches scope-outside rows or scope-outside similarities
 
         Caller is expected to run `phase2_5_materialize_groups` afterwards
@@ -888,7 +883,7 @@ class DuplicateFinderWorkflow:
             params.append(f.rstrip(os.sep) + os.sep + '%')
         where_clause = ' OR '.join(clauses)
         cur.execute(
-            f"SELECT id, file_path, phash FROM image_hashes WHERE {where_clause}",
+            f"SELECT id, file_path, phash FROM duplicate_finder_image_hashes WHERE {where_clause}",
             params,
         )
         db_by_path: Dict[str, Tuple[int, Optional[str]]] = {
@@ -963,12 +958,12 @@ class DuplicateFinderWorkflow:
             filename = os.path.basename(fs_file)
             dir_path = os.path.dirname(fs_file)
             cur.execute('''
-                INSERT OR IGNORE INTO image_hashes
+                INSERT OR IGNORE INTO duplicate_finder_image_hashes
                 (filename, filesize, file_path, phash, resolution, status, dir_path, mtime)
                 VALUES (?, ?, ?, ?, ?, 'computed', ?, ?)
             ''', (filename, result['filesize'], fs_file, result['phash'],
                   result['resolution'], dir_path, result.get('mtime')))
-            cur.execute("SELECT id FROM image_hashes WHERE file_path = ?", (fs_file,))
+            cur.execute("SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?", (fs_file,))
             row = cur.fetchone()
             if row:
                 scope_images.append((row[0], result['phash'], fs_file))
@@ -984,7 +979,7 @@ class DuplicateFinderWorkflow:
                 errors += 1
                 continue
             cur.execute('''
-                UPDATE image_hashes
+                UPDATE duplicate_finder_image_hashes
                 SET phash = ?, resolution = ?, filesize = ?, mtime = ?,
                     status = 'computed'
                 WHERE id = ?
@@ -1059,7 +1054,7 @@ class DuplicateFinderWorkflow:
             for i in range(0, len(pairs), BATCH):
                 chunk = pairs[i:i + BATCH]
                 cur.executemany('''
-                    INSERT OR IGNORE INTO phash_similarities
+                    INSERT OR IGNORE INTO duplicate_finder_phash_similarities
                     (image_id_a, image_id_b, threshold, distance)
                     VALUES (?, ?, ?, ?)
                 ''', chunk)
@@ -1096,9 +1091,9 @@ class DuplicateFinderWorkflow:
         """
         Phase 2.5: Materialize duplicate groups + per-group stats into DB tables.
 
-        Reads phash_similarities, filters (threshold + per-image whitelist + optional
+        Reads duplicate_finder_phash_similarities, filters (threshold + per-image duplicate_finder_whitelist + optional
         same-folder), builds connected components, drops fully-whitelisted groups,
-        then writes everything into duplicate_groups + group_stats.
+        then writes everything into duplicate_finder_duplicate_groups + duplicate_finder_group_stats.
 
         Records the threshold used into duplicate_finder_meta so Phase 3 can detect
         staleness.
@@ -1125,22 +1120,22 @@ class DuplicateFinderWorkflow:
 
         # Pre-flight: log relevant DB stats
         try:
-            n_images = cursor.execute("SELECT COUNT(*) FROM image_hashes").fetchone()[0]
-            n_pending = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE status='pending'").fetchone()[0]
-            n_computed = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE status='computed'").fetchone()[0]
-            n_dir_null = cursor.execute("SELECT COUNT(*) FROM image_hashes WHERE dir_path IS NULL").fetchone()[0]
-            n_sim = cursor.execute("SELECT COUNT(*) FROM phash_similarities WHERE threshold=80").fetchone()[0]
-            n_wl_img = cursor.execute("SELECT COUNT(*) FROM whitelist").fetchone()[0]
-            n_wl_grp = cursor.execute("SELECT COUNT(*) FROM whitelist_groups").fetchone()[0]
-            n_old_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
-            n_old_gs = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
+            n_images = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes").fetchone()[0]
+            n_pending = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes WHERE status='pending'").fetchone()[0]
+            n_computed = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes WHERE status='computed'").fetchone()[0]
+            n_dir_null = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes WHERE dir_path IS NULL").fetchone()[0]
+            n_sim = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_phash_similarities WHERE threshold=80").fetchone()[0]
+            n_wl_img = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_whitelist").fetchone()[0]
+            n_wl_grp = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_whitelist_groups").fetchone()[0]
+            n_old_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_duplicate_groups").fetchone()[0]
+            n_old_gs = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_group_stats").fetchone()[0]
             print(f"[Phase 2.5] Pre-flight DB stats:")
-            print(f"[Phase 2.5]   image_hashes total   : {n_images} (pending={n_pending}, computed={n_computed}, dir_path NULL={n_dir_null})")
-            print(f"[Phase 2.5]   phash_similarities   : {n_sim} (threshold=80)")
-            print(f"[Phase 2.5]   whitelist (per-image): {n_wl_img}")
-            print(f"[Phase 2.5]   whitelist_groups     : {n_wl_grp}")
-            print(f"[Phase 2.5]   duplicate_groups OLD : {n_old_dg} (will be replaced)")
-            print(f"[Phase 2.5]   group_stats OLD      : {n_old_gs} (will be replaced)")
+            print(f"[Phase 2.5]   duplicate_finder_image_hashes total   : {n_images} (pending={n_pending}, computed={n_computed}, dir_path NULL={n_dir_null})")
+            print(f"[Phase 2.5]   duplicate_finder_phash_similarities   : {n_sim} (threshold=80)")
+            print(f"[Phase 2.5]   duplicate_finder_whitelist (per-image): {n_wl_img}")
+            print(f"[Phase 2.5]   duplicate_finder_whitelist_groups     : {n_wl_grp}")
+            print(f"[Phase 2.5]   duplicate_finder_duplicate_groups OLD : {n_old_dg} (will be replaced)")
+            print(f"[Phase 2.5]   duplicate_finder_group_stats OLD      : {n_old_gs} (will be replaced)")
         except Exception as e:
             print(f"[Phase 2.5] WARNING: pre-flight stats query failed: {e}")
 
@@ -1163,15 +1158,15 @@ class DuplicateFinderWorkflow:
         try:
             # Step 1: filter edges in SQL
             cb(0, "Step 1/5: Filtering edges (SQL)")
-            print(f"[Phase 2.5] Step 1/5: SQL filter (threshold + whitelist + same_folder={same_folder_filter})")
+            print(f"[Phase 2.5] Step 1/5: SQL filter (threshold + duplicate_finder_whitelist + same_folder={same_folder_filter})")
             same_folder_sql = "AND a.dir_path <> b.dir_path" if same_folder_filter else ""
             sql = f'''
                 SELECT s.image_id_a, s.image_id_b, s.distance
-                FROM phash_similarities s
-                JOIN image_hashes a ON s.image_id_a = a.id
-                JOIN image_hashes b ON s.image_id_b = b.id
-                LEFT JOIN whitelist wa ON wa.image_id = s.image_id_a
-                LEFT JOIN whitelist wb ON wb.image_id = s.image_id_b
+                FROM duplicate_finder_phash_similarities s
+                JOIN duplicate_finder_image_hashes a ON s.image_id_a = a.id
+                JOIN duplicate_finder_image_hashes b ON s.image_id_b = b.id
+                LEFT JOIN duplicate_finder_whitelist wa ON wa.image_id = s.image_id_a
+                LEFT JOIN duplicate_finder_whitelist wb ON wb.image_id = s.image_id_b
                 WHERE s.threshold = 80
                   AND s.distance <= ?
                   AND wa.image_id IS NULL
@@ -1212,7 +1207,7 @@ class DuplicateFinderWorkflow:
                 # Optimization: nothing to check; skip the per-group lookup loop
                 filtered_groups = groups
                 whitelisted_dropped = 0
-                print(f"[Phase 2.5]   Skipping per-group whitelist check (no whitelist_groups rows)")
+                print(f"[Phase 2.5]   Skipping per-group duplicate_finder_whitelist check (no duplicate_finder_whitelist_groups rows)")
             else:
                 cache = PHashCache(str(self.db_path))
                 filtered_groups = [g for g in groups if not cache.is_group_whitelisted(g)]
@@ -1222,15 +1217,15 @@ class DuplicateFinderWorkflow:
             if stopped():
                 return {'stopped': True, 'elapsed': time.time() - start_time}
 
-            # Step 4: rewrite duplicate_groups
+            # Step 4: rewrite duplicate_finder_duplicate_groups
             step_start = time.time()
-            cb(60, "Step 4/5: Writing duplicate_groups")
+            cb(60, "Step 4/5: Writing duplicate_finder_duplicate_groups")
             print(f"[Phase 2.5] Step 4/5: clearing OLD tables + inserting new membership rows")
-            cursor.execute("DELETE FROM group_stats")
-            n_after_del_gs = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
-            cursor.execute("DELETE FROM duplicate_groups")
-            n_after_del_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
-            print(f"[Phase 2.5]   After DELETE: group_stats={n_after_del_gs}, duplicate_groups={n_after_del_dg}")
+            cursor.execute("DELETE FROM duplicate_finder_group_stats")
+            n_after_del_gs = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_group_stats").fetchone()[0]
+            cursor.execute("DELETE FROM duplicate_finder_duplicate_groups")
+            n_after_del_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_duplicate_groups").fetchone()[0]
+            print(f"[Phase 2.5]   After DELETE: duplicate_finder_group_stats={n_after_del_gs}, duplicate_finder_duplicate_groups={n_after_del_dg}")
 
             dg_rows = []
             for group_id, member_ids in enumerate(filtered_groups, start=1):
@@ -1238,10 +1233,10 @@ class DuplicateFinderWorkflow:
                     dg_rows.append((group_id, image_id))
             if dg_rows:
                 cursor.executemany(
-                    "INSERT INTO duplicate_groups (group_id, image_id) VALUES (?, ?)",
+                    "INSERT INTO duplicate_finder_duplicate_groups (group_id, image_id) VALUES (?, ?)",
                     dg_rows,
                 )
-            n_after_ins_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_groups").fetchone()[0]
+            n_after_ins_dg = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_duplicate_groups").fetchone()[0]
             elapsed_step = time.time() - step_start
             print(f"[Phase 2.5] Step 4/5 DONE: wrote {len(dg_rows)} rows (verified count={n_after_ins_dg}), took {elapsed_step:.2f}s")
             if stopped():
@@ -1251,12 +1246,12 @@ class DuplicateFinderWorkflow:
 
             # Step 5: per-group aggregates via SQL (no Python iteration over members)
             step_start = time.time()
-            cb(80, "Step 5/5: Computing group_stats")
-            print(f"[Phase 2.5] Step 5/5: computing group_stats via SQL aggregates")
+            cb(80, "Step 5/5: Computing duplicate_finder_group_stats")
+            print(f"[Phase 2.5] Step 5/5: computing duplicate_finder_group_stats via SQL aggregates")
 
             print(f"[Phase 2.5]   Step 5a: INSERT base aggregates (count, max/min filesize, max/min mtime)")
             cursor.execute('''
-                INSERT INTO group_stats (
+                INSERT INTO duplicate_finder_group_stats (
                     group_id, member_count,
                     max_filesize, min_filesize,
                     max_mtime, min_mtime
@@ -1266,12 +1261,12 @@ class DuplicateFinderWorkflow:
                     COUNT(*),
                     MAX(i.filesize), MIN(i.filesize),
                     MAX(i.mtime), MIN(i.mtime)
-                FROM duplicate_groups dg
-                JOIN image_hashes i ON dg.image_id = i.id
+                FROM duplicate_finder_duplicate_groups dg
+                JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
                 GROUP BY dg.group_id
             ''')
-            n_gs_after_5a = cursor.execute("SELECT COUNT(*) FROM group_stats").fetchone()[0]
-            print(f"[Phase 2.5]   Step 5a DONE: {n_gs_after_5a} group_stats rows inserted")
+            n_gs_after_5a = cursor.execute("SELECT COUNT(*) FROM duplicate_finder_group_stats").fetchone()[0]
+            print(f"[Phase 2.5]   Step 5a DONE: {n_gs_after_5a} duplicate_finder_group_stats rows inserted")
 
             # Step 5b: pick TWO different anchors per group, write three columns
             # at once. The two anchors decouple "intra-group display order" from
@@ -1297,18 +1292,18 @@ class DuplicateFinderWorkflow:
                   f"representative_file_path + primary_folder + folder_dup_count")
 
             # 5b-i: total-file count per dir_path (used for display_anchor)
-            cursor.execute("SELECT dir_path, COUNT(*) FROM image_hashes GROUP BY dir_path")
+            cursor.execute("SELECT dir_path, COUNT(*) FROM duplicate_finder_image_hashes GROUP BY dir_path")
             folder_total: Dict[str, int] = {
                 dp: cnt for dp, cnt in cursor.fetchall() if dp is not None
             }
             print(f"[Phase 2.5]     folder_total: {len(folder_total)} distinct dir_paths")
 
             # 5b-ii: duplicate-file count per dir_path (used for sort_anchor /
-            # folder_dup_count). Only rows that are actually in duplicate_groups
+            # folder_dup_count). Only rows that are actually in duplicate_finder_duplicate_groups
             # count — this is the same number Deep Delete and Deep Whitelist see.
             cursor.execute(
                 "SELECT i.dir_path, COUNT(*) "
-                "FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                "FROM duplicate_finder_duplicate_groups dg JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                 "GROUP BY i.dir_path"
             )
             folder_dup: Dict[str, int] = {
@@ -1321,8 +1316,8 @@ class DuplicateFinderWorkflow:
             write_cur = self._get_connection().cursor()
             read_cur.execute('''
                 SELECT dg.group_id, i.file_path, i.dir_path, i.filename
-                FROM duplicate_groups dg
-                JOIN image_hashes i ON dg.image_id = i.id
+                FROM duplicate_finder_duplicate_groups dg
+                JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
             ''')
             # tuples per member: (folder_total, folder_dup, filename, file_path, dir_path)
             members_by_group: Dict[int, list] = {}
@@ -1350,16 +1345,16 @@ class DuplicateFinderWorkflow:
             for i in range(0, len(updates), BATCH):
                 chunk = updates[i:i + BATCH]
                 write_cur.executemany(
-                    "UPDATE group_stats "
+                    "UPDATE duplicate_finder_group_stats "
                     "SET representative_file_path = ?, primary_folder = ?, folder_dup_count = ? "
                     "WHERE group_id = ?",
                     chunk,
                 )
             n_rep_null = write_cur.execute(
-                "SELECT COUNT(*) FROM group_stats WHERE representative_file_path IS NULL"
+                "SELECT COUNT(*) FROM duplicate_finder_group_stats WHERE representative_file_path IS NULL"
             ).fetchone()[0]
             n_pf_null = write_cur.execute(
-                "SELECT COUNT(*) FROM group_stats WHERE primary_folder IS NULL"
+                "SELECT COUNT(*) FROM duplicate_finder_group_stats WHERE primary_folder IS NULL"
             ).fetchone()[0]
             print(f"[Phase 2.5]   Step 5b DONE: dual-anchored {len(updates)} groups "
                   f"(rep_NULL={n_rep_null}, primary_NULL={n_pf_null})")
@@ -1367,7 +1362,7 @@ class DuplicateFinderWorkflow:
             # Sanity: top folder_dup_count tiers
             try:
                 top = write_cur.execute(
-                    "SELECT folder_dup_count, COUNT(*) FROM group_stats "
+                    "SELECT folder_dup_count, COUNT(*) FROM duplicate_finder_group_stats "
                     "GROUP BY folder_dup_count ORDER BY folder_dup_count DESC LIMIT 5"
                 ).fetchall()
                 print(f"[Phase 2.5]   Top-5 folder_dup_count tiers (count, # groups):")
@@ -1441,9 +1436,9 @@ class DuplicateFinderWorkflow:
 
     def stats_collect_affected_before_mutation(self, image_ids: List[int]) -> Dict:
         """
-        Capture data needed to repair group_stats after a set of image_ids gets
-        removed from the materialized view (either via image_hashes delete, or
-        via whitelist add). Call BEFORE any DB mutation.
+        Capture data needed to repair duplicate_finder_group_stats after a set of image_ids gets
+        removed from the materialized view (either via duplicate_finder_image_hashes delete, or
+        via duplicate_finder_whitelist add). Call BEFORE any DB mutation.
 
         Returns:
             {
@@ -1470,13 +1465,13 @@ class DuplicateFinderWorkflow:
             chunk = list(image_ids)[i:i + BATCH]
             ph = ','.join('?' * len(chunk))
             cur.execute(
-                f"SELECT DISTINCT group_id FROM duplicate_groups WHERE image_id IN ({ph})",
+                f"SELECT DISTINCT group_id FROM duplicate_finder_duplicate_groups WHERE image_id IN ({ph})",
                 chunk,
             )
             affected_groups.update(r[0] for r in cur.fetchall())
 
             cur.execute(
-                f"SELECT DISTINCT dir_path FROM image_hashes "
+                f"SELECT DISTINCT dir_path FROM duplicate_finder_image_hashes "
                 f"WHERE id IN ({ph}) AND dir_path IS NOT NULL",
                 chunk,
             )
@@ -1488,7 +1483,7 @@ class DuplicateFinderWorkflow:
             chunk = ag_list[i:i + BATCH]
             ph = ','.join('?' * len(chunk))
             cur.execute(
-                f"SELECT DISTINCT primary_folder FROM group_stats "
+                f"SELECT DISTINCT primary_folder FROM duplicate_finder_group_stats "
                 f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
                 chunk,
             )
@@ -1512,12 +1507,12 @@ class DuplicateFinderWorkflow:
         remove_from_groups: bool = False,
     ) -> Dict:
         """
-        Repair group_stats + duplicate_groups for the affected groups.
+        Repair duplicate_finder_group_stats + duplicate_finder_duplicate_groups for the affected groups.
 
         Args:
             affected: result of stats_collect_affected_before_mutation()
             remove_from_groups: if True, manually DELETE the image_ids from
-                duplicate_groups. Use for whitelist case where image_hashes
+                duplicate_finder_duplicate_groups. Use for duplicate_finder_whitelist case where duplicate_finder_image_hashes
                 row stays put. For deletion case CASCADE has already done it.
         """
         start = time.time()
@@ -1542,18 +1537,18 @@ class DuplicateFinderWorkflow:
 
         BATCH = 900
 
-        # Step A: whitelist case — manually remove image_ids from duplicate_groups
+        # Step A: duplicate_finder_whitelist case — manually remove image_ids from duplicate_finder_duplicate_groups
         if remove_from_groups and image_ids:
             removed_dg_rows = 0
             for i in range(0, len(image_ids), BATCH):
                 chunk = image_ids[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"DELETE FROM duplicate_groups WHERE image_id IN ({ph})",
+                    f"DELETE FROM duplicate_finder_duplicate_groups WHERE image_id IN ({ph})",
                     chunk,
                 )
                 removed_dg_rows += cur.rowcount
-            print(f"[Stats Repair] (whitelist mode) removed {removed_dg_rows} rows from duplicate_groups")
+            print(f"[Stats Repair] (duplicate_finder_whitelist mode) removed {removed_dg_rows} rows from duplicate_finder_duplicate_groups")
 
         # Step B: classify affected groups into orphan (< 2 members) vs survivor
         orphan_groups: set = set()
@@ -1564,9 +1559,9 @@ class DuplicateFinderWorkflow:
             ph = ','.join('?' * len(chunk))
             cur.execute(
                 f"SELECT gs.group_id, COALESCE(dg.cnt, 0) "
-                f"FROM group_stats gs "
+                f"FROM duplicate_finder_group_stats gs "
                 f"LEFT JOIN ("
-                f"  SELECT group_id, COUNT(*) AS cnt FROM duplicate_groups "
+                f"  SELECT group_id, COUNT(*) AS cnt FROM duplicate_finder_duplicate_groups "
                 f"  WHERE group_id IN ({ph}) GROUP BY group_id"
                 f") dg ON gs.group_id = dg.group_id "
                 f"WHERE gs.group_id IN ({ph})",
@@ -1583,8 +1578,8 @@ class DuplicateFinderWorkflow:
             for i in range(0, len(orphan_groups), BATCH):
                 chunk = list(orphan_groups)[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
-                cur.execute(f"DELETE FROM duplicate_groups WHERE group_id IN ({ph})", chunk)
-                cur.execute(f"DELETE FROM group_stats WHERE group_id IN ({ph})", chunk)
+                cur.execute(f"DELETE FROM duplicate_finder_duplicate_groups WHERE group_id IN ({ph})", chunk)
+                cur.execute(f"DELETE FROM duplicate_finder_group_stats WHERE group_id IN ({ph})", chunk)
             print(f"[Stats Repair] dropped {len(orphan_groups)} orphan groups (< 2 members)")
 
         # Step D: recompute stats for survivors
@@ -1593,30 +1588,30 @@ class DuplicateFinderWorkflow:
                 chunk = list(survivor_groups)[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(f'''
-                    UPDATE group_stats
+                    UPDATE duplicate_finder_group_stats
                     SET member_count = (
-                            SELECT COUNT(*) FROM duplicate_groups dg
-                            WHERE dg.group_id = group_stats.group_id
+                            SELECT COUNT(*) FROM duplicate_finder_duplicate_groups dg
+                            WHERE dg.group_id = duplicate_finder_group_stats.group_id
                         ),
                         max_filesize = (
-                            SELECT MAX(i.filesize) FROM duplicate_groups dg
-                            JOIN image_hashes i ON dg.image_id = i.id
-                            WHERE dg.group_id = group_stats.group_id
+                            SELECT MAX(i.filesize) FROM duplicate_finder_duplicate_groups dg
+                            JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = duplicate_finder_group_stats.group_id
                         ),
                         min_filesize = (
-                            SELECT MIN(i.filesize) FROM duplicate_groups dg
-                            JOIN image_hashes i ON dg.image_id = i.id
-                            WHERE dg.group_id = group_stats.group_id
+                            SELECT MIN(i.filesize) FROM duplicate_finder_duplicate_groups dg
+                            JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = duplicate_finder_group_stats.group_id
                         ),
                         max_mtime = (
-                            SELECT MAX(i.mtime) FROM duplicate_groups dg
-                            JOIN image_hashes i ON dg.image_id = i.id
-                            WHERE dg.group_id = group_stats.group_id
+                            SELECT MAX(i.mtime) FROM duplicate_finder_duplicate_groups dg
+                            JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = duplicate_finder_group_stats.group_id
                         ),
                         min_mtime = (
-                            SELECT MIN(i.mtime) FROM duplicate_groups dg
-                            JOIN image_hashes i ON dg.image_id = i.id
-                            WHERE dg.group_id = group_stats.group_id
+                            SELECT MIN(i.mtime) FROM duplicate_finder_duplicate_groups dg
+                            JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
+                            WHERE dg.group_id = duplicate_finder_group_stats.group_id
                         )
                         -- NOTE: primary_folder is intentionally NOT updated here.
                         -- It's now derived from the anchor in Step F below, so
@@ -1640,8 +1635,8 @@ class DuplicateFinderWorkflow:
                 chunk = survivor_list[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT DISTINCT i.dir_path FROM duplicate_groups dg "
-                    f"JOIN image_hashes i ON dg.image_id = i.id "
+                    f"SELECT DISTINCT i.dir_path FROM duplicate_finder_duplicate_groups dg "
+                    f"JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                     f"WHERE dg.group_id IN ({ph}) AND i.dir_path IS NOT NULL",
                     chunk,
                 )
@@ -1657,7 +1652,7 @@ class DuplicateFinderWorkflow:
                 chunk = member_dirs_list[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT dir_path, COUNT(*) FROM image_hashes "
+                    f"SELECT dir_path, COUNT(*) FROM duplicate_finder_image_hashes "
                     f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
                     chunk,
                 )
@@ -1665,7 +1660,7 @@ class DuplicateFinderWorkflow:
                     folder_total_repair[dp] = cnt
                 cur.execute(
                     f"SELECT i.dir_path, COUNT(*) "
-                    f"FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                    f"FROM duplicate_finder_duplicate_groups dg JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                     f"WHERE i.dir_path IN ({ph}) GROUP BY i.dir_path",
                     chunk,
                 )
@@ -1679,8 +1674,8 @@ class DuplicateFinderWorkflow:
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
                     f"SELECT dg.group_id, i.file_path, i.dir_path, i.filename "
-                    f"FROM duplicate_groups dg "
-                    f"JOIN image_hashes i ON dg.image_id = i.id "
+                    f"FROM duplicate_finder_duplicate_groups dg "
+                    f"JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                     f"WHERE dg.group_id IN ({ph})",
                     chunk,
                 )
@@ -1704,7 +1699,7 @@ class DuplicateFinderWorkflow:
             if anchor_updates:
                 for i in range(0, len(anchor_updates), BATCH):
                     cur.executemany(
-                        "UPDATE group_stats "
+                        "UPDATE duplicate_finder_group_stats "
                         "SET representative_file_path = ?, primary_folder = ?, folder_dup_count = ? "
                         "WHERE group_id = ?",
                         anchor_updates[i:i + BATCH],
@@ -1722,7 +1717,7 @@ class DuplicateFinderWorkflow:
                 chunk = list(survivor_groups)[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT DISTINCT primary_folder FROM group_stats "
+                    f"SELECT DISTINCT primary_folder FROM duplicate_finder_group_stats "
                     f"WHERE group_id IN ({ph}) AND primary_folder IS NOT NULL",
                     chunk,
                 )
@@ -1735,12 +1730,12 @@ class DuplicateFinderWorkflow:
                 chunk = folders_list[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(f'''
-                    UPDATE group_stats
+                    UPDATE duplicate_finder_group_stats
                     SET folder_dup_count = (
                         SELECT COUNT(*)
-                        FROM duplicate_groups dg2
-                        JOIN image_hashes i2 ON dg2.image_id = i2.id
-                        WHERE i2.dir_path = group_stats.primary_folder
+                        FROM duplicate_finder_duplicate_groups dg2
+                        JOIN duplicate_finder_image_hashes i2 ON dg2.image_id = i2.id
+                        WHERE i2.dir_path = duplicate_finder_group_stats.primary_folder
                     )
                     WHERE primary_folder IN ({ph})
                 ''', chunk)
@@ -1814,7 +1809,7 @@ class DuplicateFinderWorkflow:
         # carry it back to the UI (otherwise the summary panel shows 0 when
         # materialization is missing or stale).
         try:
-            _pre_total = int(cursor.execute("SELECT COUNT(*) FROM image_hashes").fetchone()[0])
+            _pre_total = int(cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes").fetchone()[0])
         except Exception:
             _pre_total = 0
         empty_page = {
@@ -1857,16 +1852,16 @@ class DuplicateFinderWorkflow:
                 'elapsed': time.time() - start_time,
             }
 
-        # 2. Validate sort column (whitelist; SQL injection guard).
+        # 2. Validate sort column (duplicate_finder_whitelist; SQL injection guard).
         # Defensive: also detect when the requested column isn't present in
         # the on-disk schema (e.g. someone forgot to run a migration) and
         # downgrade rather than 500.
         if sort_by not in self.PHASE3_ALLOWED_SORTS:
             sort_by = 'folder_dup_count'
-        cursor.execute("PRAGMA table_info(group_stats)")
+        cursor.execute("PRAGMA table_info(duplicate_finder_group_stats)")
         existing_gs_cols = {row[1] for row in cursor.fetchall()}
         if sort_by not in existing_gs_cols:
-            print(f"[Phase 3] WARNING: column {sort_by!r} missing from group_stats "
+            print(f"[Phase 3] WARNING: column {sort_by!r} missing from duplicate_finder_group_stats "
                   f"(have: {sorted(existing_gs_cols)}). Falling back to group_id ASC. "
                   f"Run the appropriate migration script under backend/duplicate_finder/tmp/.")
             sort_by = 'group_id'
@@ -1885,10 +1880,10 @@ class DuplicateFinderWorkflow:
         tiebreaker_sql = (', ' + ', '.join(tiebreakers)) if tiebreakers else ''
 
         # 3. Totals
-        cursor.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM group_stats")
+        cursor.execute("SELECT COUNT(*), COALESCE(SUM(member_count), 0) FROM duplicate_finder_group_stats")
         total_groups_all, total_duplicates = cursor.fetchone()
         total_duplicates = int(total_duplicates)
-        cursor.execute("SELECT COUNT(*) FROM image_hashes")
+        cursor.execute("SELECT COUNT(*) FROM duplicate_finder_image_hashes")
         total_files_in_db = int(cursor.fetchone()[0])
 
         if total_groups_all == 0:
@@ -1906,7 +1901,7 @@ class DuplicateFinderWorkflow:
             total_pages = max(1, math.ceil(total_groups_all / page_size)) if page_size > 0 else 1
             offset = max(0, (page - 1) * page_size)
             cursor.execute(
-                f"SELECT group_id FROM group_stats "
+                f"SELECT group_id FROM duplicate_finder_group_stats "
                 f"ORDER BY {sort_by} {sort_order_sql}{tiebreaker_sql} "
                 f"LIMIT ? OFFSET ?",
                 (page_size, offset),
@@ -1914,7 +1909,7 @@ class DuplicateFinderWorkflow:
         else:
             total_pages = 1
             cursor.execute(
-                f"SELECT group_id FROM group_stats "
+                f"SELECT group_id FROM duplicate_finder_group_stats "
                 f"ORDER BY {sort_by} {sort_order_sql}{tiebreaker_sql}"
             )
 
@@ -1945,8 +1940,8 @@ class DuplicateFinderWorkflow:
             cursor.execute(
                 f"SELECT dg.group_id, i.id, i.filename, i.filesize, i.file_path, "
                 f"       i.phash, i.resolution, i.dir_path "
-                f"FROM duplicate_groups dg "
-                f"JOIN image_hashes i ON dg.image_id = i.id "
+                f"FROM duplicate_finder_duplicate_groups dg "
+                f"JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                 f"WHERE dg.group_id IN ({placeholders})",
                 chunk,
             )
@@ -1962,8 +1957,8 @@ class DuplicateFinderWorkflow:
                 })
 
         # 5b. Bulk-fetch BOTH counts per distinct dir_path on this page:
-        #   - folder_total_count : rows in image_hashes (for tie-break)
-        #   - folder_dup_count   : rows in duplicate_groups (intra-group sort key)
+        #   - folder_total_count : rows in duplicate_finder_image_hashes (for tie-break)
+        #   - folder_dup_count   : rows in duplicate_finder_duplicate_groups (intra-group sort key)
         distinct_dirs: List[str] = []
         seen: set = set()
         for members in images_by_group.values():
@@ -1980,7 +1975,7 @@ class DuplicateFinderWorkflow:
                 chunk = distinct_dirs[i:i + batch_size]
                 ph = ','.join('?' * len(chunk))
                 cursor.execute(
-                    f"SELECT dir_path, COUNT(*) FROM image_hashes "
+                    f"SELECT dir_path, COUNT(*) FROM duplicate_finder_image_hashes "
                     f"WHERE dir_path IN ({ph}) GROUP BY dir_path",
                     chunk,
                 )
@@ -1988,7 +1983,7 @@ class DuplicateFinderWorkflow:
                     folder_counts[dp] = cnt
                 cursor.execute(
                     f"SELECT i.dir_path, COUNT(*) "
-                    f"FROM duplicate_groups dg JOIN image_hashes i ON dg.image_id = i.id "
+                    f"FROM duplicate_finder_duplicate_groups dg JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
                     f"WHERE i.dir_path IN ({ph}) GROUP BY i.dir_path",
                     chunk,
                 )
@@ -1999,7 +1994,7 @@ class DuplicateFinderWorkflow:
         # MOST dup files (= same as the group's anchor / primary_folder).
         # Tie-breaks: smaller folder (curated), then filename.
         # Also annotate each member with `folder_dup` (dup files in its folder)
-        # and `folder_total` (total image_hashes rows in its folder) for the UI
+        # and `folder_total` (total duplicate_finder_image_hashes rows in its folder) for the UI
         # to show as "x/y" next to the filename.
         for gid, members in images_by_group.items():
             members.sort(key=lambda m: (

@@ -1770,22 +1770,11 @@ from .phash_new_workflow import DuplicateFinderWorkflow
 _workflow = None
 
 def get_workflow():
-    """Get workflow instance with current settings
-
-    IMPORTANT: Once created, the workflow instance is NEVER recreated to preserve
-    the _stop_event across Phase 1/2/3 operations and stop signals.
-    """
+    """Get workflow instance with current settings"""
     global _workflow
-    db_path = settings_manager.get_phash_db_path()
-
-    # Create workflow only if it doesn't exist
     if _workflow is None:
-        _workflow = DuplicateFinderWorkflow(db_path=db_path)
-        print(f"[Workflow] Initialized with database: {db_path}")
-    elif hasattr(_workflow, 'db_path') and str(_workflow.db_path) != str(db_path):
-        # Log warning if db_path changed, but DON'T recreate (to preserve _stop_event)
-        print(f"[Workflow] WARNING: DB path changed from {_workflow.db_path} to {db_path}, but keeping existing workflow instance to preserve stop_event")
-
+        _workflow = DuplicateFinderWorkflow()
+        print(f"[Workflow] Initialized with shared database")
     return _workflow
 
 

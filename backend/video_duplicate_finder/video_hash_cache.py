@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 
 import imagehash
 
+from shared.db import get_conn
 from .frame_extractor import (
     bgr_to_pil,
     extract_frame_at_ffmpeg_fallback,
@@ -388,10 +389,7 @@ class VideoHashCache:
 
     BATCH_CAP = 900
 
-    def __init__(self, db_path: str):
-        self.db_path = Path(db_path)
-        # Ensure parent dir exists
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self):
         self._conn: Optional[sqlite3.Connection] = None
         # WAL mode + a per-instance lock let Flask/SocketIO threads share the
         # connection safely under check_same_thread=False (Tier-2 review).
@@ -404,16 +402,12 @@ class VideoHashCache:
 
     def _get_connection(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            # CASCADE FK enforcement — see Decoupling Pattern B2 in gotchas doc
+            self._conn = get_conn()
             self._conn.execute('PRAGMA foreign_keys = ON')
-            # WAL + busy_timeout — see Tier-2 review D-23
             try:
                 self._conn.execute('PRAGMA journal_mode = WAL')
                 self._conn.execute('PRAGMA busy_timeout = 5000')
             except sqlite3.OperationalError as e:
-                # WAL setup failing (e.g. read-only mount) is not fatal;
-                # log and continue on default rollback journal.
                 print(f"[VideoHashCache] WAL setup skipped: {e}")
         return self._conn
 
@@ -428,10 +422,9 @@ class VideoHashCache:
         conn = self._get_connection()
         cur = conn.cursor()
 
-        # video_hashes — main table. Mirrors image_hashes layout with video-
-        # specific metadata columns.
+        # video_duplicate_finder_video_hashes — main table
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_hashes (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_hashes (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename        TEXT NOT NULL,
                 filesize        INTEGER NOT NULL,
@@ -457,52 +450,52 @@ class VideoHashCache:
                 UNIQUE (filename, filesize, file_path)
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_video_hash    ON video_hashes(video_hash)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_filename_size ON video_hashes(filename, filesize)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_status        ON video_hashes(status)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_dir_path      ON video_hashes(dir_path)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_mtime         ON video_hashes(mtime)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_video_hash    ON video_duplicate_finder_video_hashes(video_hash)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_filename_size ON video_duplicate_finder_video_hashes(filename, filesize)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_status        ON video_duplicate_finder_video_hashes(status)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_dir_path      ON video_duplicate_finder_video_hashes(dir_path)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_v_mtime         ON video_duplicate_finder_video_hashes(mtime)')
 
         # video_similarities — edge list, CHECK a<b enforces canonical ordering
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_similarities (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_similarities (
                 video_id_a  INTEGER NOT NULL,
                 video_id_b  INTEGER NOT NULL,
                 threshold   INTEGER NOT NULL,
                 distance    INTEGER NOT NULL,
                 PRIMARY KEY (video_id_a, video_id_b, threshold),
                 CHECK (video_id_a < video_id_b),
-                FOREIGN KEY (video_id_a) REFERENCES video_hashes(id) ON DELETE CASCADE,
-                FOREIGN KEY (video_id_b) REFERENCES video_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (video_id_a) REFERENCES video_duplicate_finder_video_hashes(id) ON DELETE CASCADE,
+                FOREIGN KEY (video_id_b) REFERENCES video_duplicate_finder_video_hashes(id) ON DELETE CASCADE
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_a_thr ON video_similarities(video_id_a, threshold)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_b_thr ON video_similarities(video_id_b, threshold)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_thr   ON video_similarities(threshold)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_a_thr ON video_duplicate_finder_video_similarities(video_id_a, threshold)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_b_thr ON video_duplicate_finder_video_similarities(video_id_b, threshold)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vs_thr   ON video_duplicate_finder_video_similarities(threshold)')
 
         # Symmetric view — both directions in one query
         cur.execute('''
-            CREATE VIEW IF NOT EXISTS video_similarities_view AS
+            CREATE VIEW IF NOT EXISTS video_duplicate_finder_video_similarities_view AS
             SELECT video_id_a AS video_id, video_id_b AS neighbor_id, threshold, distance
-            FROM video_similarities
+            FROM video_duplicate_finder_video_similarities
             UNION ALL
             SELECT video_id_b AS video_id, video_id_a AS neighbor_id, threshold, distance
-            FROM video_similarities
+            FROM video_duplicate_finder_video_similarities
         ''')
 
         # Phase 2.5 materialized output
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS duplicate_video_groups (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_duplicate_video_groups (
                 group_id INTEGER NOT NULL,
                 video_id INTEGER NOT NULL,
                 PRIMARY KEY (group_id, video_id),
-                FOREIGN KEY (video_id) REFERENCES video_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (video_id) REFERENCES video_duplicate_finder_video_hashes(id) ON DELETE CASCADE
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_dvg_video_id ON duplicate_video_groups(video_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_dvg_video_id ON video_duplicate_finder_duplicate_video_groups(video_id)')
 
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_group_stats (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_group_stats (
                 group_id                  INTEGER PRIMARY KEY,
                 member_count              INTEGER NOT NULL,
                 max_filesize              INTEGER,
@@ -518,40 +511,40 @@ class VideoHashCache:
                 representative_file_path  TEXT
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_folder_dup_count ON video_group_stats(folder_dup_count)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_filesize     ON video_group_stats(max_filesize)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_duration     ON video_group_stats(max_duration)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_mtime        ON video_group_stats(max_mtime)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_member_count     ON video_group_stats(member_count)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_primary_folder   ON video_group_stats(primary_folder)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_rep_path         ON video_group_stats(representative_file_path)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_folder_dup_count ON video_duplicate_finder_video_group_stats(folder_dup_count)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_filesize     ON video_duplicate_finder_video_group_stats(max_filesize)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_duration     ON video_duplicate_finder_video_group_stats(max_duration)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_max_mtime        ON video_duplicate_finder_video_group_stats(max_mtime)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_member_count     ON video_duplicate_finder_video_group_stats(member_count)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_primary_folder   ON video_duplicate_finder_video_group_stats(primary_folder)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vgs_rep_path         ON video_duplicate_finder_video_group_stats(representative_file_path)')
 
         # Whitelist tables
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_whitelist (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_whitelist (
                 video_id   INTEGER PRIMARY KEY,
                 added_time REAL NOT NULL,
                 note       TEXT,
-                FOREIGN KEY (video_id) REFERENCES video_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (video_id) REFERENCES video_duplicate_finder_video_hashes(id) ON DELETE CASCADE
             )
         ''')
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_whitelist_groups (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_whitelist_groups (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 added_time REAL NOT NULL
             )
         ''')
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS video_whitelist_group_members (
+            CREATE TABLE IF NOT EXISTS video_duplicate_finder_video_whitelist_group_members (
                 group_id INTEGER NOT NULL,
                 video_id INTEGER NOT NULL,
                 PRIMARY KEY (group_id, video_id),
-                FOREIGN KEY (group_id) REFERENCES video_whitelist_groups(id) ON DELETE CASCADE,
-                FOREIGN KEY (video_id) REFERENCES video_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (group_id) REFERENCES video_duplicate_finder_video_whitelist_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (video_id) REFERENCES video_duplicate_finder_video_hashes(id) ON DELETE CASCADE
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vwgm_group ON video_whitelist_group_members(group_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_vwgm_video ON video_whitelist_group_members(video_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vwgm_group ON video_duplicate_finder_video_whitelist_group_members(group_id)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_vwgm_video ON video_duplicate_finder_video_whitelist_group_members(video_id)')
 
         # Materialization meta (Phase 2.5 records threshold etc.)
         cur.execute('''
@@ -585,7 +578,7 @@ class VideoHashCache:
         cur.execute(
             '''SELECT id, video_hash, mtime, duration, width, height, fps, vcodec, container,
                       n_frames, thumbnail_path, status
-               FROM video_hashes
+               FROM video_duplicate_finder_video_hashes
                WHERE filename = ? AND filesize = ? AND file_path = ?''',
             (filename, st.st_size, file_path),
         )
@@ -622,7 +615,7 @@ class VideoHashCache:
         cur.execute(
             '''SELECT id, file_path, video_hash, duration, width, height, fps,
                       vcodec, container, n_frames, thumbnail_path, filesize, mtime, status
-               FROM video_hashes
+               FROM video_duplicate_finder_video_hashes
                ORDER BY file_path'''
         )
         out: List[Dict] = []
@@ -669,7 +662,7 @@ class VideoHashCache:
         self.set_hash_batch([payload])
         cur = self._get_connection().cursor()
         cur.execute(
-            'SELECT id FROM video_hashes WHERE file_path = ?',
+            'SELECT id FROM video_duplicate_finder_video_hashes WHERE file_path = ?',
             (payload['file_path'],),
         )
         row = cur.fetchone()
@@ -713,7 +706,7 @@ class VideoHashCache:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.executemany(
-            '''INSERT OR REPLACE INTO video_hashes
+            '''INSERT OR REPLACE INTO video_duplicate_finder_video_hashes
                  (filename, filesize, file_path, dir_path, mtime,
                   duration, width, height, fps, bitrate, vcodec, acodec, container,
                   video_hash, n_frames, thumbnail_path, status)
@@ -728,7 +721,7 @@ class VideoHashCache:
         conn = self._get_connection()
         cur = conn.cursor()
         cur.execute(
-            'INSERT OR REPLACE INTO video_whitelist (video_id, added_time, note) VALUES (?, ?, ?)',
+            'INSERT OR REPLACE INTO video_duplicate_finder_video_whitelist (video_id, added_time, note) VALUES (?, ?, ?)',
             (video_id, time.time(), note),
         )
         conn.commit()
@@ -736,12 +729,12 @@ class VideoHashCache:
     def remove_from_whitelist(self, video_id: int) -> None:
         conn = self._get_connection()
         cur = conn.cursor()
-        cur.execute('DELETE FROM video_whitelist WHERE video_id = ?', (video_id,))
+        cur.execute('DELETE FROM video_duplicate_finder_video_whitelist WHERE video_id = ?', (video_id,))
         conn.commit()
 
     def is_whitelisted(self, video_id: int) -> bool:
         cur = self._get_connection().cursor()
-        cur.execute('SELECT 1 FROM video_whitelist WHERE video_id = ?', (video_id,))
+        cur.execute('SELECT 1 FROM video_duplicate_finder_video_whitelist WHERE video_id = ?', (video_id,))
         return cur.fetchone() is not None
 
     def get_whitelist(self) -> List[Dict]:
@@ -749,8 +742,8 @@ class VideoHashCache:
         cur.execute('''
             SELECT w.video_id, w.added_time, w.note, v.filename, v.filesize,
                    v.file_path, v.duration, v.width, v.height
-            FROM video_whitelist w
-            JOIN video_hashes v ON w.video_id = v.id
+            FROM video_duplicate_finder_video_whitelist w
+            JOIN video_duplicate_finder_video_hashes v ON w.video_id = v.id
         ''')
         return [
             {
@@ -770,11 +763,11 @@ class VideoHashCache:
         # insert fails, roll back so the orphaned parent row doesn't
         # linger for later commits.
         try:
-            cur.execute('INSERT INTO video_whitelist_groups (added_time) VALUES (?)', (time.time(),))
+            cur.execute('INSERT INTO video_duplicate_finder_video_whitelist_groups (added_time) VALUES (?)', (time.time(),))
             gid = cur.lastrowid
             for vid in video_ids:
                 cur.execute(
-                    'INSERT INTO video_whitelist_group_members (group_id, video_id) VALUES (?, ?)',
+                    'INSERT INTO video_duplicate_finder_video_whitelist_group_members (group_id, video_id) VALUES (?, ?)',
                     (gid, vid),
                 )
             conn.commit()
@@ -786,7 +779,7 @@ class VideoHashCache:
     def remove_whitelist_group(self, group_id: int) -> None:
         conn = self._get_connection()
         cur = conn.cursor()
-        cur.execute('DELETE FROM video_whitelist_groups WHERE id = ?', (group_id,))
+        cur.execute('DELETE FROM video_duplicate_finder_video_whitelist_groups WHERE id = ?', (group_id,))
         conn.commit()
 
     def is_group_whitelisted(self, video_ids: List[int]) -> bool:
@@ -796,7 +789,7 @@ class VideoHashCache:
         cur = self._get_connection().cursor()
         cur.execute('''
             SELECT group_id, GROUP_CONCAT(video_id) AS members
-            FROM video_whitelist_group_members
+            FROM video_duplicate_finder_video_whitelist_group_members
             GROUP BY group_id
         ''')
         target = set(video_ids)
@@ -811,15 +804,15 @@ class VideoHashCache:
 
     def get_whitelist_groups(self) -> List[Dict]:
         cur = self._get_connection().cursor()
-        cur.execute('SELECT id, added_time FROM video_whitelist_groups ORDER BY added_time DESC')
+        cur.execute('SELECT id, added_time FROM video_duplicate_finder_video_whitelist_groups ORDER BY added_time DESC')
         groups = cur.fetchall()
         out: List[Dict] = []
         for gid, added in groups:
             cur.execute('''
                 SELECT m.video_id, v.filename, v.filesize, v.file_path,
                        v.duration, v.width, v.height
-                FROM video_whitelist_group_members m
-                JOIN video_hashes v ON m.video_id = v.id
+                FROM video_duplicate_finder_video_whitelist_group_members m
+                JOIN video_duplicate_finder_video_hashes v ON m.video_id = v.id
                 WHERE m.group_id = ?
             ''', (gid,))
             members = [
@@ -832,7 +825,7 @@ class VideoHashCache:
             ]
             # Drop groups that decayed below 2 members (FK CASCADE removed some)
             if len(members) < 2:
-                cur.execute('DELETE FROM video_whitelist_groups WHERE id = ?', (gid,))
+                cur.execute('DELETE FROM video_duplicate_finder_video_whitelist_groups WHERE id = ?', (gid,))
                 self._get_connection().commit()
                 continue
             out.append({'group_id': gid, 'added_time': added, 'members': members})
@@ -842,7 +835,7 @@ class VideoHashCache:
         """Drop whitelist groups whose membership fell below 2. Returns count removed."""
         cur = self._get_connection().cursor()
         cur.execute('''
-            SELECT group_id FROM video_whitelist_group_members
+            SELECT group_id FROM video_duplicate_finder_video_whitelist_group_members
             GROUP BY group_id
             HAVING COUNT(*) < 2
         ''')
@@ -853,7 +846,7 @@ class VideoHashCache:
         for i in range(0, len(bad), self.BATCH_CAP):
             chunk = bad[i:i + self.BATCH_CAP]
             ph = ','.join('?' * len(chunk))
-            cur.execute(f'DELETE FROM video_whitelist_groups WHERE id IN ({ph})', chunk)
+            cur.execute(f'DELETE FROM video_duplicate_finder_video_whitelist_groups WHERE id IN ({ph})', chunk)
         self._get_connection().commit()
         return len(bad)
 
@@ -889,7 +882,7 @@ class VideoHashCache:
         cursor = conn.cursor()
 
         if scope_dir_paths:
-            cursor.execute('SELECT id, file_path, dir_path FROM video_hashes')
+            cursor.execute('SELECT id, file_path, dir_path FROM video_duplicate_finder_video_hashes')
             all_rows = cursor.fetchall()
             scope_abs = [os.path.abspath(p).rstrip(os.sep) for p in scope_dir_paths if p]
 
@@ -907,7 +900,7 @@ class VideoHashCache:
                   f"{len(scope_dir_paths)} dirs — {len(candidate_rows)} candidates, "
                   f"{len(missing)} missing")
         else:
-            cursor.execute('SELECT id, file_path FROM video_hashes')
+            cursor.execute('SELECT id, file_path FROM video_duplicate_finder_video_hashes')
             all_files = cursor.fetchall()
             missing = [(rid, fp) for rid, fp in all_files if fp not in existing_files]
             print(f"[VideoHashCache] cleanup_missing_files: GLOBAL — "
@@ -915,7 +908,7 @@ class VideoHashCache:
 
         removed = 0
         for rid, _fp in missing:
-            cursor.execute('DELETE FROM video_hashes WHERE id = ?', (rid,))
+            cursor.execute('DELETE FROM video_duplicate_finder_video_hashes WHERE id = ?', (rid,))
             removed += cursor.rowcount
         conn.commit()
         return (removed, 0)

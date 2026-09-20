@@ -18,24 +18,7 @@ except ImportError:
     HAS_PSUTIL = False
     print("[Warning] psutil not available, memory optimization disabled")
 
-# Cache database path - use non-hidden file
-# Default path if not configured in settings
-DEFAULT_CACHE_DB = Path(__file__).parent / 'phash_cache.db'
-
-
-def get_default_cache_path():
-    """
-    Get the cache database path from settings, or use default if not configured.
-    This ensures all code uses the same database path.
-    """
-    try:
-        from .settings_manager import settings_manager
-        configured_path = settings_manager.get_phash_db_path()
-        if configured_path:
-            return Path(configured_path)
-    except Exception as e:
-        print(f"[PHashCache] Could not load configured DB path: {e}")
-    return DEFAULT_CACHE_DB
+from shared.db import get_conn
 
 # Global variable for compute delay (accessible by multiprocessing workers)
 _COMPUTE_DELAY = 0.0
@@ -217,17 +200,6 @@ class BKTree:
 
 class PHashCache:
     def __init__(self, db_path: str = None):
-        """
-        Initialize PHash cache
-        Args:
-            db_path: Optional custom database path. If None, uses configured path from settings or default.
-        """
-        if db_path:
-            self.db_path = Path(db_path)
-        else:
-            self.db_path = get_default_cache_path()
-
-        print(f"[PHashCache] Using database: {self.db_path}")
         self._conn = None  # Persistent connection for better performance
         self._stop_event = None  # For stop control
         self._init_db()
@@ -235,7 +207,7 @@ class PHashCache:
     def _get_connection(self):
         """Get or create a persistent database connection"""
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn = get_conn()
             # Enable foreign key constraints (required for CASCADE DELETE)
             self._conn.execute('PRAGMA foreign_keys = ON')
         return self._conn
@@ -252,9 +224,9 @@ class PHashCache:
         cursor = conn.cursor()
 
         # Migration check: if old schema exists, user should run migrate_to_new_schema.py first
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='image_hashes'")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='duplicate_finder_image_hashes'")
         if cursor.fetchone():
-            cursor.execute("PRAGMA table_info(image_hashes)")
+            cursor.execute("PRAGMA table_info(duplicate_finder_image_hashes)")
             columns = {col[1] for col in cursor.fetchall()}
             if 'id' not in columns:
                 print("[ERROR] Old database schema detected!")
@@ -263,7 +235,7 @@ class PHashCache:
 
         # Create new schema tables
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS image_hashes (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_image_hashes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
                 filesize INTEGER NOT NULL,
@@ -277,24 +249,24 @@ class PHashCache:
             )
         ''')
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_phash ON image_hashes(phash)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_filename_filesize ON image_hashes(filename, filesize)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON image_hashes(status)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dir_path ON image_hashes(dir_path)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mtime ON image_hashes(mtime)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_phash ON duplicate_finder_image_hashes(phash)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_filename_filesize ON duplicate_finder_image_hashes(filename, filesize)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_status ON duplicate_finder_image_hashes(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_dir_path ON duplicate_finder_image_hashes(dir_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_mtime ON duplicate_finder_image_hashes(mtime)')
 
         # Create whitelist table - stores image IDs to exclude from duplicate detection
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS whitelist (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_whitelist (
                 image_id INTEGER PRIMARY KEY,
                 added_time REAL NOT NULL,
-                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (image_id) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
         # Create whitelist_groups table - stores duplicate groups to exclude from detection
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS whitelist_groups (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_whitelist_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 added_time REAL NOT NULL
             )
@@ -302,44 +274,44 @@ class PHashCache:
 
         # Create whitelist_group_members table - stores members of each whitelist group
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS whitelist_group_members (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_whitelist_group_members (
                 group_id INTEGER NOT NULL,
                 image_id INTEGER NOT NULL,
-                FOREIGN KEY (group_id) REFERENCES whitelist_groups(id) ON DELETE CASCADE,
-                FOREIGN KEY (image_id) REFERENCES image_hashes(id) ON DELETE CASCADE,
+                FOREIGN KEY (group_id) REFERENCES duplicate_finder_whitelist_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (image_id) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE,
                 PRIMARY KEY (group_id, image_id)
             )
         ''')
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_group_members_group ON whitelist_group_members(group_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_whitelist_group_members_image ON whitelist_group_members(image_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_whitelist_group_members_group ON duplicate_finder_whitelist_group_members(group_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_whitelist_group_members_image ON duplicate_finder_whitelist_group_members(image_id)')
 
         # Create phash_similarities table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS phash_similarities (
+            CREATE TABLE IF NOT EXISTS duplicate_finder_phash_similarities (
                 image_id_a INTEGER NOT NULL,
                 image_id_b INTEGER NOT NULL,
                 threshold INTEGER NOT NULL,
                 distance INTEGER NOT NULL,
                 PRIMARY KEY (image_id_a, image_id_b, threshold),
                 CHECK (image_id_a < image_id_b),
-                FOREIGN KEY (image_id_a) REFERENCES image_hashes(id) ON DELETE CASCADE,
-                FOREIGN KEY (image_id_b) REFERENCES image_hashes(id) ON DELETE CASCADE
+                FOREIGN KEY (image_id_a) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE,
+                FOREIGN KEY (image_id_b) REFERENCES duplicate_finder_image_hashes(id) ON DELETE CASCADE
             )
         ''')
 
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_a_threshold ON phash_similarities(image_id_a, threshold)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_image_id_b_threshold ON phash_similarities(image_id_b, threshold)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_threshold ON phash_similarities(threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_image_id_a_threshold ON duplicate_finder_phash_similarities(image_id_a, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_image_id_b_threshold ON duplicate_finder_phash_similarities(image_id_b, threshold)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_df_threshold ON duplicate_finder_phash_similarities(threshold)')
 
         # Create view
         cursor.execute('''
-            CREATE VIEW IF NOT EXISTS phash_similarities_view AS
+            CREATE VIEW IF NOT EXISTS duplicate_finder_phash_similarities_view AS
             SELECT image_id_a as image_id, image_id_b as neighbor_id, threshold, distance
-            FROM phash_similarities
+            FROM duplicate_finder_phash_similarities
             UNION ALL
             SELECT image_id_b as image_id, image_id_a as neighbor_id, threshold, distance
-            FROM phash_similarities
+            FROM duplicate_finder_phash_similarities
         ''')
 
         conn.commit()
@@ -364,7 +336,7 @@ class PHashCache:
 
         # First try exact match (filename + filesize + file_path)
         cursor.execute(
-            'SELECT phash, mtime, resolution FROM image_hashes WHERE filename = ? AND filesize = ? AND file_path = ?',
+            'SELECT phash, mtime, resolution FROM duplicate_finder_image_hashes WHERE filename = ? AND filesize = ? AND file_path = ?',
             (filename, filesize, file_path)
         )
         row = cursor.fetchone()
@@ -378,7 +350,7 @@ class PHashCache:
 
         # If no exact match, try filename+filesize only (file might have moved)
         cursor.execute(
-            'SELECT phash, mtime, resolution, file_path FROM image_hashes WHERE filename = ? AND filesize = ? LIMIT 1',
+            'SELECT phash, mtime, resolution, file_path FROM duplicate_finder_image_hashes WHERE filename = ? AND filesize = ? LIMIT 1',
             (filename, filesize)
         )
         row = cursor.fetchone()
@@ -405,7 +377,7 @@ class PHashCache:
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT OR REPLACE INTO image_hashes (filename, filesize, file_path, phash, mtime, resolution)
+            INSERT OR REPLACE INTO duplicate_finder_image_hashes (filename, filesize, file_path, phash, mtime, resolution)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (filename, filesize, file_path, phash, mtime, resolution))
 
@@ -433,7 +405,7 @@ class PHashCache:
 
         # Batch insert
         cursor.executemany('''
-            INSERT OR REPLACE INTO image_hashes (filename, filesize, file_path, phash, mtime, resolution)
+            INSERT OR REPLACE INTO duplicate_finder_image_hashes (filename, filesize, file_path, phash, mtime, resolution)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', batch_data)
 
@@ -454,7 +426,7 @@ class PHashCache:
 
         cursor.execute('''
             SELECT file_path, phash, resolution, filesize, mtime
-            FROM image_hashes
+            FROM duplicate_finder_image_hashes
             ORDER BY file_path
         ''')
 
@@ -499,7 +471,7 @@ class PHashCache:
         cursor = conn.cursor()
 
         cursor.execute('''
-            UPDATE image_hashes
+            UPDATE duplicate_finder_image_hashes
             SET file_path = ?, mtime = ?
             WHERE filename = ? AND filesize = ? AND file_path = ?
         ''', (new_path, new_mtime, filename, filesize, old_path))
@@ -546,14 +518,14 @@ class PHashCache:
         """
         Add an image to whitelist by its image_id
         Args:
-            image_id: The ID of the image in image_hashes table
+            image_id: The ID of the image in duplicate_finder_image_hashes table
         """
         import time
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT OR REPLACE INTO whitelist (image_id, added_time)
+            INSERT OR REPLACE INTO duplicate_finder_whitelist (image_id, added_time)
             VALUES (?, ?)
         ''', (image_id, time.time()))
 
@@ -565,7 +537,7 @@ class PHashCache:
         cursor = conn.cursor()
 
         cursor.execute('''
-            DELETE FROM whitelist WHERE image_id = ?
+            DELETE FROM duplicate_finder_whitelist WHERE image_id = ?
         ''', (image_id,))
 
         conn.commit()
@@ -576,7 +548,7 @@ class PHashCache:
         cursor = conn.cursor()
 
         cursor.execute(
-            'SELECT 1 FROM whitelist WHERE image_id = ?',
+            'SELECT 1 FROM duplicate_finder_whitelist WHERE image_id = ?',
             (image_id,)
         )
         result = cursor.fetchone()
@@ -586,15 +558,15 @@ class PHashCache:
     def get_whitelist(self) -> List[Dict]:
         """
         Get all whitelisted items with full image information
-        Returns list of dicts with image details joined from image_hashes table
+        Returns list of dicts with image details joined from duplicate_finder_image_hashes table
         """
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
             SELECT w.image_id, w.added_time, i.filename, i.filesize, i.file_path, i.phash, i.resolution
-            FROM whitelist w
-            JOIN image_hashes i ON w.image_id = i.id
+            FROM duplicate_finder_whitelist w
+            JOIN duplicate_finder_image_hashes i ON w.image_id = i.id
         ''')
         rows = cursor.fetchall()
 
@@ -625,13 +597,13 @@ class PHashCache:
         cursor = conn.cursor()
 
         # Create new group
-        cursor.execute('INSERT INTO whitelist_groups (added_time) VALUES (?)', (time.time(),))
+        cursor.execute('INSERT INTO duplicate_finder_whitelist_groups (added_time) VALUES (?)', (time.time(),))
         group_id = cursor.lastrowid
 
         # Add members
         for image_id in image_ids:
             cursor.execute('''
-                INSERT INTO whitelist_group_members (group_id, image_id)
+                INSERT INTO duplicate_finder_whitelist_group_members (group_id, image_id)
                 VALUES (?, ?)
             ''', (group_id, image_id))
 
@@ -642,7 +614,7 @@ class PHashCache:
         """Delete a whitelist group (members will be CASCADE deleted)"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM whitelist_groups WHERE id = ?', (group_id,))
+        cursor.execute('DELETE FROM duplicate_finder_whitelist_groups WHERE id = ?', (group_id,))
         conn.commit()
         print(f"[Whitelist] Removed group {group_id}")
 
@@ -661,7 +633,7 @@ class PHashCache:
         # Get all whitelist groups with their members
         cursor.execute('''
             SELECT group_id, GROUP_CONCAT(image_id) as members
-            FROM whitelist_group_members
+            FROM duplicate_finder_whitelist_group_members
             GROUP BY group_id
         ''')
 
@@ -680,7 +652,7 @@ class PHashCache:
         cursor = conn.cursor()
 
         # Get all groups
-        cursor.execute('SELECT id, added_time FROM whitelist_groups ORDER BY added_time DESC')
+        cursor.execute('SELECT id, added_time FROM duplicate_finder_whitelist_groups ORDER BY added_time DESC')
         groups = cursor.fetchall()
 
         result = []
@@ -688,8 +660,8 @@ class PHashCache:
             # Get members for this group
             cursor.execute('''
                 SELECT m.image_id, i.filename, i.filesize, i.file_path, i.phash, i.resolution
-                FROM whitelist_group_members m
-                JOIN image_hashes i ON m.image_id = i.id
+                FROM duplicate_finder_whitelist_group_members m
+                JOIN duplicate_finder_image_hashes i ON m.image_id = i.id
                 WHERE m.group_id = ?
             ''', (group_id,))
 
@@ -707,7 +679,7 @@ class PHashCache:
 
             # Boundary handling: if group has < 2 members, delete it
             if len(members) < 2:
-                cursor.execute('DELETE FROM whitelist_groups WHERE id = ?', (group_id,))
+                cursor.execute('DELETE FROM duplicate_finder_whitelist_groups WHERE id = ?', (group_id,))
                 conn.commit()
                 print(f"[Whitelist] Auto-removed invalid group {group_id} (< 2 members)")
                 continue
@@ -731,7 +703,7 @@ class PHashCache:
         # Find groups with < 2 members
         cursor.execute('''
             SELECT group_id, COUNT(*) as member_count
-            FROM whitelist_group_members
+            FROM duplicate_finder_whitelist_group_members
             GROUP BY group_id
             HAVING member_count < 2
         ''')
@@ -740,7 +712,7 @@ class PHashCache:
 
         if invalid_groups:
             placeholders = ','.join('?' * len(invalid_groups))
-            cursor.execute(f'DELETE FROM whitelist_groups WHERE id IN ({placeholders})', invalid_groups)
+            cursor.execute(f'DELETE FROM duplicate_finder_whitelist_groups WHERE id IN ({placeholders})', invalid_groups)
             conn.commit()
             print(f"[Whitelist] Cleaned up {len(invalid_groups)} invalid groups")
 
@@ -760,18 +732,18 @@ class PHashCache:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Get all file_paths from image_hashes table
-        cursor.execute('SELECT file_path FROM image_hashes')
+        # Get all file_paths from duplicate_finder_image_hashes table
+        cursor.execute('SELECT file_path FROM duplicate_finder_image_hashes')
         db_files = [row[0] for row in cursor.fetchall()]
 
         # Find files in DB that don't exist anymore
         missing_files = [f for f in db_files if f not in existing_files]
 
-        # Remove missing files from image_hashes
+        # Remove missing files from duplicate_finder_image_hashes
         # Whitelist records will be automatically removed by ON DELETE CASCADE
         removed_hashes = 0
         for file_path in missing_files:
-            cursor.execute('DELETE FROM image_hashes WHERE file_path = ?', (file_path,))
+            cursor.execute('DELETE FROM duplicate_finder_image_hashes WHERE file_path = ?', (file_path,))
             removed_hashes += cursor.rowcount
 
         conn.commit()
@@ -948,11 +920,11 @@ class PHashCache:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Delete neighbors where phash not in image_hashes
+        # Delete neighbors where phash not in duplicate_finder_image_hashes
         cursor.execute('''
             DELETE FROM phash_neighbors
-            WHERE phash NOT IN (SELECT phash FROM image_hashes)
-            OR neighbor_phash NOT IN (SELECT phash FROM image_hashes)
+            WHERE phash NOT IN (SELECT phash FROM duplicate_finder_image_hashes)
+            OR neighbor_phash NOT IN (SELECT phash FROM duplicate_finder_image_hashes)
         ''')
 
         removed = cursor.rowcount
