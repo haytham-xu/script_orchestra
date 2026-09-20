@@ -2,6 +2,7 @@ import { defineComponent, ref, reactive, computed, onMounted, watch, onUnmounted
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
+import MockLiveView from '@/browser_agent/views/MockLiveView.vue'
 import { vPdndDrag, vPdndDrop, vPdndGroupHdr, vPdndLiveRow, useDndMonitor } from './dnd'
 import type { DragPayload, DropPayload, MonitorDropEvent, MonitorDragEvent } from './dnd'
 import { getSettings, updateSettings } from '@/browser_agent/service/BrowserAgentService'
@@ -53,7 +54,7 @@ import type {
   ShelfItem,
 } from '@/browser_agent/service/Model'
 
-type Pane = 'live' | 'archive' | 'shelf'
+type Pane = 'live' | 'archive' | 'shelf' | 'mock'
 type RestoreDestination = 'new_window' | 'current_window'
 
 type EternalFilter = 'all' | 'eternal' | 'not_eternal'
@@ -180,7 +181,7 @@ function buildRestoreFailureSummary(rows: TabArchiveRestoreResultRow[]): {
 
 export default defineComponent({
   name: 'TabsView',
-  components: { Setting },
+  components: { Setting, MockLiveView },
   directives: {
     pdndDrag: vPdndDrag, pdndDrop: vPdndDrop, pdndGroupHdr: vPdndGroupHdr, pdndLiveRow: vPdndLiveRow,
     focus: { mounted: (el: HTMLElement) => el.focus() },
@@ -223,7 +224,7 @@ export default defineComponent({
     const activePane = computed<Pane>({
       get() {
         const q = route.query.tab
-        return (q === 'archive' || q === 'live' || q === 'shelf') ? q : 'live'
+        return (q === 'archive' || q === 'live' || q === 'shelf' || q === 'mock') ? q : 'live'
       },
       set(val: Pane) {
         router.replace({ query: { ...route.query, tab: val } })
