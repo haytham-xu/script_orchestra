@@ -7,16 +7,17 @@ Phase 3: Get duplicates - Generate duplicate groups from similarities
 """
 import sqlite3
 import os
+import threading
 import time
 from typing import List, Dict, Optional, Callable, Tuple
 from multiprocessing import Pool, cpu_count, Manager
 
 try:
     from .phash_cache import _compute_single_hash_with_delay, set_compute_delay, PHashCache
-    from shared.db import get_conn
+    from shared.db import get_conn, get_db_path
 except ImportError:
     from phash_cache import _compute_single_hash_with_delay, set_compute_delay, PHashCache
-    from shared.db import get_conn
+    from shared.db import get_conn, get_db_path
 
 # Global variables for performance settings (accessible by multiprocessing workers)
 _SCAN_DELAY = 0.0
@@ -161,6 +162,7 @@ class DuplicateFinderWorkflow:
     def __init__(self):
         print(f"[Workflow] Using shared database")
         self._conn = None
+        self._thread_local = threading.local()
         # Use multiprocessing Manager for cross-process Event
         self._manager = Manager()
         self._stop_event = self._manager.Event()
@@ -269,15 +271,18 @@ class DuplicateFinderWorkflow:
         conn.commit()
 
     def _get_connection(self):
-        if self._conn is None:
-            self._conn = get_conn()
-            self._conn.execute('PRAGMA foreign_keys = ON')
-        return self._conn
+        conn = getattr(self._thread_local, 'conn', None)
+        if conn is None:
+            conn = get_conn()
+            conn.execute('PRAGMA foreign_keys = ON')
+            self._thread_local.conn = conn
+        return conn
 
     def close(self):
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        conn = getattr(self._thread_local, 'conn', None)
+        if conn:
+            conn.close()
+            self._thread_local.conn = None
 
     def set_stop(self):
         """Signal all phases to stop"""
@@ -355,14 +360,13 @@ class DuplicateFinderWorkflow:
             ipc_chunk_size = 10
             db_commit_batch_size = 100
 
-        # Step 1: Remove missing files from DB
-        # If scope_dir_paths is provided, the candidate set is RESTRICTED to DB
-        # rows whose dir_path matches that scope (exact or subdir). Critical for
-        # /compare-folders partial runs — otherwise rows outside scope get
-        # treated as "missing" and deleted.
-        print(f"[Phase 1] Step 1: Checking for missing files in DB...")
+        # Step 1: Load DB records and build lookup structures.
+        # Stale-record cleanup is DEFERRED to after all hash computation (Step 4).
+        # This keeps old-path records alive long enough for the fuzzy matcher in
+        # Step 2 to reuse their phash when a parent directory was renamed.
+        print(f"[Phase 1] Step 1: Loading DB records for lookup...")
         if progress_callback:
-            progress_callback(0, len(file_paths), "Checking missing files...")
+            progress_callback(0, len(file_paths), "Loading DB records...")
 
         if scope_dir_paths:
             clauses = []
@@ -373,39 +377,44 @@ class DuplicateFinderWorkflow:
                 params.append(fa)
                 params.append(fa.rstrip(os.sep) + os.sep + '%')
             where = ' OR '.join(clauses)
-            cursor.execute(f"SELECT id, file_path FROM duplicate_finder_image_hashes WHERE {where}", params)
+            cursor.execute(
+                f"SELECT filename, filesize, file_path, phash, resolution, mtime, status "
+                f"FROM duplicate_finder_image_hashes WHERE {where}",
+                params
+            )
             print(f"[Phase 1] Step 1 SCOPED: limiting to {len(scope_dir_paths)} dir_path roots")
         else:
-            cursor.execute("SELECT id, file_path FROM duplicate_finder_image_hashes")
-        db_files = cursor.fetchall()
-        print(f"[Phase 1] Found {len(db_files)} files in DB (scope={'limited' if scope_dir_paths else 'global'})")
+            cursor.execute(
+                "SELECT filename, filesize, file_path, phash, resolution, mtime, status "
+                "FROM duplicate_finder_image_hashes"
+            )
+        db_rows_all = cursor.fetchall()
+        print(f"[Phase 1] Step 1: Loaded {len(db_rows_all)} DB records "
+              f"(scope={'limited' if scope_dir_paths else 'global'})")
 
-        db_file_set = {file_path for _, file_path in db_files}
-        fs_file_set = set(file_paths)
+        # Exact-path lookup: file_path → status
+        db_status = {row[2]: row[6] for row in db_rows_all}
 
-        missing_files = db_file_set - fs_file_set
-        removed_count = 0
-        DELETE_COMMIT_THRESHOLD = 100
+        # Fuzzy lookup: (filename, filesize) → list of candidate rows that have a phash.
+        # Used in Step 2 to detect files relocated by a directory rename.
+        fuzzy_candidates: dict = {}
+        for row_fn, row_fsz, row_fp, row_phash, row_res, row_mtime, _row_status in db_rows_all:
+            if not row_phash:
+                continue
+            key = (row_fn, row_fsz)
+            if key not in fuzzy_candidates:
+                fuzzy_candidates[key] = []
+            fuzzy_candidates[key].append({
+                'file_path': row_fp,
+                'phash': row_phash,
+                'resolution': row_res,
+                'mtime': row_mtime,
+            })
 
-        for db_id, file_path in db_files:
-            if file_path in missing_files:
-                cursor.execute("DELETE FROM duplicate_finder_image_hashes WHERE id = ?", (db_id,))
-                removed_count += 1
-
-                # Commit every 100 deletes
-                if removed_count % DELETE_COMMIT_THRESHOLD == 0:
-                    conn.commit()
-                    print(f"[Phase 1] Step 1: Committed {DELETE_COMMIT_THRESHOLD} deletes (total removed: {removed_count})")
-
-        conn.commit()  # Final commit for remaining deletes
-        print(f"[Phase 1] Step 1 DONE: Removed {removed_count} missing files from DB")
-
-        # Step 2: Check existing files
+        # Step 2: Check which files need computation (with fuzzy match for moved files)
         print(f"[Phase 1] Step 2: Checking which files need computation...")
-        cursor.execute("SELECT file_path, status FROM duplicate_finder_image_hashes")
-        db_status = {row[0]: row[1] for row in cursor.fetchall()}
-
         files_to_compute = []
+        fuzzy_inserts: list = []  # (filename, filesize, file_path, phash, resolution, dir_path, mtime)
         skipped_count = 0
         checked_count = 0
         total_files = len(file_paths)
@@ -415,9 +424,8 @@ class DuplicateFinderWorkflow:
             if self._stop_event.is_set():
                 print("[Phase 1] ⏸️ Stop signal received during scan")
                 scan_stopped = True
-                break  # Exit scan loop, return partial results
+                break
 
-            # Apply scan delay from settings (for CPU load reduction or testing)
             if _SCAN_DELAY > 0:
                 time.sleep(_SCAN_DELAY)
 
@@ -425,12 +433,36 @@ class DuplicateFinderWorkflow:
             if status == 'computed':
                 skipped_count += 1
             elif status is None:
-                # New file, needs phash computation
-                files_to_compute.append(file_path)
-            # status='pending' will also be computed
+                # File not in DB by exact path — try fuzzy match before scheduling computation.
+                filename = os.path.basename(file_path)
+                try:
+                    st = os.stat(file_path)
+                    filesize = st.st_size
+                    current_mtime = st.st_mtime
+                except OSError:
+                    files_to_compute.append(file_path)
+                    checked_count += 1
+                    continue
+
+                candidates = fuzzy_candidates.get((filename, filesize), [])
+                if (len(candidates) == 1
+                        and candidates[0]['mtime'] is not None
+                        and abs(candidates[0]['mtime'] - current_mtime) < 0.01):
+                    # Unique match on filename + filesize + mtime: almost certainly the
+                    # same file relocated by a directory rename. Reuse the cached phash.
+                    cached = candidates[0]
+                    fuzzy_inserts.append((
+                        filename, filesize, file_path,
+                        cached['phash'], cached['resolution'],
+                        os.path.dirname(file_path), current_mtime,
+                    ))
+                    skipped_count += 1
+                else:
+                    # Multiple candidates (ambiguous) or mtime differs → recompute.
+                    files_to_compute.append(file_path)
+            # status='pending': phash already in DB, awaiting Phase 2 — skip silently.
 
             checked_count += 1
-            # Send progress updates during file checking
             if progress_callback and (checked_count % progress_interval == 0 or checked_count == total_files):
                 progress_callback(
                     checked_count,
@@ -438,10 +470,25 @@ class DuplicateFinderWorkflow:
                     f"Checking files... ({checked_count}/{total_files})"
                 )
 
+        # Batch-insert records for fuzzy-matched files (reused phash, new path).
+        # INSERT OR IGNORE: safe if the new path was already in the DB from a prior run.
+        fuzzy_matched_count = 0
+        if fuzzy_inserts:
+            cursor.executemany('''
+                INSERT OR IGNORE INTO duplicate_finder_image_hashes
+                (filename, filesize, file_path, phash, resolution, dir_path, mtime, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+            ''', fuzzy_inserts)
+            conn.commit()
+            fuzzy_matched_count = len(fuzzy_inserts)
+            print(f"[Phase 1] Step 2: Fuzzy-matched {fuzzy_matched_count} moved files (phash reused)")
+
         if scan_stopped:
-            print(f"[Phase 1] ⏸️ Scan stopped: checked {checked_count}/{total_files} files, found {len(files_to_compute)} to compute")
+            print(f"[Phase 1] ⏸️ Scan stopped: checked {checked_count}/{total_files} files, "
+                  f"found {len(files_to_compute)} to compute, {fuzzy_matched_count} fuzzy-matched")
         else:
-            print(f"[Phase 1] Step 2 DONE: Skipped {skipped_count} computed files, need to compute {len(files_to_compute)} files")
+            print(f"[Phase 1] Step 2 DONE: {skipped_count} skipped "
+                  f"({fuzzy_matched_count} fuzzy-matched), {len(files_to_compute)} to compute")
 
         # Step 3: Compute phash for new/pending files
         added_count = 0
@@ -560,28 +607,74 @@ class DuplicateFinderWorkflow:
         # Combine scan_stopped and compute stop_requested
         any_stopped = scan_stopped or stop_requested
 
+        # Step 4: Deferred cleanup — remove stale DB records now that all new-path
+        # records are safely inserted. Doing this AFTER computation (not before) is
+        # what lets the fuzzy matcher in Step 2 find and reuse old-path phashes.
+        print(f"[Phase 1] Step 4: Cleaning up stale DB records...")
+        fs_file_set = set(file_paths)
+
+        if scope_dir_paths:
+            clauses = []
+            cleanup_params: list = []
+            for f in scope_dir_paths:
+                fa = os.path.abspath(f)
+                clauses.append("(dir_path = ? OR dir_path LIKE ?)")
+                cleanup_params.append(fa)
+                cleanup_params.append(fa.rstrip(os.sep) + os.sep + '%')
+            where_cleanup = ' OR '.join(clauses)
+            cursor.execute(
+                f"SELECT id, file_path FROM duplicate_finder_image_hashes WHERE {where_cleanup}",
+                cleanup_params
+            )
+        else:
+            cursor.execute("SELECT id, file_path FROM duplicate_finder_image_hashes")
+
+        stale_rows = cursor.fetchall()
+        removed_count = 0
+        DELETE_COMMIT_THRESHOLD = 100
+
+        for db_id, db_fp in stale_rows:
+            if db_fp not in fs_file_set:
+                cursor.execute("DELETE FROM duplicate_finder_image_hashes WHERE id = ?", (db_id,))
+                removed_count += 1
+                if removed_count % DELETE_COMMIT_THRESHOLD == 0:
+                    conn.commit()
+
+        conn.commit()
+        print(f"[Phase 1] Step 4 DONE: Removed {removed_count} stale records from DB")
+
         elapsed = time.time() - start_time
 
         if any_stopped:
-            print(f"[Phase 1] ⏸️ Stopped by user in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
+            print(f"[Phase 1] ⏸️ Stopped by user in {elapsed:.1f}s: +{added_count}, -{removed_count}, "
+                  f"~{fuzzy_matched_count} fuzzy-reused, skipped {skipped_count}")
         else:
-            print(f"[Phase 1] ✅ Completed in {elapsed:.1f}s: +{added_count}, -{removed_count}, skipped {skipped_count}")
+            print(f"[Phase 1] ✅ Completed in {elapsed:.1f}s: +{added_count}, -{removed_count}, "
+                  f"~{fuzzy_matched_count} fuzzy-reused, skipped {skipped_count}")
 
         # Send final progress
         if progress_callback:
             total = len(file_paths)
             if any_stopped:
-                progress_callback(completed if 'completed' in locals() else checked_count, len(files_to_compute) if files_to_compute else total, f"Stopped: +{added_count}, -{removed_count}, skipped {skipped_count}")
+                progress_callback(
+                    completed if 'completed' in locals() else checked_count,
+                    len(files_to_compute) if files_to_compute else total,
+                    f"Stopped: +{added_count}, -{removed_count}, skipped {skipped_count}"
+                )
             else:
-                progress_callback(total, total, f"Complete: +{added_count}, -{removed_count}, skipped {skipped_count}")
+                progress_callback(
+                    total, total,
+                    f"Complete: +{added_count}, -{removed_count}, ~{fuzzy_matched_count} fuzzy-reused, skipped {skipped_count}"
+                )
 
         return {
             'added': added_count,
             'removed': removed_count,
             'skipped': skipped_count,
+            'fuzzy_matched': fuzzy_matched_count,
             'errors': error_files,
             'elapsed': elapsed,
-            'stopped': any_stopped  # 合并两个停止标志
+            'stopped': any_stopped
         }
 
     def _insert_images_batch(self, batch: List[Dict]):
@@ -1112,7 +1205,7 @@ class DuplicateFinderWorkflow:
 
         print("=" * 80)
         print(f"[Phase 2.5] START")
-        print(f"[Phase 2.5]   DB path             : {self.db_path}")
+        print(f"[Phase 2.5]   DB path             : {get_db_path()}")
         print(f"[Phase 2.5]   threshold_percent   : {threshold_percent}% (max_distance ≤ {max_distance})")
         print(f"[Phase 2.5]   same_folder_filter  : {same_folder_filter}")
         print(f"[Phase 2.5]   stop_event.is_set() : {self._stop_event.is_set()}")
@@ -1209,7 +1302,7 @@ class DuplicateFinderWorkflow:
                 whitelisted_dropped = 0
                 print(f"[Phase 2.5]   Skipping per-group duplicate_finder_whitelist check (no duplicate_finder_whitelist_groups rows)")
             else:
-                cache = PHashCache(str(self.db_path))
+                cache = PHashCache()
                 filtered_groups = [g for g in groups if not cache.is_group_whitelisted(g)]
                 whitelisted_dropped = len(groups) - len(filtered_groups)
             elapsed_step = time.time() - step_start
