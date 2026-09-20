@@ -648,7 +648,7 @@ class DeleteResource(Resource):
             for i in range(0, len(abs_paths), BATCH):
                 chunk = abs_paths[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
-                cur0.execute(f"SELECT id FROM image_hashes WHERE file_path IN ({ph})", chunk)
+                cur0.execute(f"SELECT id FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})", chunk)
                 ids_to_delete.extend(r[0] for r in cur0.fetchall())
             affected_capture = workflow.stats_collect_affected_before_mutation(ids_to_delete)
             print(f"[Delete] Pre-captured stats repair state for {len(ids_to_delete)} image_ids")
@@ -717,25 +717,25 @@ class DeleteResource(Resource):
                 print(f"[Delete]   Relative: {relative_path}")
                 print(f"[Delete]   Destination: {dest_path}")
 
-                # Delete from database (image_hashes and phash_similarities)
+                # Delete from database (duplicate_finder_image_hashes and duplicate_finder_phash_similarities)
                 try:
                     workflow = get_workflow()
                     conn = workflow._get_connection()
                     cursor = conn.cursor()
 
                     # Find the image ID
-                    cursor.execute('SELECT id FROM image_hashes WHERE file_path = ?', (abs_file_path,))
+                    cursor.execute('SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?', (abs_file_path,))
                     row = cursor.fetchone()
 
                     if row:
                         image_id = row[0]
-                        # Delete from phash_similarities (where this image is involved)
-                        cursor.execute('DELETE FROM phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                        # Delete from duplicate_finder_phash_similarities (where this image is involved)
+                        cursor.execute('DELETE FROM duplicate_finder_phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
                                      (image_id, image_id))
                         similarity_count = cursor.rowcount
 
-                        # Delete from image_hashes
-                        cursor.execute('DELETE FROM image_hashes WHERE id = ?', (image_id,))
+                        # Delete from duplicate_finder_image_hashes
+                        cursor.execute('DELETE FROM duplicate_finder_image_hashes WHERE id = ?', (image_id,))
                         conn.commit()
 
                         print(f"[Delete]   DB cleaned: removed image record (ID={image_id}) and {similarity_count} similarity records")
@@ -754,7 +754,7 @@ class DeleteResource(Resource):
 
         print(f"[Delete] Complete: {success_count} succeeded, {failed_count} failed")
 
-        # === Step 5: repair group_stats now that image_hashes rows are gone ===
+        # === Step 5: repair group_stats now that duplicate_finder_image_hashes rows are gone ===
         repair_summary = None
         if affected_capture:
             try:
@@ -848,7 +848,7 @@ class ReplaceResource(Resource):
                 chunk = group_abs[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT id, file_path FROM image_hashes WHERE file_path IN ({ph})",
+                    f"SELECT id, file_path FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})",
                     chunk,
                 )
                 for img_id, fp in cur.fetchall():
@@ -966,19 +966,19 @@ class ReplaceResource(Resource):
                     renamed_to = None
 
             # ---- Step 3: DB updates ----
-            # Delete rows for to_delete images (CASCADE handles phash_similarities
+            # Delete rows for to_delete images (CASCADE handles duplicate_finder_phash_similarities
             # and duplicate_groups).
             if to_delete_ids:
                 for i in range(0, len(to_delete_ids), BATCH):
                     chunk = to_delete_ids[i:i + BATCH]
                     ph = ','.join('?' * len(chunk))
-                    cur.execute(f"DELETE FROM image_hashes WHERE id IN ({ph})", chunk)
+                    cur.execute(f"DELETE FROM duplicate_finder_image_hashes WHERE id IN ({ph})", chunk)
             # Update selected image's row if it was moved.
             if do_rename and new_selected_path and selected_id is not None:
                 new_filename = os.path.basename(new_selected_path)
                 new_dir = os.path.dirname(new_selected_path)
                 cur.execute(
-                    "UPDATE image_hashes "
+                    "UPDATE duplicate_finder_image_hashes "
                     "SET file_path = ?, filename = ?, dir_path = ? "
                     "WHERE id = ?",
                     (new_selected_path, new_filename, new_dir, selected_id),
@@ -1073,7 +1073,7 @@ class ReplaceBatchResource(Resource):
                 chunk = all_paths_list[i:i + BATCH]
                 ph = ','.join('?' * len(chunk))
                 cur.execute(
-                    f"SELECT id, file_path FROM image_hashes WHERE file_path IN ({ph})",
+                    f"SELECT id, file_path FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})",
                     chunk,
                 )
                 for img_id, fp in cur.fetchall():
@@ -1196,12 +1196,12 @@ class ReplaceBatchResource(Resource):
                 to_delete_ids = [id_by_path[p] for p in to_delete_paths if p in id_by_path]
                 if to_delete_ids:
                     ph = ','.join('?' * len(to_delete_ids))
-                    cur.execute(f"DELETE FROM image_hashes WHERE id IN ({ph})", to_delete_ids)
+                    cur.execute(f"DELETE FROM duplicate_finder_image_hashes WHERE id IN ({ph})", to_delete_ids)
                 if do_rename and new_selected_path and selected_id is not None:
                     new_filename = os.path.basename(new_selected_path)
                     new_dir = os.path.dirname(new_selected_path)
                     cur.execute(
-                        "UPDATE image_hashes "
+                        "UPDATE duplicate_finder_image_hashes "
                         "SET file_path = ?, filename = ?, dir_path = ? "
                         "WHERE id = ?",
                         (new_selected_path, new_filename, new_dir, selected_id),
@@ -1432,8 +1432,8 @@ class WhitelistPreviewByPathResource(Resource):
             # (exact match OR subdirectory)
             cur.execute('''
                 SELECT DISTINCT dg.group_id
-                FROM duplicate_groups dg
-                JOIN image_hashes i ON dg.image_id = i.id
+                FROM duplicate_finder_duplicate_groups dg
+                JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
                 WHERE i.dir_path = ? OR i.dir_path LIKE ?
             ''', (deep_path_abs, deep_path_abs.rstrip(os.sep) + os.sep + '%'))
             matched_group_ids = [r[0] for r in cur.fetchall()]
@@ -1456,8 +1456,8 @@ class WhitelistPreviewByPathResource(Resource):
                 cur.execute(f'''
                     SELECT dg.group_id, i.id, i.filename, i.filesize, i.file_path,
                            i.phash, i.resolution
-                    FROM duplicate_groups dg
-                    JOIN image_hashes i ON dg.image_id = i.id
+                    FROM duplicate_finder_duplicate_groups dg
+                    JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
                     WHERE dg.group_id IN ({ph})
                 ''', chunk)
                 for gid, img_id, filename, filesize, file_path, phash, resolution in cur.fetchall():
@@ -1915,10 +1915,10 @@ class Phase1StopResource(Resource):
 class Phase2BuildResource(Resource):
     def post(self):
         """
-        Phase 2: Build phash_similarities table
+        Phase 2: Build duplicate_finder_phash_similarities table
         - Get all status='pending' images
         - Compute distances (brute force + multiprocessing)
-        - Save to phash_similarities if distance ≤ threshold
+        - Save to duplicate_finder_phash_similarities if distance ≤ threshold
         - Mark as status='computed'
 
         Request body:
@@ -2080,8 +2080,8 @@ class CompareFoldersAllResource(Resource):
             # Step 1: pull every (group_id, dir_path) pair
             cur.execute('''
                 SELECT dg.group_id, i.dir_path
-                FROM duplicate_groups dg
-                JOIN image_hashes i ON dg.image_id = i.id
+                FROM duplicate_finder_duplicate_groups dg
+                JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id
                 WHERE i.dir_path IS NOT NULL
             ''')
             rows = cur.fetchall()
@@ -2240,8 +2240,8 @@ class CompareFoldersResource(Resource):
           a phash value).
         - Pairwise compares EVERY image within the scope (recursive over
           subdirectories), regardless of new/old.
-        - INSERT OR IGNORE the matching pairs into phash_similarities. No
-          rows in image_hashes are ever deleted by this endpoint; data
+        - INSERT OR IGNORE the matching pairs into duplicate_finder_phash_similarities. No
+          rows in duplicate_finder_image_hashes are ever deleted by this endpoint; data
           outside the scope is never touched.
         - Then triggers Phase 2.5 to rematerialize groups for the configured
           threshold so Phase 3 immediately reflects the new edges.
@@ -2490,10 +2490,10 @@ class BatchDeleteByPathResource(Resource):
             # e.g., /a/b/c should NOT match /a/b/c-1 or /a/b/c_backup
             cursor.execute('''
                 SELECT DISTINCT i.file_path
-                FROM image_hashes i
+                FROM duplicate_finder_image_hashes i
                 WHERE (i.file_path = ? OR i.file_path LIKE ?)
                 AND EXISTS (
-                    SELECT 1 FROM phash_similarities s
+                    SELECT 1 FROM duplicate_finder_phash_similarities s
                     WHERE s.image_id_a = i.id OR s.image_id_b = i.id
                 )
             ''', (deep_path, f"{deep_path}{os.sep}%"))
@@ -2526,7 +2526,7 @@ class BatchDeleteByPathResource(Resource):
                     for i in range(0, len(matched_files), BATCH):
                         chunk = [os.path.abspath(f) for f in matched_files[i:i + BATCH]]
                         ph = ','.join('?' * len(chunk))
-                        cursor.execute(f"SELECT id FROM image_hashes WHERE file_path IN ({ph})", chunk)
+                        cursor.execute(f"SELECT id FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})", chunk)
                         ids_to_delete.extend(r[0] for r in cursor.fetchall())
                     affected_capture = workflow.stats_collect_affected_before_mutation(ids_to_delete)
                     print(f"[Batch Delete] Pre-captured stats repair state for {len(ids_to_delete)} image_ids")
@@ -2584,21 +2584,21 @@ class BatchDeleteByPathResource(Resource):
                         print(f"[Batch Delete]   Relative: {relative_path}")
                         print(f"[Batch Delete]   Destination: {target_file}")
 
-                        # Delete from database (image_hashes and phash_similarities)
+                        # Delete from database (duplicate_finder_image_hashes and duplicate_finder_phash_similarities)
                         try:
                             # Find the image ID
-                            cursor.execute('SELECT id FROM image_hashes WHERE file_path = ?', (abs_file_path,))
+                            cursor.execute('SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?', (abs_file_path,))
                             row = cursor.fetchone()
 
                             if row:
                                 image_id = row[0]
-                                # Delete from phash_similarities (where this image is involved)
-                                cursor.execute('DELETE FROM phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                                # Delete from duplicate_finder_phash_similarities (where this image is involved)
+                                cursor.execute('DELETE FROM duplicate_finder_phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
                                              (image_id, image_id))
                                 similarity_count = cursor.rowcount
 
-                                # Delete from image_hashes
-                                cursor.execute('DELETE FROM image_hashes WHERE id = ?', (image_id,))
+                                # Delete from duplicate_finder_image_hashes
+                                cursor.execute('DELETE FROM duplicate_finder_image_hashes WHERE id = ?', (image_id,))
                                 conn.commit()
 
                                 print(f"[Batch Delete]   DB cleaned: removed image record (ID={image_id}) and {similarity_count} similarity records")
@@ -2881,9 +2881,9 @@ class CypressClearDbResource(Resource):
             cursor = conn.cursor()
 
             # Clear all tables
-            cursor.execute("DELETE FROM phash_similarities")
+            cursor.execute("DELETE FROM duplicate_finder_phash_similarities")
             cursor.execute("DELETE FROM whitelist")
-            cursor.execute("DELETE FROM image_hashes")
+            cursor.execute("DELETE FROM duplicate_finder_image_hashes")
             conn.commit()
 
             print(f"[Cypress] Cleared all data from duplicate finder database: {cache.db_path}")
