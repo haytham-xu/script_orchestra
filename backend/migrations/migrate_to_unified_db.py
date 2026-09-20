@@ -256,10 +256,14 @@ def phase_migrate(dry_run: bool) -> list[dict]:
             continue
 
         create_sql = schema_row[0]
-        # Replace table name in CREATE statement (handles both with and without IF NOT EXISTS)
+        # Replace table name in CREATE statement (unquoted, double-quoted, with/without IF NOT EXISTS)
         new_create = create_sql
-        for variant in (f"CREATE TABLE IF NOT EXISTS {src_table}",
-                         f"CREATE TABLE {src_table}"):
+        for variant in (
+            f'CREATE TABLE IF NOT EXISTS "{src_table}"',
+            f'CREATE TABLE "{src_table}"',
+            f"CREATE TABLE IF NOT EXISTS {src_table}",
+            f"CREATE TABLE {src_table}",
+        ):
             if variant in new_create:
                 new_create = new_create.replace(variant, f"CREATE TABLE IF NOT EXISTS {dst_table}", 1)
                 break

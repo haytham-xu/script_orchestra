@@ -40,7 +40,7 @@ class FolderResource(Resource):
         root_path = settings.get("rootPath", "")
         if not root_path or not os.path.isdir(root_path):
             return jsonify({"folderList": []})
-        folderList = sorted([f.name for f in Path(root_path).iterdir() if f.is_dir()])
+        folderList = flex_natsort([f.name for f in Path(root_path).iterdir() if f.is_dir()])
         folderObjectsList = [
             {"folderName": folderName, "status": "pending"}
             for folderName in folderList

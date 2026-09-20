@@ -35,7 +35,8 @@ def _on(key: str) -> bool:
 
 # ── Conditional imports ───────────────────────────────────────────────────────
 
-if _on('manga-classifier'):
+# manga-classifier is a sub-tool of manga-viewer; load it when either is enabled.
+if _on('manga-classifier') or _on('manga-viewer'):
     import manga_classifier.config_controller
     import manga_classifier.folder_controller
     import manga_classifier.file_controller
@@ -46,14 +47,14 @@ if _on('photo-classifier'):
 else:
     photo_classifier_blueprint = None
 
-if _on('duplicate-finder'):
+if _on('duplicate-finder') or _on('manga-viewer'):
     from duplicate_finder.blueprint import blueprint as duplicate_finder_blueprint
     from duplicate_finder import websocket_service as df_websocket
 else:
     duplicate_finder_blueprint = None
     df_websocket = None
 
-if _on('video-duplicate-finder'):
+if _on('video-duplicate-finder') or _on('manga-viewer'):
     from video_duplicate_finder.blueprint import blueprint as video_duplicate_finder_blueprint
     from video_duplicate_finder import websocket_service as v_df_websocket
 else:
@@ -139,7 +140,7 @@ else:
 # Dashboard layout is always enabled (it's infrastructure, not a tool)
 from dashboard.blueprint import blueprint as dashboard_blueprint
 
-if _on('clean-keyword'):
+if _on('clean-keyword') or _on('manga-viewer'):
     from clean_keyword.blueprint import blueprint as clean_keyword_blueprint
     from clean_keyword import repository as clean_keyword_repo
 else:
@@ -151,17 +152,17 @@ if _on('loans-calc'):
 else:
     loans_calc_blueprint = None
 
-if _on('compress-image'):
+if _on('compress-image') or _on('manga-viewer'):
     from compress_image.blueprint import blueprint as compress_image_blueprint
 else:
     compress_image_blueprint = None
 
-if _on('dedup-folder'):
+if _on('dedup-folder') or _on('manga-viewer'):
     from dedup_folder.blueprint import blueprint as dedup_folder_blueprint
 else:
     dedup_folder_blueprint = None
 
-if _on('file-pipeline'):
+if _on('file-pipeline') or _on('manga-viewer'):
     from file_pipeline.blueprint import blueprint as file_pipeline_blueprint
     from file_pipeline import repository as file_pipeline_repo
 else:
@@ -218,7 +219,8 @@ else:
 if _on('pdf-converter'):
     import pdf_converter.controller
 
-if _on('unzip'):
+# unzip is a sub-tool of manga-viewer; load it when either is enabled.
+if _on('unzip') or _on('manga-viewer'):
     import unzip.controller
 
 if _on('file-git'):
@@ -300,8 +302,15 @@ def create_app() -> Flask:
     # ── Enabled tools endpoints ───────────────────────────────
     @app.route('/enabled-tools', methods=['GET'])
     def get_enabled_tools():
-        # Return what is actually loaded (registered at startup), not the file.
-        return jsonify({"enabled": list(_ENABLED)})
+        # manga-classifier is a sub-tool of manga-viewer: expose it as enabled
+        # whenever manga-viewer is loaded, so the frontend nav guard allows navigation.
+        effective = set(_ENABLED)
+        if 'manga-viewer' in effective:
+            # Sub-tools of manga-viewer: auto-enabled when manga-viewer is on.
+            effective.update(['manga-classifier', 'unzip', 'duplicate-finder',
+                              'video-duplicate-finder', 'clean-keyword',
+                              'compress-image', 'dedup-folder', 'file-pipeline'])
+        return jsonify({"enabled": list(effective)})
 
     @app.route('/enabled-tools', methods=['PUT'])
     def put_enabled_tools():

@@ -7,6 +7,7 @@ import rarfile
 import py7zr
 import shutil
 from typing import List, Dict
+from basic.flex_sort import flex_natsort
 
 
 class UnzipService:
@@ -259,7 +260,7 @@ class UnzipService:
 
         # Case 2: Input is a folder (scan only current level, no recursion)
         elif os.path.isdir(input_path):
-            for filename in os.listdir(input_path):
+            for filename in flex_natsort(os.listdir(input_path)):
                 file_path = os.path.join(input_path, filename)
                 if os.path.isfile(file_path) and self.is_archive_file(file_path):
                     archive_files.append(file_path)

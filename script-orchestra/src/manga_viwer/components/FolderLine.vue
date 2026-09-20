@@ -108,8 +108,15 @@
     <el-dialog v-model="dialogVisible" :show-close="false" :close-on-click-modal="true"
       :close-on-press-escape="false" width="800px" :title="folder.name" destroy-on-close
       class="manga-center-dialog" top="0vh">
-      <div class="dialog-body">
-        <template v-for="(p, i) in folder.files" :key="p + i">
+      <div ref="dialogBodyRef" class="dialog-body">
+        <!-- Top pagination -->
+        <div v-if="showPagination" class="pagination-bar">
+          <el-button size="small" :disabled="currentViewPage === 1" @click="goToPage(currentViewPage - 1)">Prev</el-button>
+          <span class="page-info">{{ currentViewPage }} / {{ totalViewPages }}</span>
+          <el-button size="small" :disabled="currentViewPage === totalViewPages" @click="goToPage(currentViewPage + 1)">Next</el-button>
+        </div>
+
+        <template v-for="(p, i) in pagedFiles" :key="p + i">
           <div v-if="isImage(p)" class="media-item"><img :src="p" :alt="p" /></div>
           <div v-else-if="isPdf(p)" v-for="(pageUrl, pageIdx) in pdfPages[p]"
             :key="p + '-page-' + pageIdx" class="media-item">
@@ -120,6 +127,14 @@
           </div>
           <div v-else class="media-item"><div class="unknown">{{ p }}</div></div>
         </template>
+
+        <!-- Bottom pagination + back to top -->
+        <div v-if="showPagination" class="pagination-bar pagination-bar-bottom">
+          <el-button size="small" :disabled="currentViewPage === 1" @click="goToPage(currentViewPage - 1)">Prev</el-button>
+          <span class="page-info">{{ currentViewPage }} / {{ totalViewPages }}</span>
+          <el-button size="small" :disabled="currentViewPage === totalViewPages" @click="goToPage(currentViewPage + 1)">Next</el-button>
+          <el-button size="small" type="info" plain @click="scrollToTop">Back to Top</el-button>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -332,6 +347,34 @@ watch(previewList, async (list) => {
 // ── Modal (self-contained) ─────────────────────────────────────────────────
 
 const dialogVisible = ref(false)
+const dialogBodyRef = ref<HTMLElement | null>(null)
+
+const PAGE_SIZE = 300
+const currentViewPage = ref(1)
+
+const totalViewPages = computed(() => Math.ceil((props.folder.files || []).length / PAGE_SIZE))
+const showPagination = computed(() => (props.folder.files || []).length > PAGE_SIZE)
+const pagedFiles = computed<string[]>(() => {
+  const files = props.folder.files || []
+  if (!showPagination.value) return files
+  const start = (currentViewPage.value - 1) * PAGE_SIZE
+  return files.slice(start, start + PAGE_SIZE)
+})
+
+function scrollToTop() {
+  const container = (dialogBodyRef.value?.closest('.el-overlay-dialog') ?? dialogBodyRef.value) as HTMLElement | null
+  container?.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function goToPage(page: number) {
+  currentViewPage.value = page
+  nextTick(() => {
+    scrollToTop()
+    for (const p of pagedFiles.value) {
+      if (isPdf(p)) renderPdfAllPages(p)
+    }
+  })
+}
 
 async function openModal() {
   // Ensure files are loaded
@@ -344,10 +387,11 @@ async function openModal() {
   // Bump read count
   props.folder.read_count = (props.folder.read_count ?? 0) + 1
   incReadCount(props.folder.id).catch(() => {})
+  currentViewPage.value = 1
   dialogVisible.value = true
-  // Render PDFs for reader
+  // Render PDFs for first page
   nextTick(async () => {
-    for (const p of (props.folder.files || [])) {
+    for (const p of pagedFiles.value) {
       if (isPdf(p)) await renderPdfAllPages(p)
     }
   })
@@ -469,6 +513,17 @@ async function openModal() {
 .dialog-body::-webkit-scrollbar-track { background: #f1f3f5; border-radius: 4px; }
 .dialog-body::-webkit-scrollbar-thumb { background: #bfc6cc; border-radius: 4px; }
 .dialog-body::-webkit-scrollbar-thumb:hover { background: #a5adb4; }
+
+.pagination-bar {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 10px 0; background: #f7f9fb; border-bottom: 1px solid #e3e7ec;
+  position: sticky; top: 0; z-index: 10;
+}
+.pagination-bar-bottom {
+  border-bottom: none; border-top: 1px solid #e3e7ec;
+  position: sticky; bottom: 0;
+}
+.page-info { font-size: 13px; color: #606266; font-weight: 500; min-width: 60px; text-align: center; }
 .media-item {
   width: 100%; max-width: 100%; display: flex; justify-content: center;
   align-items: center; overflow: visible; position: relative; min-height: 120px;
