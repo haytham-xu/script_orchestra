@@ -35,6 +35,19 @@ def _as_bool(value, default=False):
     return default
 
 
+_VALID_GROUP_SCOPES = ("live", "archive", "shelf")
+
+
+def _normalize_group_scope(value, default="archive"):
+    """Return a valid group scope, or None if an explicit invalid value was given."""
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    return text if text in _VALID_GROUP_SCOPES else None
+
+
 @ns.route("/tabs")
 class TabsResource(Resource):
     # DEPRECATED: used by the old Download Queue UI (BrowserAgentView). No longer called.
@@ -187,56 +200,24 @@ class TabArchiveSnapshotResource(Resource):
         query = (request.args.get("q") or "").strip()
         scope = (request.args.get("scope") or "all").strip().lower()
         include_live_urls = _as_bool(request.args.get("include_live_urls"), default=False)
-        sort_by = (request.args.get("sort_by") or "heat").strip().lower()
-        sort_order = (request.args.get("sort_order") or "desc").strip().lower()
-        semantic = _as_bool(request.args.get("semantic"), default=False)
-        semantic_top_k = request.args.get("semantic_top_k")
         logger.debug(
-            "tab_archive.api.snapshot scope=%s query_len=%s sort_by=%s sort_order=%s semantic=%s",
+            "tab_archive.api.snapshot scope=%s query_len=%s",
             scope,
             len(query),
-            sort_by,
-            sort_order,
-            semantic,
         )
 
         if scope not in ("all", "live", "archive"):
             return {"error": "scope must be one of: all, live, archive"}, 400
-        if sort_by not in ("relevance", "heat", "last_opened", "last_archived", "open_count", "title"):
-            return {
-                "error": "sort_by must be one of: relevance, heat, last_opened, last_archived, open_count, title"
-            }, 400
-        if sort_order not in ("asc", "desc"):
-            return {"error": "sort_order must be one of: asc, desc"}, 400
 
         try:
-            semantic_top_k_value = int(semantic_top_k) if semantic_top_k not in (None, "") else None
             result = get_tab_archive_service().get_snapshot(
                 query=query,
                 scope=scope,
                 include_live_urls=include_live_urls,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                semantic=semantic,
-                semantic_top_k=semantic_top_k_value,
             )
             return result, 200
-        except ValueError:
-            return {"error": "semantic_top_k must be an integer"}, 400
         except Exception as e:
             logger.exception("tab_archive.api.snapshot_failed")
-            return {"error": str(e)}, 500
-
-
-@ns.route("/tab-archive/archive-safe-preview")
-class TabArchiveSafePreviewResource(Resource):
-    def post(self):
-        data = request.json or {}
-        include_pinned = _as_bool(data.get("include_pinned"), default=False)
-        try:
-            result = get_tab_archive_service().preview_safe_archive(include_pinned=include_pinned)
-            return result, 200
-        except Exception as e:
             return {"error": str(e)}, 500
 
 
@@ -250,18 +231,6 @@ class TabArchiveSelectedResource(Resource):
 
         try:
             result = get_tab_archive_service().archive_selected(tab_ids)
-            return result, 200
-        except Exception as e:
-            return {"error": str(e)}, 500
-
-
-@ns.route("/tab-archive/archive-safe-run")
-class TabArchiveSafeRunResource(Resource):
-    def post(self):
-        data = request.json or {}
-        include_pinned = _as_bool(data.get("include_pinned"), default=False)
-        try:
-            result = get_tab_archive_service().archive_safe_all(include_pinned=include_pinned)
             return result, 200
         except Exception as e:
             return {"error": str(e)}, 500
@@ -393,88 +362,375 @@ class TabArchiveLabelResource(Resource):
         return {"deleted": True}, 200
 
 
-@ns.route("/tab-archive/health-check")
-class TabArchiveHealthCheckResource(Resource):
-    """Compatibility synchronous endpoint."""
-    def post(self):
-        data = request.json or {}
-        record_ids = data.get("record_ids")
-        limit = data.get("limit", 200)
-        logger.info(
-            "tab_archive.api.health_check_sync requested=%s limit=%s",
-            len(record_ids) if isinstance(record_ids, list) else 0,
-            limit,
-        )
-
-        if record_ids is not None:
-            if not isinstance(record_ids, list) or not all(isinstance(x, int) for x in record_ids):
-                return {"error": "record_ids must be a list of integers"}, 400
-
-        try:
-            result = get_tab_archive_service().check_health(record_ids=record_ids, limit=int(limit))
-            return result, 200
-        except Exception as e:
-            logger.exception("tab_archive.api.health_check_sync_failed")
-            return {"error": str(e)}, 500
-
-
-@ns.route("/tab-archive/health-check/start")
-class TabArchiveHealthCheckStartResource(Resource):
-    def post(self):
-        data = request.json or {}
-        record_ids = data.get("record_ids")
-        limit = data.get("limit", 200)
-        batch_size = data.get("batch_size", 20)
-        logger.info(
-            "tab_archive.api.health_check_start requested=%s limit=%s batch_size=%s",
-            len(record_ids) if isinstance(record_ids, list) else 0,
-            limit,
-            batch_size,
-        )
-
-        if record_ids is not None:
-            if not isinstance(record_ids, list) or not all(isinstance(x, int) for x in record_ids):
-                return {"error": "record_ids must be a list of integers"}, 400
-
-        try:
-            job = get_tab_archive_service().start_health_check(
-                record_ids=record_ids,
-                limit=int(limit),
-                batch_size=int(batch_size),
-            )
-            return {"job": job}, 202
-        except RuntimeError as e:
-            message = str(e)
-            if message.startswith("health_check_job_already_running:"):
-                running_job_id = message.split(":", 1)[1] if ":" in message else ""
-                return {
-                    "error": "health-check job is already running",
-                    "running_job_id": running_job_id,
-                }, 409
-            return {"error": message}, 500
-        except ValueError:
-            return {"error": "limit and batch_size must be integers"}, 400
-        except Exception as e:
-            logger.exception("tab_archive.api.health_check_start_failed")
-            return {"error": str(e)}, 500
-
-
-@ns.route("/tab-archive/health-check/status")
-class TabArchiveHealthCheckStatusResource(Resource):
+@ns.route("/tab-archive/group-tree")
+class TabArchiveGroupTreeResource(Resource):
     def get(self):
-        job_id = (request.args.get("job_id") or "").strip() or None
-        result = get_tab_archive_service().get_health_check_status(job_id=job_id)
+        scope = _normalize_group_scope(request.args.get("scope"))
+        if scope is None:
+            return {"error": "invalid scope"}, 400
+        svc = get_tab_archive_service()
+        fn = {"live": svc.live_get_group_tree, "archive": svc.archive_get_group_tree, "shelf": svc.shelf_get_group_tree}[scope]
+        return {"tree": fn()}, 200
+
+
+@ns.route("/tab-archive/groups")
+class TabArchiveGroupsResource(Resource):
+    def get(self):
+        scope = _normalize_group_scope(request.args.get("scope"))
+        if scope is None:
+            return {"error": "invalid scope"}, 400
+        parent_id = request.args.get("parent_id")
+        if parent_id is not None:
+            parent_id = int(parent_id)
+        svc = get_tab_archive_service()
+        fn = {"live": svc.live_list_groups, "archive": svc.archive_list_groups, "shelf": svc.shelf_list_groups}[scope]
+        return {"groups": fn(parent_id)}, 200
+
+    def post(self):
+        data = request.json or {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            return {"error": "name is required"}, 400
+        scope = _normalize_group_scope(data.get("scope"))
+        if scope is None:
+            return {"error": "invalid scope"}, 400
+        parent_id = data.get("parent_id")
+        if parent_id is not None:
+            parent_id = int(parent_id)
+        display_order = data.get("display_order")
+        if display_order is not None:
+            display_order = float(display_order)
+        bookmark_id = str(data.get("bookmark_id") or "").strip() or None
+        svc = get_tab_archive_service()
+        try:
+            if scope == "shelf":
+                group = svc.shelf_create_group(name, parent_id, display_order, bookmark_id)
+            elif scope == "live":
+                group = svc.live_create_group(name, parent_id, display_order)
+            else:
+                group = svc.archive_create_group(name, parent_id, display_order)
+            return {"group": group}, 200
+        except ValueError as e:
+            return {"error": str(e)}, 400
+
+
+@ns.route("/tab-archive/groups/<int:group_id>")
+class TabArchiveGroupResource(Resource):
+    def patch(self, group_id: int):
+        data = request.json or {}
+        scope = _normalize_group_scope(data.get("scope"))
+        if scope is None:
+            return {"error": "invalid scope"}, 400
+        name = data.get("name")
+        new_parent_id = data.get("new_parent_id", "UNSET")
+        new_display_order = data.get("new_display_order")
+
+        svc = get_tab_archive_service()
+        rename_fn = {"live": svc.live_rename_group, "archive": svc.archive_rename_group, "shelf": svc.shelf_rename_group}[scope]
+        move_fn = {"live": svc.live_move_group, "archive": svc.archive_move_group, "shelf": svc.shelf_move_group}[scope]
+        group = None
+
+        if name is not None:
+            name = str(name).strip()
+            if not name:
+                return {"error": "name must not be empty"}, 400
+            try:
+                group = rename_fn(group_id, name)
+                if group is None:
+                    return {"error": "group not found"}, 404
+            except ValueError as e:
+                return {"error": str(e)}, 400
+
+        if new_parent_id != "UNSET" and new_display_order is not None:
+            pid = int(new_parent_id) if new_parent_id is not None else None
+            group = move_fn(group_id, pid, float(new_display_order))
+            if group is None:
+                return {"error": "group not found"}, 404
+
+        if group is None:
+            return {"error": "no update fields provided"}, 400
+        return {"group": group}, 200
+
+    def delete(self, group_id: int):
+        scope = _normalize_group_scope(request.args.get("scope") or (request.json or {}).get("scope"))
+        if scope is None:
+            return {"error": "invalid scope"}, 400
+        svc = get_tab_archive_service()
+        delete_fn = {"live": svc.live_delete_group, "archive": svc.archive_delete_group, "shelf": svc.shelf_delete_group}[scope]
+        ok = delete_fn(group_id)
+        if not ok:
+            return {"error": "group not found"}, 404
+        return {"deleted": True}, 200
+
+
+@ns.route("/tab-archive/records/<int:record_id>/group")
+class TabArchiveRecordGroupResource(Resource):
+    def patch(self, record_id: int):
+        data = request.json or {}
+        raw_gid = data.get("group_id")
+        group_id = int(raw_gid) if raw_gid is not None else None
+        result = get_tab_archive_service().set_archive_record_group(record_id, group_id)
+        if result is None:
+            return {"error": "record not found"}, 404
+        return {"record": result}, 200
+
+
+@ns.route("/tab-archive/live-tabs/set-group")
+class TabArchiveLiveTabGroupResource(Resource):
+    def post(self):
+        data = request.json or {}
+        tab_ids = data.get("tab_ids") or []
+        if not isinstance(tab_ids, list):
+            return {"error": "tab_ids must be a list"}, 400
+        raw_gid = data.get("group_id")
+        group_id = int(raw_gid) if raw_gid is not None else None
+        result = get_tab_archive_service().set_live_tabs_group(tab_ids, group_id)
         return result, 200
 
 
-@ns.route("/tab-archive/health-check/cancel")
-class TabArchiveHealthCheckCancelResource(Resource):
+@ns.route("/tab-archive/live-tabs/<int:tab_id>/order")
+class TabArchiveLiveTabOrderResource(Resource):
+    def patch(self, tab_id: int):
+        data = request.json or {}
+        raw_gid = data.get("group_id")
+        group_id = int(raw_gid) if raw_gid is not None else None
+        raw_order = data.get("display_order")
+        if raw_order is None:
+            return {"error": "display_order is required"}, 400
+        try:
+            display_order = float(raw_order)
+        except (TypeError, ValueError):
+            return {"error": "display_order must be a number"}, 400
+        get_tab_archive_service().set_live_tab_group_and_order(tab_id, group_id, display_order)
+        return {"ok": True}, 200
+
+
+@ns.route("/tab-archive/live-tabs/batch-order")
+class TabArchiveLiveTabBatchOrderResource(Resource):
+    def patch(self):
+        data = request.json or {}
+        items = data.get("items")
+        if not isinstance(items, list) or not items:
+            return {"error": "items must be a non-empty list"}, 400
+        validated = []
+        for item in items:
+            tab_id = item.get("tab_id")
+            raw_gid = item.get("group_id")
+            raw_order = item.get("display_order")
+            if not isinstance(tab_id, int) or raw_order is None:
+                return {"error": f"each item needs tab_id (int) and display_order"}, 400
+            try:
+                validated.append({
+                    "tab_id": int(tab_id),
+                    "group_id": int(raw_gid) if raw_gid is not None else None,
+                    "display_order": float(raw_order),
+                })
+            except (TypeError, ValueError):
+                return {"error": "invalid item values"}, 400
+        get_tab_archive_service().batch_set_live_tab_orders(validated)
+        return {"ok": True, "updated": len(validated)}, 200
+
+
+@ns.route("/tab-archive/live-tabs/<int:tab_id>/custom-header")
+class TabArchiveLiveTabCustomHeaderResource(Resource):
+    def patch(self, tab_id: int):
+        data = request.json or {}
+        custom_header = data.get("custom_header")
+        if custom_header is not None and not isinstance(custom_header, str):
+            return {"error": "custom_header must be a string or null"}, 400
+        get_tab_archive_service().set_live_tab_custom_header(tab_id, custom_header or None)
+        return {"ok": True}, 200
+
+
+@ns.route("/tab-archive/live-tabs/group-as-window")
+class TabArchiveGroupAsWindowResource(Resource):
     def post(self):
         data = request.json or {}
-        raw_job_id = data.get("job_id")
-        job_id = str(raw_job_id).strip() if raw_job_id not in (None, "") else None
-        logger.info("tab_archive.api.health_check_cancel job_id=%s", job_id or "<current>")
-        result = get_tab_archive_service().cancel_health_check(job_id=job_id)
+        window_id = data.get("window_id")
+        group_name = str(data.get("group_name") or "").strip()
+        if not isinstance(window_id, int) or not group_name:
+            return {"error": "window_id (int) and group_name are required"}, 400
+        try:
+            result = get_tab_archive_service().group_as_window(window_id, group_name)
+            return result, 200
+        except ValueError as e:
+            return {"error": str(e)}, 400
+
+
+@ns.route("/tab-archive/live-tabs/sort-by-group")
+class TabArchiveSortByGroupResource(Resource):
+    def post(self):
+        data = request.json or {}
+        window_id = data.get("window_id")
+        if window_id is not None:
+            window_id = int(window_id)
+        try:
+            result = get_tab_archive_service().sort_live_by_group(window_id)
+            return result, 200
+        except ValueError as e:
+            return {"error": str(e)}, 400
+        except Exception:
+            logger.exception("tab_archive.api.sort_by_group_failed")
+            return {"error": "sort_by_group failed"}, 500
+
+
+@ns.route("/tab-archive/live-tabs/split-by-groups")
+class TabArchiveSplitByGroupsResource(Resource):
+    def post(self):
+        try:
+            result = get_tab_archive_service().split_live_by_groups()
+            return result, 200
+        except Exception:
+            logger.exception("tab_archive.api.split_by_groups_failed")
+            return {"error": "split_by_groups failed"}, 500
+
+
+@ns.route("/tab-archive/records/reorder")
+class TabArchiveRecordReorderResource(Resource):
+    def post(self):
+        data = request.json or {}
+        record_id = data.get("record_id")
+        display_order = data.get("display_order")
+        if not isinstance(record_id, int) or display_order is None:
+            return {"error": "record_id (int) and display_order are required"}, 400
+        get_tab_archive_service().set_archive_record_order(record_id, float(display_order))
+        return {"ok": True}, 200
+
+
+@ns.route("/tab-archive/live-tabs/record-activations")
+class TabArchiveRecordActivationsResource(Resource):
+    def post(self):
+        data = request.json or {}
+        activations = data.get("activations") or []
+        if not isinstance(activations, list):
+            return {"error": "activations must be a list"}, 400
+        get_tab_archive_service().record_activations(activations)
+        return {"ok": True, "count": len(activations)}, 200
+
+
+@ns.route("/tab-archive/live-tabs/move-tab")
+class TabArchiveMoveTabResource(Resource):
+    def post(self):
+        data = request.json or {}
+        tab_id = data.get("tab_id")
+        index = data.get("index")
+        if not isinstance(tab_id, int) or tab_id <= 0:
+            return {"error": "tab_id must be a positive integer"}, 400
+        if not isinstance(index, int) or index < 0:
+            return {"error": "index must be a non-negative integer"}, 400
+        window_id = data.get("window_id")
+        if window_id is not None:
+            window_id = int(window_id)
+        try:
+            result = get_tab_archive_service().move_live_tab(tab_id, index, window_id)
+            return {"ok": True, **result}, 200
+        except RuntimeError as exc:
+            return {"error": str(exc)}, 400
+
+
+@ns.route("/tab-archive/shelf")
+class TabArchiveShelfResource(Resource):
+    def get(self):
+        return get_tab_archive_service().get_shelf_snapshot(), 200
+
+
+@ns.route("/tab-archive/shelf/items")
+class TabArchiveShelfItemsResource(Resource):
+    def post(self):
+        data = request.json or {}
+        url = str(data.get("url") or "").strip()
+        if not url:
+            return {"error": "url is required"}, 400
+        group_id = data.get("group_id")
+        if group_id is not None:
+            group_id = int(group_id)
+        display_order = data.get("display_order")
+        if display_order is not None:
+            display_order = float(display_order)
+        item = get_tab_archive_service().create_shelf_item(
+            url=url,
+            title=data.get("title"),
+            favicon_url=data.get("favicon_url"),
+            group_id=group_id,
+            bookmark_id=data.get("bookmark_id"),
+            display_order=display_order,
+        )
+        return {"item": item}, 200
+
+
+@ns.route("/tab-archive/shelf/items/<int:item_id>")
+class TabArchiveShelfItemResource(Resource):
+    def delete(self, item_id: int):
+        ok = get_tab_archive_service().delete_shelf_item(item_id)
+        if not ok:
+            return {"error": "item not found"}, 404
+        return {"deleted": True}, 200
+
+    def patch(self, item_id: int):
+        data = request.json or {}
+        did_update = False
+
+        if "group_id" in data:
+            raw_group = data.get("group_id")
+            group_id = int(raw_group) if raw_group is not None else None
+            get_tab_archive_service().set_shelf_item_group(item_id, group_id)
+            did_update = True
+
+        display_order = data.get("display_order")
+        if display_order is not None:
+            get_tab_archive_service().set_shelf_item_order(item_id, float(display_order))
+            did_update = True
+
+        if not did_update:
+            return {"error": "display_order or group_id is required"}, 400
+        return {"ok": True}, 200
+
+
+@ns.route("/tab-archive/shelf/sync-from-bookmarks")
+class TabArchiveShelfSyncFromBookmarksResource(Resource):
+    def post(self):
+        data = request.json or {}
+        bookmark_nodes = data.get("bookmark_nodes") or []
+        if not isinstance(bookmark_nodes, list):
+            return {"error": "bookmark_nodes must be a list"}, 400
+        result = get_tab_archive_service().sync_shelf_from_bookmarks(bookmark_nodes)
+        return result, 200
+
+
+@ns.route("/tab-archive/shelf/export-bookmarks")
+class TabArchiveShelfExportBookmarksResource(Resource):
+    def get(self):
+        items = get_tab_archive_service().get_shelf_items_as_bookmark_tree()
+        return {"items": items}, 200
+
+
+@ns.route("/tab-archive/shelf/sync-from-browser-bookmarks")
+class TabArchiveShelfSyncFromBrowserResource(Resource):
+    def post(self):
+        result = get_tab_archive_service().sync_shelf_from_browser_bookmarks()
+        if "error" in result:
+            return result, 502
+        return result, 200
+
+
+@ns.route("/tab-archive/shelf/export-to-browser-bookmarks")
+class TabArchiveShelfExportToBrowserResource(Resource):
+    def post(self):
+        result = get_tab_archive_service().export_shelf_to_browser_bookmarks()
+        if "error" in result:
+            return result, 502
+        return result, 200
+
+
+@ns.route("/tab-archive/shelf/items/<int:item_id>/open")
+class TabArchiveShelfItemOpenResource(Resource):
+    def post(self, item_id: int):
+        data = request.json or {}
+        destination = data.get("destination", "current_window")
+        result = get_tab_archive_service().open_shelf_item(item_id, destination=destination)
+        if result.get("error") and not result.get("ok"):
+            code = 404 if result["error"] == "item not found" else 502
+            return result, code
         return result, 200
 
 

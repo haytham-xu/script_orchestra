@@ -37,16 +37,12 @@ export interface DownloadJMConfig {
 }
 
 export interface TabArchiveSettings {
-  safeExcludeDomains: string[]
-  safeExcludeKeywords: string[]
-  embedModel: string
-  semanticTopK: number
   heatThresholds: {
     high: number
     medium: number
     low: number
   }
-  healthCheckTimeoutSec: number
+  expireDays: number
 }
 
 export interface BrowserAgentSettings {
@@ -82,9 +78,13 @@ export interface TabArchiveLiveCard {
   record_id: number | null
   comment: string
   labels: string[]
-  eternal: boolean
   heat_score: number
   heat_level: HeatLevel
+  first_seen_at: string | null
+  group_id: number | null
+  group_name: string | null
+  display_order: number | null
+  custom_header: string | null
 }
 
 export interface TabArchiveRecord {
@@ -111,6 +111,9 @@ export interface TabArchiveRecord {
   is_live: boolean
   heat_score: number
   heat_level: HeatLevel
+  group_id: number | null
+  group_name: string | null
+  display_order: number
 }
 
 export interface TabArchiveSnapshot {
@@ -118,41 +121,19 @@ export interface TabArchiveSnapshot {
   live_error: string | null
   live: TabArchiveLiveCard[]
   archive: TabArchiveRecord[]
+  live_group_tree: TabArchiveGroup[]
+  archive_group_tree: TabArchiveGroup[]
+  expiring_count: number
+  expire_days: number
   counts: {
     live: number
     archive: number
     total_archived: number
   }
-  search: {
-    semantic_requested: boolean
-    semantic_available: boolean
-    semantic_error: string
-    semantic_model: string
-    semantic_top_k: number
-  }
 }
 
-export type TabArchiveSortBy = 'relevance' | 'heat' | 'last_opened' | 'last_archived' | 'open_count' | 'title'
+export type TabArchiveSortBy = 'heat' | 'last_opened' | 'last_archived' | 'open_count' | 'title'
 export type TabArchiveSortOrder = 'asc' | 'desc'
-
-export interface TabArchiveSafePreviewRow {
-  tab_id: number
-  title: string
-  favicon_url: string
-  pinned: boolean
-  domain: string
-  url: string
-  reason: string | null
-}
-
-export interface TabArchiveSafePreview {
-  include_pinned: boolean
-  requested: number
-  candidates: TabArchiveSafePreviewRow[]
-  excluded: TabArchiveSafePreviewRow[]
-  candidate_count: number
-  excluded_count: number
-}
 
 export interface TabArchiveArchiveResult {
   mode: string
@@ -193,40 +174,15 @@ export interface TabArchiveLabel {
   created_at: string
 }
 
-export interface TabArchiveHealthCheckResult {
-  checked: number
-  healthy: number
-  unavailable: number
-  unknown: number
-  timeout_sec: number
-  records: Array<TabArchiveRecord & { health_error?: string }>
-}
-
-export type TabArchiveHealthJobStatus =
-  | 'queued'
-  | 'running'
-  | 'cancelling'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
-  | 'unknown'
-
-export interface TabArchiveHealthCheckJob {
-  job_id: string
-  status: TabArchiveHealthJobStatus
+export interface TabArchiveGroup {
+  id: number
+  name: string
+  scope?: string
+  parent_id: number | null
+  display_order: number
+  bookmark_id?: string | null
   created_at: string
-  started_at: string | null
-  finished_at: string | null
-  updated_at: string
-  total: number
-  processed: number
-  healthy: number
-  unavailable: number
-  unknown: number
-  batch_size: number
-  cancel_requested: boolean
-  last_error: string
-  progress_percent: number
+  children: TabArchiveGroup[]
 }
 
 export interface TabArchiveReplaceUrlPreviewRow {
@@ -241,4 +197,15 @@ export interface TabArchiveReplaceUrlResult {
   count?: number
   updated?: number
   error?: string
+}
+
+export interface ShelfItem {
+  id: number
+  group_id: number | null
+  title: string | null
+  url: string
+  favicon_url: string | null
+  bookmark_id: string | null
+  display_order: number
+  created_at: string
 }

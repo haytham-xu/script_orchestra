@@ -4,14 +4,12 @@ Implements live/archive synchronization, safe archival, and batch restore.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
-import os
 import threading
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 from urllib import request as url_request
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -40,8 +38,6 @@ _INTERNAL_URL_PREFIXES = (
     "view-source:",
 )
 
-_embed_model = None
-_embed_model_name: Optional[str] = None
 logger = logging.getLogger(__name__)
 
 
@@ -65,10 +61,7 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
 
 class TabArchiveService:
     def __init__(self) -> None:
-        self._health_lock = threading.Lock()
-        self._health_jobs: Dict[str, Dict[str, Any]] = {}
-        self._health_cancel_events: Dict[str, threading.Event] = {}
-        self._health_current_job_id: Optional[str] = None
+        pass
 
     @staticmethod
     def _extension_capability_error(command: str) -> Optional[str]:
@@ -102,343 +95,6 @@ class TabArchiveService:
         if not (high > medium > low >= 0):
             return {"high": 4.0, "medium": 2.0, "low": 0.8}
         return {"high": high, "medium": medium, "low": low}
-
-    def _health_check_timeout_sec(self) -> int:
-        raw = self._tab_archive_settings().get("healthCheckTimeoutSec", 4)
-        try:
-            timeout = int(raw)
-        except (TypeError, ValueError):
-            timeout = 4
-        return max(1, min(15, timeout))
-
-    def _semantic_model_name(self) -> str:
-        value = self._tab_archive_settings().get("embedModel", "")
-        return str(value or "").strip()
-
-    def _semantic_top_k(self) -> int:
-        raw = self._tab_archive_settings().get("semanticTopK", 120)
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 120
-        return max(10, min(500, value))
-
-    def _semantic_text(self, record: Dict[str, Any]) -> str:
-        normalized_url = str(record.get("normalized_url") or "")
-        path_tokens = ""
-        if normalized_url:
-            try:
-                parsed = urlsplit(normalized_url)
-                parts = [p for p in parsed.path.split("/") if p]
-                path_tokens = " ".join(parts)
-            except ValueError:
-                path_tokens = ""
-
-        return "\n".join(
-            [
-                str(record.get("title") or ""),
-                str(record.get("comment") or ""),
-                str(record.get("domain") or ""),
-                path_tokens,
-                " ".join(record.get("labels") or []),
-            ]
-        ).strip()
-
-    def _semantic_content_hash(self, record: Dict[str, Any]) -> str:
-        text = self._semantic_text(record)
-        return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
-
-    def _get_embed_model(self):
-        global _embed_model, _embed_model_name
-        want = self._semantic_model_name()
-        if not want:
-            raise RuntimeError("No tabArchive.embedModel configured")
-        if _embed_model is None or _embed_model_name != want:
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-            from sentence_transformers import SentenceTransformer
-
-            _embed_model = SentenceTransformer(want)
-            _embed_model_name = want
-        return _embed_model, want
-
-    def _embed_many(self, texts: List[str]) -> List[List[float]]:
-        model, _ = self._get_embed_model()
-        vectors = model.encode(texts, normalize_embeddings=True)
-        return [[float(x) for x in vec] for vec in vectors]
-
-    def _embed_one(self, text: str) -> List[float]:
-        model, _ = self._get_embed_model()
-        vec = model.encode(text or "", normalize_embeddings=True)
-        return [float(x) for x in vec]
-
-    @staticmethod
-    def _cosine(a: List[float], b: List[float]) -> float:
-        n = min(len(a), len(b))
-        return sum(a[i] * b[i] for i in range(n))
-
-    @staticmethod
-    def _is_active_health_status(status: str) -> bool:
-        return status in ("queued", "running", "cancelling")
-
-    def _health_job_snapshot(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        total = int(job.get("total") or 0)
-        processed = int(job.get("processed") or 0)
-        progress = 0.0
-        if total > 0:
-            progress = round(min(100.0, max(0.0, (processed * 100.0) / total)), 2)
-        return {
-            "job_id": str(job.get("job_id") or ""),
-            "status": str(job.get("status") or "unknown"),
-            "created_at": str(job.get("created_at") or ""),
-            "started_at": job.get("started_at"),
-            "finished_at": job.get("finished_at"),
-            "updated_at": str(job.get("updated_at") or ""),
-            "total": total,
-            "processed": processed,
-            "healthy": int(job.get("healthy") or 0),
-            "unavailable": int(job.get("unavailable") or 0),
-            "unknown": int(job.get("unknown") or 0),
-            "batch_size": int(job.get("batch_size") or 0),
-            "cancel_requested": bool(job.get("cancel_requested")),
-            "last_error": str(job.get("last_error") or ""),
-            "progress_percent": progress,
-        }
-
-    def get_health_check_status(self, job_id: Optional[str] = None) -> Dict[str, Any]:
-        with self._health_lock:
-            target_id = (job_id or "").strip() or self._health_current_job_id
-            if not target_id:
-                return {"exists": False, "job": None}
-            job = self._health_jobs.get(target_id)
-            if not job:
-                return {"exists": False, "job": None}
-            return {"exists": True, "job": self._health_job_snapshot(job)}
-
-    def _update_health_job(self, job_id: str, patch: Dict[str, Any]) -> None:
-        with self._health_lock:
-            job = self._health_jobs.get(job_id)
-            if not job:
-                return
-            job.update(patch)
-            job["updated_at"] = _now_text()
-
-    def cancel_health_check(self, job_id: Optional[str] = None) -> Dict[str, Any]:
-        with self._health_lock:
-            target_id = (job_id or "").strip() or self._health_current_job_id
-            if not target_id:
-                return {"exists": False, "job": None}
-
-            job = self._health_jobs.get(target_id)
-            if not job:
-                return {"exists": False, "job": None}
-
-            cancel_event = self._health_cancel_events.get(target_id)
-            if cancel_event:
-                cancel_event.set()
-            if self._is_active_health_status(str(job.get("status") or "")):
-                job["status"] = "cancelling"
-            job["cancel_requested"] = True
-            job["updated_at"] = _now_text()
-            return {"exists": True, "job": self._health_job_snapshot(job)}
-
-    def start_health_check(
-        self,
-        *,
-        record_ids: Optional[List[int]] = None,
-        limit: int = 200,
-        batch_size: int = 20,
-    ) -> Dict[str, Any]:
-        with self._health_lock:
-            if self._health_current_job_id:
-                current = self._health_jobs.get(self._health_current_job_id)
-                if current and self._is_active_health_status(str(current.get("status") or "")):
-                    running_id = str(current.get("job_id") or self._health_current_job_id)
-                    raise RuntimeError(f"health_check_job_already_running:{running_id}")
-
-        if record_ids is not None:
-            records = archive_repo.get_records_by_ids([int(x) for x in record_ids])
-        else:
-            records = archive_repo.list_records_for_health(limit=limit)
-
-        logger.info(
-            "tab_archive.health_check.start requested=%s resolved=%s limit=%s batch_size=%s",
-            len(record_ids or []),
-            len(records),
-            limit,
-            batch_size,
-        )
-
-        job_id = uuid.uuid4().hex
-        now = _now_text()
-        job = {
-            "job_id": job_id,
-            "status": "queued",
-            "created_at": now,
-            "started_at": None,
-            "finished_at": None,
-            "updated_at": now,
-            "total": len(records),
-            "processed": 0,
-            "healthy": 0,
-            "unavailable": 0,
-            "unknown": 0,
-            "batch_size": max(1, min(100, int(batch_size))),
-            "cancel_requested": False,
-            "last_error": "",
-        }
-        cancel_event = threading.Event()
-
-        with self._health_lock:
-            # Records are loaded outside the lock, so another request may have
-            # registered a job after the initial fast-path check. Recheck while
-            # atomically reserving the single active-job slot.
-            if self._health_current_job_id:
-                current = self._health_jobs.get(self._health_current_job_id)
-                if current and self._is_active_health_status(str(current.get("status") or "")):
-                    running_id = str(current.get("job_id") or self._health_current_job_id)
-                    raise RuntimeError(f"health_check_job_already_running:{running_id}")
-            self._health_jobs[job_id] = job
-            self._health_cancel_events[job_id] = cancel_event
-            self._health_current_job_id = job_id
-
-        thread = threading.Thread(
-            target=self._run_health_check_job,
-            args=(job_id, records, cancel_event),
-            daemon=True,
-        )
-        thread.start()
-        return self._health_job_snapshot(job)
-
-    def _run_health_check_job(
-        self,
-        job_id: str,
-        records: List[Dict[str, Any]],
-        cancel_event: threading.Event,
-    ) -> None:
-        self._update_health_job(
-            job_id,
-            {
-                "status": "running",
-                "started_at": _now_text(),
-            },
-        )
-
-        timeout_sec = self._health_check_timeout_sec()
-        with self._health_lock:
-            batch_size = int((self._health_jobs.get(job_id) or {}).get("batch_size") or 20)
-        batch_size = max(1, min(100, batch_size))
-        logger.info(
-            "tab_archive.health_check.job_running job_id=%s total=%s timeout_sec=%s batch_size=%s",
-            job_id,
-            len(records),
-            timeout_sec,
-            batch_size,
-        )
-
-        try:
-            for start in range(0, len(records), batch_size):
-                if cancel_event.is_set():
-                    self._update_health_job(
-                        job_id,
-                        {
-                            "status": "cancelled",
-                            "finished_at": _now_text(),
-                        },
-                    )
-                    logger.info("tab_archive.health_check.cancelled job_id=%s processed=%s", job_id, start)
-                    return
-
-                batch = records[start:start + batch_size]
-                for record in batch:
-                    if cancel_event.is_set():
-                        self._update_health_job(
-                            job_id,
-                            {
-                                "status": "cancelled",
-                                "finished_at": _now_text(),
-                            },
-                        )
-                        logger.info(
-                            "tab_archive.health_check.cancelled job_id=%s processed=%s",
-                            job_id,
-                            int((self._health_jobs.get(job_id) or {}).get("processed") or 0),
-                        )
-                        return
-
-                    outcome = self._check_single_record_health(record, timeout_sec=timeout_sec)
-                    bucket = str(outcome.get("bucket") or "unknown")
-
-                    with self._health_lock:
-                        job = self._health_jobs.get(job_id)
-                        if not job:
-                            return
-                        job["processed"] = int(job.get("processed") or 0) + 1
-                        if bucket == "healthy":
-                            job["healthy"] = int(job.get("healthy") or 0) + 1
-                        elif bucket == "unavailable":
-                            job["unavailable"] = int(job.get("unavailable") or 0) + 1
-                        else:
-                            job["unknown"] = int(job.get("unknown") or 0) + 1
-                        err = str(outcome.get("error") or "")
-                        if err:
-                            job["last_error"] = err
-                        job["updated_at"] = _now_text()
-
-            self._update_health_job(
-                job_id,
-                {
-                    "status": "completed",
-                    "finished_at": _now_text(),
-                },
-            )
-            snapshot = self.get_health_check_status(job_id=job_id)
-            job = snapshot.get("job") or {}
-            logger.info(
-                "tab_archive.health_check.completed job_id=%s processed=%s healthy=%s unavailable=%s unknown=%s",
-                job_id,
-                int(job.get("processed") or 0),
-                int(job.get("healthy") or 0),
-                int(job.get("unavailable") or 0),
-                int(job.get("unknown") or 0),
-            )
-        except Exception as e:  # noqa: BLE001
-            self._update_health_job(
-                job_id,
-                {
-                    "status": "failed",
-                    "last_error": str(e),
-                    "finished_at": _now_text(),
-                },
-            )
-            logger.exception("tab_archive.health_check.failed job_id=%s", job_id)
-        finally:
-            with self._health_lock:
-                self._health_cancel_events.pop(job_id, None)
-
-    def _matches_safe_exclusion_rules(self, tab: Dict[str, Any]) -> Optional[str]:
-        cfg = self._tab_archive_settings()
-        domains = cfg.get("safeExcludeDomains") or []
-        keywords = cfg.get("safeExcludeKeywords") or []
-        if not isinstance(domains, list):
-            domains = []
-        if not isinstance(keywords, list):
-            keywords = []
-
-        host = self._domain_from_url(tab.get("url") or "")
-        hay = f"{tab.get('url') or ''}\n{tab.get('title') or ''}".lower()
-
-        for token in domains:
-            text = str(token or "").strip().lower()
-            if text and text in host:
-                return f"exclude_domain:{text}"
-
-        for token in keywords:
-            text = str(token or "").strip().lower()
-            if text and text in hay:
-                return f"exclude_keyword:{text}"
-
-        return None
 
     def _fetch_live_tabs(self) -> List[Dict[str, Any]]:
         result, err = agent_bridge.enqueue_and_wait("list_tabs")
@@ -560,6 +216,20 @@ class TabArchiveService:
             }
         return out
 
+    def move_live_tab(self, tab_id: int, index: int, window_id: Optional[int] = None) -> Dict[str, Any]:
+        capability_error = self._extension_capability_error("move_tab")
+        if capability_error:
+            raise RuntimeError(capability_error)
+
+        params: Dict[str, Any] = {"tab_id": tab_id, "index": index}
+        if window_id is not None:
+            params["window_id"] = window_id
+
+        result, err = agent_bridge.enqueue_and_wait("move_tab", params)
+        if err:
+            raise RuntimeError(err)
+        return result or {}
+
     @staticmethod
     def _focus_failure_allows_open_fallback(error: str) -> bool:
         text = (error or "").strip().lower()
@@ -632,22 +302,6 @@ class TabArchiveService:
         if not value:
             return False
         return "/browser-agent" in value
-
-    def _safe_archive_exclusion_reason(self, tab: Dict[str, Any], include_pinned: bool) -> Optional[str]:
-        if not tab.get("url"):
-            return "missing_url"
-        if tab.get("pinned") and not include_pinned:
-            return "pinned"
-        custom_reason = self._matches_safe_exclusion_rules(tab)
-        if custom_reason:
-            return custom_reason
-        if self._is_internal_url(tab["url"]):
-            return "internal_url"
-        if self._is_browser_agent_url(tab["url"]):
-            return "browser_agent_page"
-        if self.normalize_url(tab["url"]) is None:
-            return "unsupported_url"
-        return None
 
     def _manual_archive_exclusion_reason(self, tab: Dict[str, Any]) -> Optional[str]:
         if not tab.get("url"):
@@ -755,119 +409,6 @@ class TabArchiveService:
                 score += 2
         return score
 
-    def _ensure_vectors_for_cards(self, cards: List[Dict[str, Any]]) -> Dict[int, List[float]]:
-        if not cards:
-            return {}
-
-        _, model_name = self._get_embed_model()
-        ids = [int(card["id"]) for card in cards if isinstance(card.get("id"), int)]
-        existing_rows = archive_repo.get_vectors(ids)
-        existing = {int(row["tab_id"]): row for row in existing_rows}
-
-        to_rebuild: List[Dict[str, Any]] = []
-        out: Dict[int, List[float]] = {}
-
-        for card in cards:
-            tab_id = int(card["id"])
-            want_hash = self._semantic_content_hash(card)
-            row = existing.get(tab_id)
-            if row and row.get("content_hash") == want_hash and row.get("model_name") == model_name:
-                vec = row.get("embedding") or []
-                if isinstance(vec, list) and vec:
-                    out[tab_id] = [float(x) for x in vec]
-                    continue
-            to_rebuild.append(card)
-
-        if to_rebuild:
-            texts = [self._semantic_text(card) for card in to_rebuild]
-            vectors = self._embed_many(texts)
-            for idx, card in enumerate(to_rebuild):
-                tab_id = int(card["id"])
-                vec = vectors[idx]
-                out[tab_id] = vec
-                archive_repo.upsert_vector(
-                    tab_id=tab_id,
-                    embedding=vec,
-                    content_hash=self._semantic_content_hash(card),
-                    model_name=model_name,
-                )
-
-        return out
-
-    def _hybrid_rank_cards(
-        self,
-        cards: List[Dict[str, Any]],
-        *,
-        query: str,
-        semantic_top_k: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        q = query.strip()
-        if not q:
-            return cards, {
-                "semantic_requested": True,
-                "semantic_available": False,
-                "semantic_error": "empty_query",
-                "semantic_model": self._semantic_model_name(),
-                "semantic_top_k": 0,
-            }
-
-        top_k = semantic_top_k if semantic_top_k is not None else self._semantic_top_k()
-        top_k = max(10, min(500, int(top_k)))
-
-        query_vec = self._embed_one(q)
-        vector_map = self._ensure_vectors_for_cards(cards)
-
-        max_heat = max([float(card.get("heat_score") or 0.0) for card in cards] + [1.0])
-        max_kw = max([self._archive_query_score(card, q) for card in cards] + [1])
-
-        now = datetime.now()
-        for card in cards:
-            tab_id = int(card["id"])
-            vec = vector_map.get(tab_id)
-            semantic_score = self._cosine(query_vec, vec) if vec else 0.0
-            semantic_score = max(0.0, min(1.0, semantic_score))
-
-            keyword_score = self._archive_query_score(card, q) / max_kw
-            heat_score = float(card.get("heat_score") or 0.0) / max_heat
-
-            anchor = card.get("last_opened_at") or card.get("last_archived_at") or card.get("created_at")
-            anchor_ts = _parse_time(anchor)
-            recency = 0.0
-            if anchor_ts is not None:
-                age_days = max(0.0, (now - anchor_ts).total_seconds() / 86400.0)
-                recency = math.exp(-age_days / 21.0)
-
-            eternal_boost = 1.0 if bool(card.get("eternal")) else 0.0
-
-            hybrid = (
-                0.58 * semantic_score
-                + 0.17 * keyword_score
-                + 0.15 * heat_score
-                + 0.07 * recency
-                + 0.03 * eternal_boost
-            )
-
-            card["semantic_score"] = round(semantic_score, 6)
-            card["keyword_score"] = round(keyword_score, 6)
-            card["search_score"] = round(hybrid, 6)
-
-        cards.sort(
-            key=lambda r: (
-                float(r.get("search_score") or 0.0),
-                float(r.get("heat_score") or 0.0),
-                str(r.get("last_opened_at") or r.get("last_archived_at") or ""),
-            ),
-            reverse=True,
-        )
-
-        return cards[:top_k], {
-            "semantic_requested": True,
-            "semantic_available": True,
-            "semantic_error": "",
-            "semantic_model": self._semantic_model_name(),
-            "semantic_top_k": top_k,
-        }
-
     def _sort_archive_cards(
         self,
         cards: List[Dict[str, Any]],
@@ -926,6 +467,16 @@ class TabArchiveService:
                 cards.reverse()
             return cards
 
+        if mode == "group":
+            cards.sort(
+                key=lambda r: (
+                    str(r.get("group_name") or "￿"),
+                    str(r.get("title") or "").lower(),
+                ),
+                reverse=reverse,
+            )
+            return cards
+
         # default: heat
         cards.sort(
             key=lambda r: (
@@ -943,18 +494,11 @@ class TabArchiveService:
         scope: str = "all",
         archive_limit: int = 1000,
         include_live_urls: bool = False,
-        sort_by: str = "heat",
-        sort_order: str = "desc",
-        semantic: bool = False,
-        semantic_top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
         logger.debug(
-            "tab_archive.snapshot.start scope=%s query_len=%s sort_by=%s sort_order=%s semantic=%s",
+            "tab_archive.snapshot.start scope=%s query_len=%s",
             scope,
             len(query or ""),
-            sort_by,
-            sort_order,
-            semantic,
         )
         records = archive_repo.list_records(limit=archive_limit)
         by_norm = {record["normalized_url"]: record for record in records}
@@ -966,6 +510,15 @@ class TabArchiveService:
         except Exception as exc:  # noqa: BLE001
             live_error = str(exc)
             logger.warning("tab_archive.snapshot.live_fetch_failed error=%s", live_error)
+
+        current_tab_ids = [int(tab["id"]) for tab in live_tabs]
+        first_seen_map = archive_repo.sync_live_first_seen(current_tab_ids)
+        live_group_map = archive_repo.sync_live_tab_groups(current_tab_ids)
+        live_custom_headers = archive_repo.get_live_tab_custom_headers(current_tab_ids)
+        live_group_tree = archive_repo.live_get_group_tree()
+        archive_group_tree = archive_repo.archive_get_group_tree()
+        group_name_by_id: Dict[int, str] = self._flatten_group_names(live_group_tree)
+        group_name_by_id.update(self._flatten_group_names(archive_group_tree))
 
         now = _now_text()
         live_norm_map: Dict[str, int] = {}
@@ -995,9 +548,13 @@ class TabArchiveService:
                 continue
 
             heat_score = self._compute_heat_score(linked_record) if linked_record else 0.0
+            tab_id_int = int(tab["id"])
+            grp_entry = live_group_map.get(tab_id_int)
+            grp_id = grp_entry["group_id"] if grp_entry else None
+            grp_display_order = grp_entry["display_order"] if grp_entry else None
             live_cards.append(
                 {
-                    "tab_id": int(tab["id"]),
+                    "tab_id": tab_id_int,
                     "title": tab.get("title") or "",
                     "favicon_url": tab.get("favIconUrl") or "",
                     "pinned": bool(tab.get("pinned")),
@@ -1012,6 +569,11 @@ class TabArchiveService:
                     "eternal": bool(linked_record.get("eternal")) if linked_record else False,
                     "heat_score": heat_score,
                     "heat_level": self._heat_level(heat_score),
+                    "first_seen_at": first_seen_map.get(tab_id_int),
+                    "group_id": grp_id,
+                    "group_name": group_name_by_id.get(grp_id) if grp_id is not None else None,
+                    "display_order": grp_display_order,
+                    "custom_header": live_custom_headers.get(tab_id_int),
                 }
             )
 
@@ -1021,7 +583,7 @@ class TabArchiveService:
                 is_live = record["normalized_url"] in live_norm_map
                 if is_live:
                     continue
-                if (not semantic) and (not self._record_matches_query(record, query)):
+                if not self._record_matches_query(record, query):
                     continue
 
                 heat_score = self._compute_heat_score(record)
@@ -1034,48 +596,22 @@ class TabArchiveService:
                     }
                 )
 
-        semantic_meta = {
-            "semantic_requested": bool(semantic),
-            "semantic_available": False,
-            "semantic_error": "",
-            "semantic_model": self._semantic_model_name(),
-            "semantic_top_k": 0,
-        }
+        archive_cards = archive_cards  # order already from DB (display_order ASC)
 
-        if semantic:
-            try:
-                archive_cards, semantic_meta = self._hybrid_rank_cards(
-                    archive_cards,
-                    query=query,
-                    semantic_top_k=semantic_top_k,
-                )
-            except Exception as exc:  # noqa: BLE001
-                semantic_meta = {
-                    "semantic_requested": True,
-                    "semantic_available": False,
-                    "semantic_error": str(exc),
-                    "semantic_model": self._semantic_model_name(),
-                    "semantic_top_k": 0,
-                }
-                # Degrade to keyword-only behavior.
-                archive_cards = [card for card in archive_cards if self._record_matches_query(card, query)]
-                logger.warning("tab_archive.snapshot.semantic_degraded error=%s", semantic_meta["semantic_error"])
-        else:
-            archive_cards = [card for card in archive_cards if self._record_matches_query(card, query)]
-
-        archive_cards = self._sort_archive_cards(
-            archive_cards,
-            query=query,
-            sort_by=sort_by,
-            sort_order=sort_order,
+        cfg = settings_manager.load_settings().get("tabArchive", {})
+        expire_days = int(cfg.get("expireDays", 365))
+        cutoff = (datetime.now() - timedelta(days=expire_days)).strftime("%Y-%m-%d %H:%M:%S")
+        expiring_count = sum(
+            1 for r in archive_cards
+            if not r.get("eternal")
+            and (r.get("last_opened_at") or r.get("last_archived_at") or r.get("created_at") or "") < cutoff
         )
 
         logger.debug(
-            "tab_archive.snapshot.done live=%s archive=%s total_archived=%s semantic_available=%s",
+            "tab_archive.snapshot.done live=%s archive=%s total_archived=%s",
             len(live_cards),
             len(archive_cards),
             len(by_norm),
-            bool(semantic_meta.get("semantic_available")),
         )
 
         return {
@@ -1083,42 +619,15 @@ class TabArchiveService:
             "live_error": live_error,
             "live": live_cards,
             "archive": archive_cards,
+            "live_group_tree": live_group_tree,
+            "archive_group_tree": archive_group_tree,
+            "expiring_count": expiring_count,
+            "expire_days": expire_days,
             "counts": {
                 "live": len(live_cards),
                 "archive": len(archive_cards),
                 "total_archived": len(by_norm),
             },
-            "search": semantic_meta,
-        }
-
-    def preview_safe_archive(self, include_pinned: bool = False) -> Dict[str, Any]:
-        live_tabs = self._fetch_live_tabs()
-        candidates: List[Dict[str, Any]] = []
-        excluded: List[Dict[str, Any]] = []
-
-        for tab in live_tabs:
-            reason = self._safe_archive_exclusion_reason(tab, include_pinned=include_pinned)
-            row = {
-                "tab_id": int(tab["id"]),
-                "title": tab.get("title") or "",
-                "favicon_url": tab.get("favIconUrl") or "",
-                "pinned": bool(tab.get("pinned")),
-                "domain": self._domain_from_url(tab.get("url") or ""),
-                "url": tab.get("url") or "",
-                "reason": reason,
-            }
-            if reason:
-                excluded.append(row)
-            else:
-                candidates.append(row)
-
-        return {
-            "include_pinned": bool(include_pinned),
-            "requested": len(live_tabs),
-            "candidates": candidates,
-            "excluded": excluded,
-            "candidate_count": len(candidates),
-            "excluded_count": len(excluded),
         }
 
     def _archive_from_live_tabs(self, live_tabs: List[Dict[str, Any]], selected_ids: List[int], mode: str) -> Dict[str, Any]:
@@ -1259,29 +768,6 @@ class TabArchiveService:
 
         live_tabs = self._fetch_live_tabs()
         return self._archive_from_live_tabs(live_tabs, ids, mode="selected")
-
-    def archive_safe_all(self, include_pinned: bool = False) -> Dict[str, Any]:
-        live_tabs = self._fetch_live_tabs()
-        selected_ids: List[int] = []
-        excluded: List[Dict[str, Any]] = []
-
-        for tab in live_tabs:
-            reason = self._safe_archive_exclusion_reason(tab, include_pinned=include_pinned)
-            if reason:
-                excluded.append(
-                    {
-                        "tab_id": int(tab["id"]),
-                        "title": tab.get("title") or "",
-                        "reason": reason,
-                    }
-                )
-                continue
-            selected_ids.append(int(tab["id"]))
-
-        result = self._archive_from_live_tabs(live_tabs, selected_ids, mode="safe_all")
-        result["excluded"] = excluded
-        result["excluded_count"] = len(excluded)
-        return result
 
     def restore_records(self, record_ids: List[int], destination: str = "new_window") -> Dict[str, Any]:
         ids = [int(x) for x in record_ids]
@@ -1614,87 +1100,6 @@ class TabArchiveService:
                 "error": str(e),
             }
 
-    def _check_single_record_health(self, record: Dict[str, Any], timeout_sec: int) -> Dict[str, Any]:
-        record_id = int(record["id"])
-        url = str(record.get("url") or "").strip()
-        checked_at = _now_text()
-
-        if not url or self.normalize_url(url) is None:
-            updated = archive_repo.update_record_health(
-                record_id,
-                health_status="unknown",
-                checked_at=checked_at,
-                last_http_status=None,
-                final_url=url,
-            )
-            return {
-                "bucket": "unknown",
-                "record": updated,
-                "error": "",
-            }
-
-        probe = self._probe_url(url, timeout_sec=timeout_sec)
-        status = probe.get("status")
-        ok = isinstance(status, int) and 200 <= status < 400
-        health_status = "healthy" if ok else "unavailable"
-
-        updated = archive_repo.update_record_health(
-            record_id,
-            health_status=health_status,
-            checked_at=checked_at,
-            last_http_status=(int(status) if isinstance(status, int) else None),
-            final_url=str(probe.get("final_url") or url),
-        )
-
-        return {
-            "bucket": health_status,
-            "record": updated,
-            "error": str(probe.get("error") or ""),
-        }
-
-    def check_health(self, record_ids: Optional[List[int]] = None, limit: int = 200) -> Dict[str, Any]:
-        timeout_sec = self._health_check_timeout_sec()
-        if record_ids is not None:
-            records = archive_repo.get_records_by_ids([int(x) for x in record_ids])
-        else:
-            records = archive_repo.list_records_for_health(limit=limit)
-        logger.info(
-            "tab_archive.health_check.sync_start requested=%s resolved=%s limit=%s timeout_sec=%s",
-            len(record_ids or []),
-            len(records),
-            limit,
-            timeout_sec,
-        )
-
-        results: List[Dict[str, Any]] = []
-        healthy = 0
-        unavailable = 0
-        unknown = 0
-
-        for record in records:
-            outcome = self._check_single_record_health(record, timeout_sec=timeout_sec)
-            bucket = outcome.get("bucket")
-            if bucket == "healthy":
-                healthy += 1
-            elif bucket == "unavailable":
-                unavailable += 1
-            else:
-                unknown += 1
-
-            updated = outcome.get("record")
-            if updated:
-                updated["health_error"] = str(outcome.get("error") or "")
-                results.append(updated)
-
-        return {
-            "checked": len(records),
-            "healthy": healthy,
-            "unavailable": unavailable,
-            "unknown": unknown,
-            "timeout_sec": timeout_sec,
-            "records": results,
-        }
-
     def update_record(self, record_id: int, patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return archive_repo.update_record(record_id, patch)
 
@@ -1713,6 +1118,385 @@ class TabArchiveService:
     def set_record_labels(self, record_id: int, label_ids: List[int]) -> Optional[Dict[str, Any]]:
         archive_repo.set_record_labels(record_id, label_ids)
         return archive_repo.get_record_by_id(record_id)
+
+    # -------------------------------------------------------------------------
+    # Group methods
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_group_names(tree: List[Dict[str, Any]]) -> Dict[int, str]:
+        """Walk tree recursively, return {id: name} for all nodes."""
+        result: Dict[int, str] = {}
+        stack = list(tree)
+        while stack:
+            node = stack.pop()
+            result[node["id"]] = node["name"]
+            stack.extend(node.get("children") or [])
+        return result
+
+    def get_group_tree(self, scope: str = "archive") -> List[Dict[str, Any]]:
+        return archive_repo.get_group_tree(scope)
+
+    def list_groups(self, parent_id: Optional[int] = None, scope: str = "archive") -> List[Dict[str, Any]]:
+        return archive_repo.list_groups(parent_id, scope)
+
+    def create_group(
+        self,
+        name: str,
+        parent_id: Optional[int] = None,
+        scope: str = "archive",
+        display_order: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        return archive_repo.create_group(name, parent_id=parent_id, scope=scope, display_order=display_order)
+
+    def rename_group(self, group_id: int, name: str) -> Optional[Dict[str, Any]]:
+        return archive_repo.rename_group(group_id, name)
+
+    def move_group(self, group_id: int, new_parent_id: Optional[int], new_display_order: float) -> Optional[Dict[str, Any]]:
+        return archive_repo.move_group(group_id, new_parent_id, new_display_order)
+
+    def delete_group(self, group_id: int) -> bool:
+        return archive_repo.delete_group(group_id)
+
+    # --- Per-pane group methods (split tables) --------------------------------
+
+    def live_list_groups(self, parent_id=None):
+        return archive_repo.live_list_groups(parent_id)
+
+    def live_get_group_tree(self):
+        return archive_repo.live_get_group_tree()
+
+    def live_create_group(self, name: str, parent_id=None, display_order=None):
+        return archive_repo.live_create_group(name, parent_id, display_order)
+
+    def live_rename_group(self, group_id: int, name: str):
+        return archive_repo.live_rename_group(group_id, name)
+
+    def live_move_group(self, group_id: int, new_parent_id, new_display_order: float):
+        return archive_repo.live_move_group(group_id, new_parent_id, new_display_order)
+
+    def live_delete_group(self, group_id: int) -> bool:
+        return archive_repo.live_delete_group(group_id)
+
+    def archive_list_groups(self, parent_id=None):
+        return archive_repo.archive_list_groups(parent_id)
+
+    def archive_get_group_tree(self):
+        return archive_repo.archive_get_group_tree()
+
+    def archive_create_group(self, name: str, parent_id=None, display_order=None):
+        return archive_repo.archive_create_group(name, parent_id, display_order)
+
+    def archive_rename_group(self, group_id: int, name: str):
+        return archive_repo.archive_rename_group(group_id, name)
+
+    def archive_move_group(self, group_id: int, new_parent_id, new_display_order: float):
+        return archive_repo.archive_move_group(group_id, new_parent_id, new_display_order)
+
+    def archive_delete_group(self, group_id: int) -> bool:
+        return archive_repo.archive_delete_group(group_id)
+
+    def shelf_list_groups(self, parent_id=None):
+        return archive_repo.shelf_list_groups(parent_id)
+
+    def shelf_get_group_tree(self):
+        return archive_repo.shelf_get_group_tree()
+
+    def shelf_create_group(self, name: str, parent_id=None, display_order=None, bookmark_id=None):
+        return archive_repo.shelf_create_group(name, parent_id, display_order, bookmark_id)
+
+    def shelf_rename_group(self, group_id: int, name: str):
+        return archive_repo.shelf_rename_group(group_id, name)
+
+    def shelf_move_group(self, group_id: int, new_parent_id, new_display_order: float):
+        return archive_repo.shelf_move_group(group_id, new_parent_id, new_display_order)
+
+    def shelf_delete_group(self, group_id: int) -> bool:
+        return archive_repo.shelf_delete_group(group_id)
+
+    def set_archive_record_group(self, record_id: int, group_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        return archive_repo.set_archive_record_group(record_id, group_id)
+
+    def set_archive_record_order(self, record_id: int, new_display_order: float) -> None:
+        archive_repo.set_archive_record_order(record_id, new_display_order)
+
+    def set_live_tabs_group(self, tab_ids: List[int], group_id: Optional[int]) -> Dict[str, Any]:
+        archive_repo.set_live_tabs_group(tab_ids, group_id)
+        return {"updated": len(tab_ids)}
+
+    def set_live_tab_group_and_order(self, tab_id: int, group_id: Optional[int], display_order: float) -> None:
+        archive_repo.set_live_tab_group_and_order(tab_id, group_id, display_order)
+
+    def batch_set_live_tab_orders(self, items: List[Dict[str, Any]]) -> None:
+        archive_repo.batch_set_live_tab_orders(items)
+
+    def set_live_tab_custom_header(self, tab_id: int, custom_header: Optional[str]) -> None:
+        archive_repo.set_live_tab_custom_header(tab_id, custom_header)
+
+    def group_as_window(self, window_id: int, group_name: str) -> Dict[str, Any]:
+        live_tabs = self._fetch_live_tabs()
+        window_tabs = [t for t in live_tabs if int(t.get("windowId") or 0) == int(window_id)]
+        if not window_tabs:
+            raise ValueError(f"No live tabs found in window {window_id}")
+
+        group = archive_repo.live_create_group(group_name)
+        tab_ids = [int(t["id"]) for t in window_tabs]
+        archive_repo.set_live_tabs_group(tab_ids, group["id"])
+        return {"group": group, "count": len(tab_ids)}
+
+    def sort_live_by_group(self, window_id: Optional[int] = None) -> Dict[str, Any]:
+        live_tabs = self._fetch_live_tabs()
+
+        if window_id is not None:
+            window_tabs = [t for t in live_tabs if int(t.get("windowId") or 0) == int(window_id)]
+            if not window_tabs:
+                raise ValueError(f"No live tabs in window {window_id}")
+            target_window_id = int(window_id)
+        else:
+            from collections import Counter
+            counts = Counter(int(t.get("windowId") or 0) for t in live_tabs)
+            target_window_id = counts.most_common(1)[0][0] if counts else 0
+            window_tabs = [t for t in live_tabs if int(t.get("windowId") or 0) == target_window_id]
+
+        all_tab_ids = [int(t["id"]) for t in window_tabs]
+        group_map = archive_repo.get_live_tab_groups(all_tab_ids)
+        group_name_by_id = self._flatten_group_names(archive_repo.live_get_group_tree())
+
+        grouped: Dict[int, List[Dict[str, Any]]] = {}
+        ungrouped: List[Dict[str, Any]] = []
+        for tab in window_tabs:
+            gid = group_map.get(int(tab["id"]))
+            if gid is not None:
+                grouped.setdefault(gid, []).append(tab)
+            else:
+                ungrouped.append(tab)
+
+        sorted_group_ids = sorted(grouped.keys(), key=lambda gid: group_name_by_id.get(gid, ""))
+
+        group_order = []
+        needs_separator = False
+        for gid in sorted_group_ids:
+            tabs_in_group = grouped[gid]
+            if needs_separator:
+                group_order.append({"is_separator": True})
+            for tab in tabs_in_group:
+                group_order.append({"tab_id": int(tab["id"]), "is_separator": False})
+            needs_separator = True
+
+        if ungrouped:
+            if needs_separator:
+                group_order.append({"is_separator": True})
+            for tab in ungrouped:
+                group_order.append({"tab_id": int(tab["id"]), "is_separator": False})
+
+        result, err = agent_bridge.enqueue_and_wait(
+            "sort_tabs_by_group",
+            {"window_id": target_window_id, "group_order": group_order},
+        )
+        if err:
+            raise RuntimeError(err)
+
+        return (result or {})
+
+    def split_live_by_groups(self) -> Dict[str, Any]:
+        live_tabs = self._fetch_live_tabs()
+        all_tab_ids = [int(t["id"]) for t in live_tabs]
+        group_map = archive_repo.get_live_tab_groups(all_tab_ids)
+        group_name_by_id = self._flatten_group_names(archive_repo.live_get_group_tree())
+
+        grouped: Dict[int, List[int]] = {}
+        for tab in live_tabs:
+            gid = group_map.get(int(tab["id"]))
+            if gid is not None:
+                grouped.setdefault(gid, []).append(int(tab["id"]))
+
+        if not grouped:
+            return {"windows_created": 0, "message": "No live tabs have group assignments"}
+
+        groups_payload = [
+            {
+                "group_id": gid,
+                "group_name": group_name_by_id.get(gid, ""),
+                "tab_ids": tab_ids,
+            }
+            for gid, tab_ids in grouped.items()
+        ]
+
+        result, err = agent_bridge.enqueue_and_wait(
+            "split_tabs_by_groups",
+            {"groups": groups_payload},
+        )
+        if err:
+            raise RuntimeError(err)
+
+        return (result or {})
+
+    # -------------------------------------------------------------------------
+    # Tab activation (heat tracking)
+    # -------------------------------------------------------------------------
+
+    def record_activations(self, activations: List[Dict[str, Any]]) -> None:
+        archive_repo.record_tab_activations(activations)
+
+    def get_tab_activations(self, urls: List[str]) -> Dict[str, Dict[str, Any]]:
+        return archive_repo.get_tab_activations(urls)
+
+    # -------------------------------------------------------------------------
+    # Shelf methods
+    # -------------------------------------------------------------------------
+
+    def get_shelf_snapshot(self) -> Dict[str, Any]:
+        items = archive_repo.get_all_shelf_items()
+        group_tree = archive_repo.shelf_get_group_tree()
+        return {"items": items, "group_tree": group_tree}
+
+    def create_shelf_item(self, *, url: str, title: Optional[str] = None, favicon_url: Optional[str] = None,
+                          group_id: Optional[int] = None, bookmark_id: Optional[str] = None,
+                          display_order: Optional[float] = None) -> Dict[str, Any]:
+        return archive_repo.create_shelf_item(
+            url=url, title=title, favicon_url=favicon_url,
+            group_id=group_id, bookmark_id=bookmark_id, display_order=display_order,
+        )
+
+    def delete_shelf_item(self, item_id: int) -> bool:
+        return archive_repo.delete_shelf_item(item_id)
+
+    def set_shelf_item_order(self, item_id: int, new_display_order: float) -> None:
+        archive_repo.set_shelf_item_order(item_id, new_display_order)
+
+    def set_shelf_item_group(self, item_id: int, group_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        return archive_repo.set_shelf_item_group(item_id, group_id)
+
+    def sync_shelf_from_bookmarks(self, bookmark_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Deprecated flat sync — kept for direct callers passing pre-flattened nodes."""
+        upserted = 0
+        for node in bookmark_nodes:
+            url = str(node.get("url") or "").strip()
+            if not url:
+                continue
+            archive_repo.upsert_shelf_item_by_bookmark_id(
+                bookmark_id=str(node["id"]),
+                url=url,
+                title=node.get("title"),
+                favicon_url=node.get("favIconUrl"),
+                group_id=None,
+                display_order=float(node.get("index") or 0) * 1000.0,
+            )
+            upserted += 1
+        return {"upserted": upserted}
+
+    def _sync_bookmark_tree(self, nodes: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Recreate the Chrome bookmark folder hierarchy as nested shelf groups.
+
+        Each folder node (has children, no url) becomes a shelf-scoped group whose parent_id
+        chains to the enclosing folder's group; each bookmark node (has url) is upserted into
+        the enclosing folder's group. Synthetic root nodes (the top-level containers Chrome
+        returns, e.g. "Bookmarks Bar" / "Other Bookmarks") have no url and are walked into as
+        top-level shelf groups.
+        """
+        counters = {"upserted": 0, "groups_created": 0}
+
+        def walk(items: List[Dict[str, Any]], parent_group_id: Optional[int]) -> None:
+            for index, item in enumerate(items):
+                url = str(item.get("url") or "").strip()
+                if url:
+                    raw_item_id = item.get("id")
+                    archive_repo.upsert_shelf_item_by_bookmark_id(
+                        bookmark_id=str(raw_item_id) if raw_item_id is not None else None,
+                        url=url,
+                        title=item.get("title"),
+                        favicon_url=item.get("favIconUrl"),
+                        group_id=parent_group_id,
+                        display_order=float(index) * 1000.0,
+                    )
+                    counters["upserted"] += 1
+                    continue
+
+                # Folder node: resolve/create its group, then descend.
+                children = item.get("children") or []
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    # Unnamed containers (e.g. the invisible root) pass through without
+                    # creating a group so their children attach to the current parent.
+                    walk(children, parent_group_id)
+                    continue
+
+                raw_id = item.get("id")
+                group = archive_repo.shelf_find_or_create_group(
+                    title, parent_group_id, bookmark_id=str(raw_id) if raw_id is not None else None
+                )
+                if group.get("_created"):
+                    counters["groups_created"] += 1
+                walk(children, group["id"])
+
+        walk(nodes, None)
+        return counters
+
+    def get_shelf_export_tree(self) -> List[Dict[str, Any]]:
+        """Build a nested folder/item payload from shelf groups + items for write_bookmarks.
+
+        Shape per folder:
+            {"folder": name, "bookmark_id": <id|None>,
+             "items": [{"bookmark_id", "url", "title"}],
+             "children": [<folder>, ...]}
+        Ungrouped items are returned at the top level alongside root folders.
+        """
+        group_tree = archive_repo.shelf_get_group_tree()
+        items = archive_repo.get_all_shelf_items()
+        items_by_group: Dict[Optional[int], List[Dict[str, Any]]] = {}
+        for item in items:
+            items_by_group.setdefault(item.get("group_id"), []).append(item)
+
+        def item_payload(item: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "bookmark_id": item.get("bookmark_id"),
+                "url": item["url"],
+                "title": item.get("title") or item["url"],
+            }
+
+        def folder_payload(node: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "folder": node["name"],
+                "bookmark_id": node.get("bookmark_id"),
+                "items": [item_payload(i) for i in items_by_group.get(node["id"], [])],
+                "children": [folder_payload(child) for child in node.get("children") or []],
+            }
+
+        payload: List[Dict[str, Any]] = [folder_payload(node) for node in group_tree]
+        payload.extend(item_payload(i) for i in items_by_group.get(None, []))
+        return payload
+
+    def sync_shelf_from_browser_bookmarks(self) -> Dict[str, Any]:
+        """Fetch bookmarks from the extension and recreate their folder tree in the shelf."""
+        capability_error = self._extension_capability_error("get_bookmarks")
+        if capability_error:
+            return {"error": capability_error}
+        result, err = agent_bridge.enqueue_and_wait("get_bookmarks")
+        if err:
+            return {"error": err}
+        tree = (result or {}).get("tree") or []
+        return self._sync_bookmark_tree(tree)
+
+    def export_shelf_to_browser_bookmarks(self) -> Dict[str, Any]:
+        """Send the shelf folder tree to the extension to write as browser bookmarks."""
+        capability_error = self._extension_capability_error("write_bookmarks")
+        if capability_error:
+            return {"error": capability_error}
+        tree = self.get_shelf_export_tree()
+        result, err = agent_bridge.enqueue_and_wait("write_bookmarks", {"tree": tree})
+        if err:
+            return {"error": err}
+        return result or {"ok": True}
+
+    def open_shelf_item(self, item_id: int, destination: str = "current_window") -> Dict[str, Any]:
+        item = archive_repo.get_shelf_item(item_id)
+        if not item:
+            return {"error": "item not found"}
+        results = self._open_tabs([{"url": item["url"], "record_id": 0}], destination=destination)
+        if results and results[0].get("ok"):
+            return {"ok": True, "tab_id": results[0].get("tab_id")}
+        err = (results[0].get("error") or "open failed") if results else "no result"
+        return {"ok": False, "error": err}
 
     def replace_url(
         self,

@@ -4,16 +4,15 @@ import type {
   BrowserTask,
   BrowserAgentSettings,
   TabArchiveArchiveResult,
-  TabArchiveHealthCheckJob,
-  TabArchiveHealthCheckResult,
+  TabArchiveGroup,
   TabArchiveLabel,
   TabArchiveRestoreResult,
   TabArchiveSortBy,
   TabArchiveSortOrder,
-  TabArchiveSafePreview,
   TabArchiveSnapshot,
   TabArchiveRecord,
   TabArchiveReplaceUrlResult,
+  ShelfItem,
 } from './Model'
 
 export async function getTasks(): Promise<BrowserTask[]> {
@@ -90,30 +89,14 @@ export async function tabArchiveSnapshot(params: {
   include_live_urls?: boolean
   sort_by?: TabArchiveSortBy
   sort_order?: TabArchiveSortOrder
-  semantic?: boolean
-  semantic_top_k?: number
 } = {}): Promise<TabArchiveSnapshot> {
   return getRequest<TabArchiveSnapshot>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/snapshot`, params)
-}
-
-export async function tabArchiveSafePreview(includePinned = false): Promise<TabArchiveSafePreview> {
-  return postRequest<TabArchiveSafePreview>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-safe-preview`, {}, {
-      include_pinned: includePinned,
-    })
 }
 
 export async function tabArchiveSelected(tabIds: number[]): Promise<TabArchiveArchiveResult> {
   return postRequest<TabArchiveArchiveResult>(
     `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-selected`, {}, {
       tab_ids: tabIds,
-    })
-}
-
-export async function tabArchiveSafeRun(includePinned = false): Promise<TabArchiveArchiveResult> {
-  return postRequest<TabArchiveArchiveResult>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/archive-safe-run`, {}, {
-      include_pinned: includePinned,
     })
 }
 
@@ -174,49 +157,201 @@ export async function tabArchiveDeleteLabel(labelId: number): Promise<{ deleted:
   return deleteRequest<{ deleted: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/labels/${labelId}`)
 }
 
-export async function tabArchiveHealthCheck(payload: {
-  record_ids?: number[]
-  limit?: number
-} = {}): Promise<TabArchiveHealthCheckResult> {
-  return postRequest<TabArchiveHealthCheckResult>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check`,
-    {},
-    payload,
-  )
+// --- Tab archive groups ---------------------------------------------------
+
+export type GroupScope = 'live' | 'archive' | 'shelf'
+
+export async function tabArchiveGetGroupTree(scope: GroupScope = 'archive'): Promise<TabArchiveGroup[]> {
+  const res = await getRequest<{ tree: TabArchiveGroup[] }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/group-tree`, { scope })
+  return res.tree || []
 }
 
-export async function tabArchiveHealthCheckStart(payload: {
-  record_ids?: number[]
-  limit?: number
-  batch_size?: number
-} = {}): Promise<{ job: TabArchiveHealthCheckJob }> {
-  return postRequest<{ job: TabArchiveHealthCheckJob }>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/start`,
-    {},
-    payload,
-  )
+export async function tabArchiveListGroups(
+  parentId?: number | null,
+  scope: GroupScope = 'archive',
+): Promise<TabArchiveGroup[]> {
+  const params: Record<string, unknown> = { scope }
+  if (parentId != null) params.parent_id = parentId
+  const res = await getRequest<{ groups: TabArchiveGroup[] }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/groups`, params)
+  return res.groups || []
 }
 
-export async function tabArchiveHealthCheckStatus(jobId?: string): Promise<{
-  exists: boolean
-  job: TabArchiveHealthCheckJob | null
-}> {
-  const params = jobId ? { job_id: jobId } : {}
-  return getRequest<{ exists: boolean; job: TabArchiveHealthCheckJob | null }>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/status`,
-    params,
-  )
+export async function tabArchiveCreateGroup(
+  name: string,
+  parentId?: number | null,
+  scope: GroupScope = 'archive',
+  displayOrder?: number,
+): Promise<TabArchiveGroup> {
+  const res = await postRequest<{ group: TabArchiveGroup }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/groups`, {}, {
+      name,
+      parent_id: parentId ?? null,
+      scope,
+      display_order: displayOrder,
+    })
+  return res.group
 }
 
-export async function tabArchiveHealthCheckCancel(jobId?: string): Promise<{
-  exists: boolean
-  job: TabArchiveHealthCheckJob | null
-}> {
-  return postRequest<{ exists: boolean; job: TabArchiveHealthCheckJob | null }>(
-    `${BROWSER_AGENT_ENDPOINT}/tab-archive/health-check/cancel`,
-    {},
-    jobId ? { job_id: jobId } : {},
-  )
+export async function tabArchiveRenameGroup(groupId: number, name: string, scope: GroupScope): Promise<TabArchiveGroup> {
+  const res = await patchRequest<{ group: TabArchiveGroup }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/groups/${groupId}`, {}, { name, scope })
+  return res.group
+}
+
+export async function tabArchiveMoveGroup(
+  groupId: number,
+  newParentId: number | null,
+  newDisplayOrder: number,
+  scope: GroupScope,
+): Promise<TabArchiveGroup> {
+  const res = await patchRequest<{ group: TabArchiveGroup }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/groups/${groupId}`, {}, {
+      new_parent_id: newParentId,
+      new_display_order: newDisplayOrder,
+      scope,
+    })
+  return res.group
+}
+
+export async function tabArchiveDeleteGroup(groupId: number, scope: GroupScope): Promise<{ deleted: boolean }> {
+  return deleteRequest<{ deleted: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/groups/${groupId}?scope=${scope}`)
+}
+
+export async function tabArchiveSetRecordGroup(
+  recordId: number,
+  groupId: number | null,
+): Promise<TabArchiveRecord> {
+  const res = await patchRequest<{ record: TabArchiveRecord }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/records/${recordId}/group`, {}, { group_id: groupId })
+  return res.record
+}
+
+export async function tabArchiveReorderRecord(recordId: number, displayOrder: number): Promise<void> {
+  await postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/records/reorder`, {}, { record_id: recordId, display_order: displayOrder })
+}
+
+export async function tabArchiveSetLiveTabsGroup(
+  tabIds: number[],
+  groupId: number | null,
+): Promise<{ updated: number }> {
+  return postRequest<{ updated: number }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/set-group`, {}, { tab_ids: tabIds, group_id: groupId })
+}
+
+export async function tabArchiveSetLiveTabOrder(
+  tabId: number,
+  groupId: number | null,
+  displayOrder: number,
+): Promise<{ ok: boolean }> {
+  return patchRequest<{ ok: boolean }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/${tabId}/order`, {}, {
+      group_id: groupId,
+      display_order: displayOrder,
+    })
+}
+
+export async function tabArchiveBatchSetLiveTabOrders(
+  items: Array<{ tab_id: number; group_id: number | null; display_order: number }>,
+): Promise<{ ok: boolean; updated: number }> {
+  return patchRequest<{ ok: boolean; updated: number }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/batch-order`, {}, { items })
+}
+
+export async function tabArchiveSetLiveTabCustomHeader(
+  tabId: number,
+  customHeader: string | null,
+): Promise<{ ok: boolean }> {
+  return patchRequest<{ ok: boolean }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/${tabId}/custom-header`, {}, { custom_header: customHeader })
+}
+
+export async function tabArchiveRecordActivations(
+  activations: Array<{ url: string; activation_count: number; last_activated_at: string }>,
+): Promise<void> {
+  await postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/record-activations`, {}, { activations })
+}
+
+export async function tabArchiveGroupAsWindow(
+  windowId: number,
+  groupName: string,
+): Promise<{ group: TabArchiveGroup; count: number }> {
+  return postRequest<{ group: TabArchiveGroup; count: number }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/group-as-window`, {}, { window_id: windowId, group_name: groupName })
+}
+
+// --- Shelf ---------------------------------------------------------------
+
+export async function tabArchiveGetShelf(): Promise<{ items: ShelfItem[]; group_tree: TabArchiveGroup[] }> {
+  return getRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf`)
+}
+
+export async function tabArchiveCreateShelfItem(payload: {
+  url: string
+  title?: string
+  favicon_url?: string
+  group_id?: number | null
+  bookmark_id?: string
+  display_order?: number
+}): Promise<ShelfItem> {
+  const res = await postRequest<{ item: ShelfItem }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/items`, {}, payload)
+  return res.item
+}
+
+export async function tabArchiveDeleteShelfItem(itemId: number): Promise<{ deleted: boolean }> {
+  return deleteRequest<{ deleted: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/items/${itemId}`)
+}
+
+export async function tabArchiveSetShelfItemOrder(itemId: number, displayOrder: number): Promise<{ ok: boolean }> {
+  return patchRequest<{ ok: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/items/${itemId}`, {}, { display_order: displayOrder })
+}
+
+export async function tabArchiveSetShelfItemGroup(itemId: number, groupId: number | null): Promise<{ ok: boolean }> {
+  return patchRequest<{ ok: boolean }>(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/items/${itemId}`, {}, { group_id: groupId })
+}
+
+export async function tabArchiveOpenShelfItem(itemId: number, destination: 'current_window' | 'new_window' = 'current_window'): Promise<{ ok: boolean; tab_id?: number; error?: string }> {
+  return postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/items/${itemId}/open`, {}, { destination })
+}
+
+export async function tabArchiveSyncShelfFromBookmarks(
+  bookmarkNodes: Array<{ id: string; url?: string; title?: string; parentId?: string; index?: number }>,
+): Promise<{ upserted: number }> {
+  return postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/sync-from-bookmarks`, {}, { bookmark_nodes: bookmarkNodes })
+}
+
+export async function tabArchiveExportBookmarks(): Promise<Array<{ bookmark_id: string | null; url: string; title: string }>> {
+  const res = await getRequest<{ items: Array<{ bookmark_id: string | null; url: string; title: string }> }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/export-bookmarks`)
+  return res.items || []
+}
+
+export async function tabArchiveSyncShelfFromBrowserBookmarks(): Promise<{ upserted?: number; error?: string }> {
+  return postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/sync-from-browser-bookmarks`, {}, {})
+}
+
+export async function tabArchiveExportShelfToBrowserBookmarks(): Promise<{ ok?: boolean; error?: string }> {
+  return postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/shelf/export-to-browser-bookmarks`, {}, {})
+}
+
+export async function tabArchiveMoveLiveTab(
+  tabId: number,
+  index: number,
+  windowId?: number,
+): Promise<{ ok: boolean; tab_id?: number; new_index?: number; error?: string }> {
+  const payload: Record<string, number> = { tab_id: tabId, index }
+  if (windowId !== undefined) payload.window_id = windowId
+  return postRequest(`${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/move-tab`, {}, payload)
+}
+
+export async function tabArchiveSortByGroup(windowId?: number): Promise<{ sorted: number; windowId: number }> {
+  return postRequest<{ sorted: number; windowId: number }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/sort-by-group`, {}, { window_id: windowId ?? null })
+}
+
+export async function tabArchiveSplitByGroups(): Promise<{ windows_created: number }> {
+  return postRequest<{ windows_created: number }>(
+    `${BROWSER_AGENT_ENDPOINT}/tab-archive/live-tabs/split-by-groups`, {}, {})
 }
 
 export async function tabArchiveReplaceUrl(payload: {

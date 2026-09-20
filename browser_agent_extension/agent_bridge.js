@@ -14,6 +14,12 @@ const BRIDGE_CAPABILITIES = [
   'merge_tabs',
   'group_tabs_by_domain',
   'get_cookies_for_domain',
+  'sort_tabs_by_group',
+  'split_tabs_by_groups',
+  'record_activations',
+  'get_bookmarks',
+  'write_bookmarks',
+  'move_tab',
 ];
 // Short poll interval keeps the MV3 service worker "actively doing work"
 // (fetch counts as activity), reducing the window Chrome can suspend us in.
@@ -207,8 +213,54 @@ async function executeCommand(cmd) {
       }
       return { result: { grouped: sorted.length, windowId: winId } };
     }
+    if (cmd.type === 'sort_tabs_by_group') {
+      // params: { window_id: int, group_order: [{tab_id, is_separator}] }
+      // group_order is the backend-computed desired sequence: grouped tabs in
+      // group-name order, with is_separator:true sentinels between groups,
+      // then ungrouped tabs last. Pinned tabs are left at the front untouched.
+      const windowId = Number((cmd.params && cmd.params.window_id) || 0);
+      const groupOrder = (cmd.params && cmd.params.group_order) || [];
+      const tabs = await chrome.tabs.query({ windowId });
+      const pinnedCount = tabs.filter(t => t.pinned).length;
+      let insertIdx = pinnedCount;
+      let sortedCount = 0;
+      for (const entry of groupOrder) {
+        if (entry.is_separator) {
+          await chrome.tabs.create({ windowId, index: insertIdx, url: 'about:blank', active: false });
+          insertIdx++;
+        } else {
+          const tabId = Number(entry.tab_id);
+          if (Number.isInteger(tabId) && tabId > 0) {
+            await chrome.tabs.move(tabId, { windowId, index: insertIdx });
+            insertIdx++;
+            sortedCount++;
+          }
+        }
+      }
+      return { result: { sorted: sortedCount, windowId } };
+    }
+    if (cmd.type === 'split_tabs_by_groups') {
+      // params: { groups: [{group_id, group_name, tab_ids: [int]}] }
+      // Each group's tabs are moved into a new dedicated window.
+      // Tabs not listed (ungrouped) stay in their original windows.
+      const groupList = (cmd.params && cmd.params.groups) || [];
+      let windowsCreated = 0;
+      for (const grp of groupList) {
+        const ids = (grp.tab_ids || []).map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (ids.length === 0) continue;
+        try {
+          const newWin = await chrome.windows.create({ tabId: ids[0], focused: false });
+          if (ids.length > 1 && newWin && newWin.id) {
+            await chrome.tabs.move(ids.slice(1), { windowId: newWin.id, index: -1 });
+          }
+          windowsCreated++;
+        } catch (e) {
+          // Skip groups whose tabs can't be moved (e.g. already closed).
+        }
+      }
+      return { result: { windows_created: windowsCreated } };
+    }
     if (cmd.type === 'get_cookies_for_domain') {
-      // Read every cookie whose domain matches. Chrome's API scopes by
       // `domain`; we intentionally return ALL of them (including HttpOnly)
       // so the backend can replay the user's browser session verbatim.
       const domain = (cmd.params && cmd.params.domain) || '';
@@ -234,11 +286,153 @@ async function executeCommand(cmd) {
         },
       };
     }
+    if (cmd.type === 'get_bookmarks') {
+      const tree = await chrome.bookmarks.getTree();
+      return { result: { tree } };
+    }
+    if (cmd.type === 'write_bookmarks') {
+      // params: either
+      //   { tree: [<node>...] }  where <node> is a folder
+      //       { folder, bookmark_id?, items: [{bookmark_id,url,title}], children: [<node>...] }
+      //       or a bare item { bookmark_id?, url, title } (ungrouped, top level), OR
+      //   { items: [{bookmark_id,url,title}] }  (legacy flat form).
+      // Folders: reuse bookmark_id if it still resolves, else create under parentId.
+      // Items: update if bookmark_id resolves, else create under parentId.
+      const results = [];
+
+      async function writeItem(item, parentId) {
+        try {
+          if (item.bookmark_id) {
+            try {
+              await chrome.bookmarks.update(item.bookmark_id, { title: item.title || item.url, url: item.url });
+              results.push({ bookmark_id: item.bookmark_id, ok: true, action: 'updated' });
+              return;
+            } catch (_) {}
+          }
+          const createOpts = { title: item.title || item.url, url: item.url };
+          if (parentId) createOpts.parentId = parentId;
+          const created = await chrome.bookmarks.create(createOpts);
+          results.push({ bookmark_id: created.id, ok: true, action: 'created' });
+        } catch (e) {
+          results.push({ bookmark_id: item.bookmark_id || null, ok: false, error: (e && e.message) || String(e) });
+        }
+      }
+
+      async function writeFolder(node, parentId) {
+        let folderId = null;
+        try {
+          if (node.bookmark_id) {
+            try {
+              const existing = await chrome.bookmarks.get(node.bookmark_id);
+              if (existing && existing.length && !existing[0].url) {
+                folderId = node.bookmark_id;
+                await chrome.bookmarks.update(folderId, { title: node.folder });
+              }
+            } catch (_) {}
+          }
+          if (!folderId) {
+            const createOpts = { title: node.folder };
+            if (parentId) createOpts.parentId = parentId;
+            const createdFolder = await chrome.bookmarks.create(createOpts);
+            folderId = createdFolder.id;
+          }
+          results.push({ bookmark_id: folderId, ok: true, action: 'folder' });
+        } catch (e) {
+          results.push({ bookmark_id: node.bookmark_id || null, ok: false, error: (e && e.message) || String(e) });
+          return;
+        }
+        for (const item of node.items || []) {
+          await writeItem(item, folderId);
+        }
+        for (const child of node.children || []) {
+          await writeNode(child, folderId);
+        }
+      }
+
+      async function writeNode(node, parentId) {
+        if (node && node.folder !== undefined) {
+          await writeFolder(node, parentId);
+        } else if (node && node.url) {
+          await writeItem(node, parentId);
+        }
+      }
+
+      const tree = cmd.params && cmd.params.tree;
+      if (Array.isArray(tree)) {
+        for (const node of tree) {
+          await writeNode(node, null);
+        }
+      } else {
+        const items = (cmd.params && cmd.params.items) || [];
+        for (const item of items) {
+          await writeItem(item, null);
+        }
+      }
+      return { result: { results } };
+    }
+    if (cmd.type === 'move_tab') {
+      // params: { tab_id: int, index: int, window_id?: int }
+      // Moves a single tab to the given index within its current window (or
+      // window_id if provided). Pinned tabs cannot be moved to non-pinned
+      // positions — Chrome silently clamps the index; we just pass through.
+      const tabId = Number((cmd.params && cmd.params.tab_id) || 0);
+      const index = Number((cmd.params && cmd.params.index) !== undefined ? cmd.params.index : -1);
+      if (!Number.isInteger(tabId) || tabId <= 0) return { error: 'invalid tab_id' };
+      const moveOpts = { index };
+      if (cmd.params && cmd.params.window_id) moveOpts.windowId = Number(cmd.params.window_id);
+      const moved = await chrome.tabs.move(tabId, moveOpts);
+      const result = Array.isArray(moved) ? moved[0] : moved;
+      return { result: { tab_id: tabId, new_index: result && result.index } };
+    }
     return { error: `unknown command type: ${cmd.type}` };
   } catch (e) {
     return { error: (e && e.message) || String(e) };
   }
 }
+
+// --- Tab activation heat tracking ---
+// Accumulates per-URL activation counts in memory and flushes to the backend
+// every 30 s. Survives service-worker suspension because the batch is declared
+// at module scope; on SW revival the batch is empty but future activations keep
+// flowing.
+
+const _activationBatch = {}; // url -> { activation_count, last_activated_at }
+
+chrome.tabs.onActivated.addListener(async (info) => {
+  try {
+    const tab = await chrome.tabs.get(info.tabId);
+    const url = tab && tab.url;
+    if (!url || url.startsWith('chrome://') || url.startsWith('about:')) return;
+    const now = new Date().toISOString();
+    if (_activationBatch[url]) {
+      _activationBatch[url].activation_count += 1;
+      _activationBatch[url].last_activated_at = now;
+    } else {
+      _activationBatch[url] = { activation_count: 1, last_activated_at: now };
+    }
+  } catch (_) {}
+});
+
+async function flushActivations() {
+  const entries = Object.entries(_activationBatch);
+  if (entries.length === 0) return;
+  const activations = entries.map(([url, v]) => ({
+    url,
+    activation_count: v.activation_count,
+    last_activated_at: v.last_activated_at,
+  }));
+  // Clear before sending so a failed flush doesn't block future accumulation.
+  for (const url of Object.keys(_activationBatch)) delete _activationBatch[url];
+  try {
+    await fetch(`${BACKEND_BASE}/browser-agent/tab-archive/live-tabs/record-activations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activations }),
+    });
+  } catch (_) {}
+}
+
+setInterval(flushActivations, 30000);
 
 async function pollLoop() {
   while (true) {

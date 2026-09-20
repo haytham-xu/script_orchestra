@@ -4,19 +4,18 @@ Ported from the 2023 browser_plugin prototype. Fixes the original
 update bug (stored the Status enum object instead of its string value)
 and reads the DB path from settings instead of a hardcoded location.
 """
-import sqlite3
 from datetime import datetime
 from typing import List, Optional
 
+from shared.db import get_conn
 from .entity import BrowserTab, Status
-from . import settings_manager
 from . import tab_archive_repository
 
-TABLE = "browser_tab"
+TABLE = "browser_agent_browser_tab"
 
 
 def _conn():
-    return sqlite3.connect(settings_manager.get_db_path())
+    return get_conn()
 
 
 def init_db() -> None:
