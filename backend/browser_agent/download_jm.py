@@ -41,7 +41,7 @@ from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from . import settings_manager, agent_bridge, captcha_solver
+from . import settings_manager, agent_bridge, captcha_solver, repository
 
 _TIMEOUT = 60
 _UA_FALLBACK = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -528,6 +528,7 @@ def _do_download(
 
     if close_tab_after:
         _close_source_tab(source_url)
+        repository.record_downloaded_path(urlparse(source_url).path, "jm")
         _update_item(index, status="done", message="downloaded and tab closed")
     else:
         _update_item(index, status="done",
@@ -553,6 +554,18 @@ def _process_auto(index: int, task: Dict[str, Any], cfg: dict) -> bool:
     prep_url = task["prep_url"]
     filename_override = task.get("filename_base_override")
     close_tab_after = bool(task.get("close_tab_after", True))
+
+    url_path = urlparse(source_url).path
+    if repository.is_path_downloaded(url_path):
+        _update_item(index, status="skipped",
+                     message="Already downloaded, skipping",
+                     progress_percent=100)
+        if close_tab_after:
+            try:
+                _close_source_tab(source_url)
+            except Exception:
+                pass
+        return True
 
     _update_item(index, status="starting")
 

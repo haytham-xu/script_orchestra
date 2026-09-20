@@ -158,7 +158,7 @@ export default defineComponent({
     }
 
     function statusTagType(status: string): '' | 'success' | 'warning' | 'danger' | 'info' {
-      if (status === 'done') return 'success'
+      if (status === 'done' || status === 'skipped') return 'success'
       if (status === 'error') return 'danger'
       if (status === 'unmatched_download_domain') return 'warning'
       if (status === 'downloading' || status === 'fetching_source' || status === 'fetching_download_page') return 'info'

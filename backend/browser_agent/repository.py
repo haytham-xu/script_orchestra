@@ -12,6 +12,7 @@ from .entity import BrowserTab, Status
 from . import tab_archive_repository
 
 TABLE = "browser_agent_browser_tab"
+TABLE_HISTORY = "browser_agent_download_history"
 
 
 def _conn():
@@ -32,6 +33,14 @@ def init_db() -> None:
             file_name TEXT DEFAULT '',
             size INTEGER DEFAULT 0,
             download_link TEXT DEFAULT ''
+        )
+    """)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_HISTORY} (
+            id INTEGER PRIMARY KEY,
+            url_path TEXT UNIQUE NOT NULL,
+            source_type TEXT NOT NULL,
+            downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -114,5 +123,25 @@ def delete_by_id(tab_id) -> None:
     conn = _conn()
     cur = conn.cursor()
     cur.execute(f"DELETE FROM {TABLE} WHERE id = ?", (tab_id,))
+    conn.commit()
+    conn.close()
+
+
+def is_path_downloaded(url_path: str) -> bool:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(f"SELECT 1 FROM {TABLE_HISTORY} WHERE url_path = ?", (url_path,))
+    found = cur.fetchone() is not None
+    conn.close()
+    return found
+
+
+def record_downloaded_path(url_path: str, source_type: str) -> None:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute(
+        f"INSERT OR IGNORE INTO {TABLE_HISTORY} (url_path, source_type) VALUES (?, ?)",
+        (url_path, source_type),
+    )
     conn.commit()
     conn.close()

@@ -26,7 +26,7 @@ from urllib.parse import urlparse, urlsplit, parse_qs, unquote
 import requests
 from bs4 import BeautifulSoup
 
-from . import settings_manager, agent_bridge
+from . import settings_manager, agent_bridge, repository
 
 
 _TIMEOUT = 60            # seconds per HTTP call (source pages can be slow)
@@ -312,6 +312,17 @@ def _update_item(index: int, **patch) -> None:
 
 
 def _process_one(index: int, source_url: str, cfg: dict) -> None:
+    url_path = urlparse(source_url).path
+    if repository.is_path_downloaded(url_path):
+        _update_item(index, status="skipped",
+                     message="Already downloaded, skipping",
+                     progress_percent=100)
+        try:
+            _close_source_tab(source_url)
+        except Exception:
+            pass
+        return
+
     _update_item(index, status="fetching_source")
     try:
         source_html = _http_get(source_url)
@@ -376,12 +387,12 @@ def _process_one(index: int, source_url: str, cfg: dict) -> None:
     try:
         _close_source_tab(source_url)
     except Exception as e:
-        # Download succeeded — don't fail the whole item just because tab
-        # close hiccupped. Note it in the message.
+        repository.record_downloaded_path(url_path, "ssmh")
         _update_item(index, status="done",
                      message=f"downloaded, but close-tab failed: {e}")
         return
 
+    repository.record_downloaded_path(url_path, "ssmh")
     _update_item(index, status="done", message="downloaded and tab closed")
 
 

@@ -79,14 +79,14 @@
               → {{ item.filename }}
             </span>
           </div>
-          <div v-if="item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0)"
+          <div v-if="item.status === 'skipped' || item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0)"
                class="dt1-job-line2">
             <el-progress
               :percentage="item.progress_percent"
-              :status="item.status === 'done' ? 'success' : undefined"
+              :status="(item.status === 'done' || item.status === 'skipped') ? 'success' : undefined"
               :stroke-width="6"
               class="dt1-job-bar" />
-            <span class="dt1-job-metric">
+            <span v-if="item.status !== 'skipped'" class="dt1-job-metric">
               {{ fmtBytes(item.bytes_downloaded) }}
               <template v-if="item.bytes_total > 0"> / {{ fmtBytes(item.bytes_total) }}</template>
             </span>
