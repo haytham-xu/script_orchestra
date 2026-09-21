@@ -63,6 +63,12 @@ _TRAILING_DASH_SUBTITLE = re.compile(
 _MULTI_SPACE = re.compile(r'\s+')
 
 
+def _extract_bracket_prefix(name: str) -> str:
+    """Return the first bracket segment (e.g. '[YYY]') if present, else ''."""
+    m = _BRACKET_PREFIX.match(name)
+    return m.group(0).rstrip() if m else ''
+
+
 def _strip_brackets(name: str) -> str:
     """Strip any number of leading bracketed segments."""
     prev = None
@@ -70,6 +76,19 @@ def _strip_brackets(name: str) -> str:
         prev = name
         name = _BRACKET_PREFIX.sub('', name).strip()
     return name
+
+
+def _strip_volume_suffix(s: str) -> str:
+    """Iteratively remove volume/chapter suffixes (same logic as normalize_name,
+    but without lowercasing so casing is preserved for display)."""
+    prev = None
+    while prev != s:
+        prev = s
+        m = _VOLUME_SUFFIX.search(s)
+        if m:
+            s = s[:m.start()].strip()
+    s = _TRAILING_DASH_SUBTITLE.sub('', s).strip()
+    return s
 
 
 def normalize_name(name: str) -> str:
@@ -151,9 +170,16 @@ def scan_and_group(
         if key in whitelist:
             continue
         raws = raw_names[key]
-        # Strip leading tags from raw names before computing longest common prefix
-        stripped = [_strip_brackets(r).strip() for r in raws]
-        display = _longest_common_prefix(stripped) or min(raws, key=len)
+        # If all raws share the same leading bracket prefix, keep it in the
+        # display name (e.g. "[YYY]xxxx" instead of just "xxxx").
+        bracket_prefixes = {_extract_bracket_prefix(r) for r in raws}
+        common_bracket = next(iter(bracket_prefixes)) if len(bracket_prefixes) == 1 else ''
+
+        # Strip brackets then volume suffixes before computing LCP, so we get
+        # "xxxx" instead of "xxxx 第" as the base name.
+        clean = [_strip_volume_suffix(_strip_brackets(r).strip()) for r in raws]
+        base = _longest_common_prefix(clean) or min(clean, key=len)
+        display = (common_bracket + base) if common_bracket else base
         groups.append(SeriesGroup(key=key, display_name=display, folders=natsorted(paths)))
 
     # Sort groups by display_name for stable UI ordering
