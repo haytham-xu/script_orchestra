@@ -65,9 +65,18 @@ _NUM_RE = re.compile(r'[0-9]+')
 
 
 def _extract_bracket_prefix(name: str) -> str:
-    """Return the first bracket segment (e.g. '[YYY]') if present, else ''."""
-    m = _BRACKET_PREFIX.match(name)
-    return m.group(0).rstrip() if m else ''
+    """Extract all consecutive leading bracket segments as one string (including
+    the trailing whitespace that follows them), e.g. '[3D][tag] ' from
+    '[3D][tag] Title 第1話'."""
+    s = name
+    result = ''
+    while True:
+        m = _BRACKET_PREFIX.match(s)
+        if not m:
+            break
+        result += m.group(0)
+        s = s[m.end():]
+    return result
 
 
 def _strip_brackets(name: str) -> str:
@@ -108,27 +117,53 @@ def _extract_suffix_parts(raw: str):
 def _generate_suggestions(display_name: str, raws: list[str]) -> list[str]:
     """Return alternative name suggestions for a series group.
 
-    Currently generates one range-notation suggestion when all member folder
-    names share the same volume/chapter suffix template, e.g.:
-        [YYY]xxxx + {' 第', '1', '話'} and {' 第', '2', '話'}
-        → '[YYY]xxxx 第1-2話'
+    Generates a range-notation suggestion when all member folder names share
+    the same text *before* their first volume/chapter number.  Numbers are
+    collected from every suffix (including range-format like "1-40"), and
+    the global min/max are used to build the suggestion.
+
+    Examples:
+      [3D]秘密 1-40, 46-47, 49-49  →  [3D]秘密 1-49
+      XXX 02-subtitle, 03-sub, 04  →  XXX 02-04
+      [YYY]xxxx 第1话, 第2话        →  [YYY]xxxx 第1-2话  (unit preserved)
     """
-    parts = [_extract_suffix_parts(r) for r in raws]
-    parts = [p for p in parts if p is not None]
-    if not parts:
+    befores: list[str] = []
+    afters: list[str] = []
+    all_nums: list[tuple[int, str]] = []
+
+    for raw in raws:
+        no_bracket = _strip_brackets(raw).strip()
+        base = _strip_volume_suffix(no_bracket)
+        if not base or base == no_bracket:
+            return []
+        suffix = no_bracket[len(base):]
+        ms = list(_NUM_RE.finditer(suffix))
+        if not ms:
+            return []
+        first_m = ms[0]
+        befores.append(suffix[:first_m.start()])
+        # Preserve the unit text (e.g. '话') only when there is exactly one
+        # number in the suffix (not a range like '1-40').
+        afters.append(suffix[first_m.end():] if len(ms) == 1 else '')
+        for m in ms:
+            try:
+                all_nums.append((int(m.group(0)), m.group(0)))
+            except ValueError:
+                pass
+
+    if not all_nums:
         return []
-    templates = {(p[0], p[2]) for p in parts}
-    if len(templates) != 1:
+    if len(set(befores)) != 1:
         return []
-    before, after = next(iter(templates))
-    try:
-        nums = [int(p[1]) for p in parts]
-    except ValueError:
+    before = befores[0]
+    after = afters[0] if len(set(afters)) == 1 else ''
+
+    min_num = min(all_nums, key=lambda x: x[0])
+    max_num = max(all_nums, key=lambda x: x[0])
+    if min_num[0] == max_num[0]:
         return []
-    min_n, max_n = min(nums), max(nums)
-    if min_n == max_n:
-        return []
-    return [f"{display_name}{before}{min_n}-{max_n}{after}"]
+
+    return [f"{display_name}{before}{min_num[1]}-{max_num[1]}{after}"]
 
 
 def normalize_name(name: str) -> str:
