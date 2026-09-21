@@ -891,6 +891,7 @@ class SeriesGrouperScanResource(Resource):
                         "key": g.key,
                         "display_name": g.display_name,
                         "folders": g.folders,
+                        "suggestions": g.suggestions,
                     }
                     for g in groups
                 ]

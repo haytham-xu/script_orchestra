@@ -61,6 +61,7 @@ _TRAILING_DASH_SUBTITLE = re.compile(
 )
 
 _MULTI_SPACE = re.compile(r'\s+')
+_NUM_RE = re.compile(r'[0-9]+')
 
 
 def _extract_bracket_prefix(name: str) -> str:
@@ -91,6 +92,45 @@ def _strip_volume_suffix(s: str) -> str:
     return s
 
 
+def _extract_suffix_parts(raw: str):
+    """Return (before_num, num_str, after_num) for the volume suffix in *raw*, or None."""
+    no_bracket = _strip_brackets(raw).strip()
+    base = _strip_volume_suffix(no_bracket)
+    if not base or base == no_bracket:
+        return None
+    suffix = no_bracket[len(base):]
+    m = _NUM_RE.search(suffix)
+    if not m:
+        return None
+    return suffix[:m.start()], m.group(0), suffix[m.end():]
+
+
+def _generate_suggestions(display_name: str, raws: list[str]) -> list[str]:
+    """Return alternative name suggestions for a series group.
+
+    Currently generates one range-notation suggestion when all member folder
+    names share the same volume/chapter suffix template, e.g.:
+        [YYY]xxxx + {' 第', '1', '話'} and {' 第', '2', '話'}
+        → '[YYY]xxxx 第1-2話'
+    """
+    parts = [_extract_suffix_parts(r) for r in raws]
+    parts = [p for p in parts if p is not None]
+    if not parts:
+        return []
+    templates = {(p[0], p[2]) for p in parts}
+    if len(templates) != 1:
+        return []
+    before, after = next(iter(templates))
+    try:
+        nums = [int(p[1]) for p in parts]
+    except ValueError:
+        return []
+    min_n, max_n = min(nums), max(nums)
+    if min_n == max_n:
+        return []
+    return [f"{display_name}{before}{min_n}-{max_n}{after}"]
+
+
 def normalize_name(name: str) -> str:
     """Return a canonical series key for *name* (a folder basename)."""
     s = name.strip()
@@ -119,6 +159,7 @@ class SeriesGroup:
     key: str                        # normalised key
     display_name: str               # the most common raw name (heuristic)
     folders: list[str] = field(default_factory=list)   # abs paths
+    suggestions: list[str] = field(default_factory=list)  # alternative name chips
 
 
 def _longest_common_prefix(names: list[str]) -> str:
@@ -180,7 +221,9 @@ def scan_and_group(
         clean = [_strip_volume_suffix(_strip_brackets(r).strip()) for r in raws]
         base = _longest_common_prefix(clean) or min(clean, key=len)
         display = (common_bracket + base) if common_bracket else base
-        groups.append(SeriesGroup(key=key, display_name=display, folders=natsorted(paths)))
+        suggestions = _generate_suggestions(display, raws)
+        groups.append(SeriesGroup(key=key, display_name=display, folders=natsorted(paths),
+                                  suggestions=suggestions))
 
     # Sort groups by display_name for stable UI ordering
     groups.sort(key=lambda g: g.display_name.lower())

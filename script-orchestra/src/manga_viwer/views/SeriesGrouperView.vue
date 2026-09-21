@@ -45,6 +45,15 @@
                 <span class="sg-target-label">Target folder name:</span>
                 <el-input v-model="g.target_name" size="small" class="sg-target-input" />
               </div>
+              <div v-if="g.suggestions.length" class="sg-suggestions-row">
+                <span class="sg-suggestions-label">Suggestions:</span>
+                <span
+                  v-for="s in g.suggestions"
+                  :key="s"
+                  class="sg-suggestion-chip"
+                  @click="g.target_name = s"
+                >{{ s }}</span>
+              </div>
             </div>
 
             <!-- Per-group action buttons -->
@@ -142,6 +151,20 @@ export default SeriesGrouperLogic
 .sg-target-row { display: flex; align-items: center; gap: 8px; }
 .sg-target-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .sg-target-input { width: 360px; }
+
+.sg-suggestions-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 5px; padding-left: 2px;
+}
+.sg-suggestions-label { font-size: 11px; color: #909399; white-space: nowrap; }
+.sg-suggestion-chip {
+  font-size: 11px; font-family: monospace;
+  padding: 2px 8px; border-radius: 10px;
+  background: #ecf5ff; color: #409eff; border: 1px solid #c6e2ff;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.sg-suggestion-chip:hover { background: #409eff; color: #fff; }
 
 .sg-group-actions { display: flex; gap: 6px; align-items: flex-start; flex-shrink: 0; }
 

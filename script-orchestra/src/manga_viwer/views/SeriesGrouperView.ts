@@ -8,6 +8,7 @@ interface SeriesGroup {
   key: string
   display_name: string
   folders: string[]
+  suggestions: string[]
   target_name: string
   executing: boolean
   // merge UI
@@ -50,13 +51,14 @@ export default defineComponent({
       scanning.value = true
       groups.value = []
       try {
-        const r = await postRequest<{ groups: Array<{ key: string; display_name: string; folders: string[] }> }>(
+        const r = await postRequest<{ groups: Array<{ key: string; display_name: string; folders: string[]; suggestions: string[] }> }>(
           `${MANGA_SERIES_GROUPER_ENDPOINT}/scan`,
           {},
           { scan_paths: validPaths },
         )
         groups.value = (r.groups || []).map((g) => ({
           ...g,
+          suggestions: g.suggestions || [],
           target_name: g.display_name,
           executing: false,
           mergeTarget: null,
