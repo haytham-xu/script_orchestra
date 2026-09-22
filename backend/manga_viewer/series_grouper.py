@@ -62,6 +62,49 @@ _TRAILING_DASH_SUBTITLE = re.compile(
 
 _MULTI_SPACE = re.compile(r'\s+')
 _NUM_RE = re.compile(r'[0-9]+')
+_CJK_NUM_RE = re.compile(r'[零一二三四五六七八九十]+')
+_CJK_DIGIT_MAP = {
+    '零': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+}
+
+
+def _cjk_to_int(s: str) -> Optional[int]:
+    """Convert a CJK numeral string (up to 99) to int, or None if unsupported."""
+    if not s:
+        return None
+    if s == '十':
+        return 10
+    if len(s) == 1:
+        return _CJK_DIGIT_MAP.get(s)
+    if s.startswith('十') and len(s) == 2:
+        v = _CJK_DIGIT_MAP.get(s[1])
+        return 10 + v if v is not None else None
+    if s.endswith('十') and len(s) == 2:
+        v = _CJK_DIGIT_MAP.get(s[0])
+        return v * 10 if v is not None else None
+    if len(s) == 3 and s[1] == '十':
+        a, b = _CJK_DIGIT_MAP.get(s[0]), _CJK_DIGIT_MAP.get(s[2])
+        return a * 10 + b if a is not None and b is not None else None
+    return None
+
+
+def _find_nums(text: str) -> list[tuple[int, str, int, int]]:
+    """Return all numbers in *text* as (int_value, display_str, start, end).
+
+    Arabic digits are tried first.  If none found, CJK numerals are used and
+    converted to Arabic strings so the generated suggestion always uses Arabic.
+    """
+    hits = [(int(m.group(0)), m.group(0), m.start(), m.end())
+            for m in _NUM_RE.finditer(text)]
+    if hits:
+        return hits
+    out = []
+    for m in _CJK_NUM_RE.finditer(text):
+        v = _cjk_to_int(m.group(0))
+        if v is not None:
+            out.append((v, str(v), m.start(), m.end()))
+    return out
 
 
 def _extract_bracket_prefix(name: str) -> str:
@@ -137,19 +180,14 @@ def _generate_suggestions(display_name: str, raws: list[str]) -> list[str]:
         if not base or base == no_bracket:
             return []
         suffix = no_bracket[len(base):]
-        ms = list(_NUM_RE.finditer(suffix))
-        if not ms:
+        nums = _find_nums(suffix)
+        if not nums:
             return []
-        first_m = ms[0]
-        befores.append(suffix[:first_m.start()])
-        # Preserve the unit text (e.g. '话') only when there is exactly one
-        # number in the suffix (not a range like '1-40').
-        afters.append(suffix[first_m.end():] if len(ms) == 1 else '')
-        for m in ms:
-            try:
-                all_nums.append((int(m.group(0)), m.group(0)))
-            except ValueError:
-                pass
+        first = nums[0]
+        befores.append(suffix[:first[2]])
+        afters.append(suffix[first[3]:] if len(nums) == 1 else '')
+        for v, s, _, _ in nums:
+            all_nums.append((v, s))
 
     if not all_nums:
         return []
