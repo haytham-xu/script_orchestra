@@ -28,6 +28,7 @@
         <el-tab-pane label="Live" name="live" />
         <el-tab-pane label="Archive" name="archive" />
         <el-tab-pane label="Shelf" name="shelf" />
+        <el-tab-pane label="Mock" name="mock" />
       </el-tabs>
       <div class="tab-toolbar" v-if="activePane === 'live'">
         <el-button @click="mergeAll">Merge windows</el-button>
@@ -506,6 +507,11 @@
       </div>
 
       <el-empty v-else-if="!shelfLoading" description="No items on the shelf yet. Click + Add URL to add one." />
+    </div>
+
+    <!-- Mock pane -->
+    <div v-show="activePane === 'mock'" class="mock-pane-wrap">
+      <MockLiveView />
     </div>
 
     <el-dialog v-model="replaceUrlVisible" title="Replace URL" width="760px">
@@ -1254,5 +1260,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.mock-pane-wrap {
+  margin-top: 12px;
 }
 </style>
