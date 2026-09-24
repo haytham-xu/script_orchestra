@@ -165,9 +165,11 @@ else:
 if _on('file-pipeline') or _on('manga-viewer'):
     from file_pipeline.blueprint import blueprint as file_pipeline_blueprint
     from file_pipeline import repository as file_pipeline_repo
+    from file_pipeline import fp_websocket as fp_websocket
 else:
     file_pipeline_blueprint = None
     file_pipeline_repo = None
+    fp_websocket = None
 
 if _on('file-tracker'):
     from file_tracker.blueprint import blueprint as file_tracker_blueprint
@@ -358,6 +360,8 @@ def create_app() -> Flask:
             ba_websocket.register_socketio_events()
         if get_browser_agent_service:
             get_browser_agent_service().register_broadcaster(ba_websocket.broadcast_progress)
+        if fp_websocket:
+            fp_websocket.init_socketio(socketio)
         if _claude_bridge_available and cb_websocket:
             cb_websocket.init_socketio(socketio)
             cb_websocket.register_socketio_events()

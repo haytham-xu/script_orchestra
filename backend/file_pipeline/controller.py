@@ -1,3 +1,6 @@
+import json
+import threading
+import uuid
 from flask_restx import Namespace, Resource
 from flask import request
 from . import repository
@@ -39,7 +42,6 @@ class PipelineList(Resource):
 
     def post(self):
         b = request.get_json()
-        import json
         steps = b.get('steps', '{}')
         if not isinstance(steps, str):
             steps = json.dumps(steps)
@@ -57,7 +59,6 @@ class PipelineItem(Resource):
 
     def put(self, pipeline_id):
         b = request.get_json()
-        import json
         steps = b.get('steps', '{}')
         if not isinstance(steps, str):
             steps = json.dumps(steps)
@@ -69,16 +70,77 @@ class PipelineItem(Resource):
         return {}, 204
 
 
+# --- Run config ---
+
+@ns.route('/pipelines/<int:pipeline_id>/config')
+class PipelineConfig(Resource):
+    def get(self, pipeline_id):
+        return repository.get_run_config(pipeline_id), 200
+
+    def put(self, pipeline_id):
+        b = request.get_json()
+        repository.save_run_config(pipeline_id, b)
+        return {'ok': True}, 200
+
+
+# --- Passwords ---
+
+@ns.route('/passwords')
+class PasswordList(Resource):
+    def get(self):
+        return {'passwords': [p.to_dict() for p in repository.get_passwords()]}, 200
+
+    def post(self):
+        b = request.get_json()
+        pid = repository.add_password(b['value'], b.get('note', ''))
+        return {'id': pid}, 201
+
+
+@ns.route('/passwords/<int:pwd_id>')
+class PasswordItem(Resource):
+    def put(self, pwd_id):
+        b = request.get_json()
+        repository.update_password(pwd_id, b['value'], b.get('note', ''))
+        return {'ok': True}, 200
+
+    def delete(self, pwd_id):
+        repository.delete_password(pwd_id)
+        return {}, 204
+
+
+@ns.route('/passwords/reorder')
+class PasswordReorder(Resource):
+    def post(self):
+        b = request.get_json()
+        repository.reorder_passwords(b['ids'])
+        return {'ok': True}, 200
+
+
 # --- Run ---
 
 @ns.route('/run')
 class RunPipeline(Resource):
     def post(self):
         b = request.get_json()
-        try:
-            results = get_service().run_pipeline(b['pipeline_id'], b['folder_path'])
-            return {'results': results}, 200
-        except ValueError as e:
-            return {'error': str(e)}, 400
-        except Exception as e:
-            return {'error': str(e)}, 500
+        pipeline_id = b['pipeline_id']
+        folder_path = b['folder_path']
+        run_vars = b.get('run_vars') or {}
+        run_id = str(uuid.uuid4())
+
+        def _run():
+            try:
+                from . import fp_websocket
+                cb = fp_websocket.make_progress_callback(run_id, pipeline_id)
+                get_service().run_pipeline(pipeline_id, folder_path, run_vars, cb)
+            except Exception as e:
+                from . import fp_websocket
+                if fp_websocket._socketio:
+                    fp_websocket._socketio.emit('fp_progress', {
+                        'run_id': run_id,
+                        'pipeline_id': pipeline_id,
+                        'phase': 'error',
+                        'error': str(e),
+                    })
+
+        threading.Thread(target=_run, daemon=True).start()
+        return {'run_id': run_id}, 202
