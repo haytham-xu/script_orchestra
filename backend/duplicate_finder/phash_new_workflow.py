@@ -94,25 +94,26 @@ def _compute_similarities_batch(args):
 
 # Global variable to store all_images in each worker process
 _PHASE2_ALL_IMAGES = None
+_PHASE2_DB_PATH = None
 
 
-def _phase2_worker_init(all_images):
+def _phase2_worker_init(db_path):
     """
     Worker process initializer for Phase 2.
-    Called once per worker process at startup.
-    Stores all_images in global variable to avoid repeated transmission.
-
-    Args:
-        all_images: List of (id, phash) tuples for all images in database
+    Each worker loads all_images from the DB directly — avoids passing 800K+ rows
+    through multiprocessing IPC pipes which causes WinError 6 on Windows.
     """
-    global _PHASE2_ALL_IMAGES
-    _PHASE2_ALL_IMAGES = all_images
-
-    import os
-    import multiprocessing
+    global _PHASE2_ALL_IMAGES, _PHASE2_DB_PATH
+    import sqlite3, os, multiprocessing
+    _PHASE2_DB_PATH = db_path
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, phash FROM duplicate_finder_image_hashes")
+    _PHASE2_ALL_IMAGES = cursor.fetchall()
+    conn.close()
     pid = os.getpid()
     worker_name = multiprocessing.current_process().name
-    print(f"[Worker {worker_name} PID={pid}] Phase 2 initialized with {len(all_images)} images in memory")
+    print(f"[Worker {worker_name} PID={pid}] Phase 2 initialized with {len(_PHASE2_ALL_IMAGES)} images from DB")
 
 
 def _compute_similarities_single(args):
@@ -163,6 +164,7 @@ class DuplicateFinderWorkflow:
         print(f"[Workflow] Using shared database")
         self._conn = None
         self._thread_local = threading.local()
+        self._db_path = get_db_path()
         # Use multiprocessing Manager for cross-process Event
         self._manager = Manager()
         self._stop_event = self._manager.Event()
@@ -395,26 +397,32 @@ class DuplicateFinderWorkflow:
         # Exact-path lookup: file_path → status
         db_status = {row[2]: row[6] for row in db_rows_all}
 
-        # Fuzzy lookup: (filename, filesize) → list of candidate rows that have a phash.
-        # Used in Step 2 to detect files relocated by a directory rename.
+        # Fuzzy lookup tier 1: (parent_dirname, filename, filesize) → list of candidates.
+        # Covers files whose parent directory was moved (e.g. folder1 → parent/folder1).
+        # The parent dirname is the basename of the immediate parent, not the full path.
+        # Tier 2: (filename, filesize) → candidates — covers parent-directory renames
+        # (e.g. folder1 → folder 1) where the parent basename itself changes.
+        fuzzy_dir_candidates: dict = {}
         fuzzy_candidates: dict = {}
         for row_fn, row_fsz, row_fp, row_phash, row_res, row_mtime, _row_status in db_rows_all:
             if not row_phash:
                 continue
-            key = (row_fn, row_fsz)
-            if key not in fuzzy_candidates:
-                fuzzy_candidates[key] = []
-            fuzzy_candidates[key].append({
+            entry = {
                 'file_path': row_fp,
                 'phash': row_phash,
                 'resolution': row_res,
                 'mtime': row_mtime,
-            })
+            }
+            parent_dn = os.path.basename(os.path.dirname(row_fp))
+            dir_key = (parent_dn, row_fn, row_fsz)
+            fuzzy_dir_candidates.setdefault(dir_key, []).append(entry)
+            fuzzy_candidates.setdefault((row_fn, row_fsz), []).append(entry)
 
         # Step 2: Check which files need computation (with fuzzy match for moved files)
         print(f"[Phase 1] Step 2: Checking which files need computation...")
         files_to_compute = []
         fuzzy_inserts: list = []  # (filename, filesize, file_path, phash, resolution, dir_path, mtime)
+        fuzzy_path_pairs: list = []  # (old_file_path, new_file_path) for whitelist migration
         skipped_count = 0
         checked_count = 0
         total_files = len(file_paths)
@@ -444,21 +452,38 @@ class DuplicateFinderWorkflow:
                     checked_count += 1
                     continue
 
-                candidates = fuzzy_candidates.get((filename, filesize), [])
-                if (len(candidates) == 1
-                        and candidates[0]['mtime'] is not None
-                        and abs(candidates[0]['mtime'] - current_mtime) < 0.01):
-                    # Unique match on filename + filesize + mtime: almost certainly the
-                    # same file relocated by a directory rename. Reuse the cached phash.
-                    cached = candidates[0]
+                # Tier 1: (parent_dirname, filename, filesize) + mtime.
+                # Uniqueness not required here — same parent name narrows to the right album.
+                parent_dirname = os.path.basename(os.path.dirname(file_path))
+                dir_candidates = fuzzy_dir_candidates.get((parent_dirname, filename, filesize), [])
+                cached = None
+                if dir_candidates:
+                    # Pick the candidate whose mtime is within tolerance; prefer unique match.
+                    mtime_matches = [c for c in dir_candidates
+                                     if c['mtime'] is not None
+                                     and abs(c['mtime'] - current_mtime) < 0.01]
+                    if len(mtime_matches) == 1:
+                        cached = mtime_matches[0]
+
+                if cached is None:
+                    # Tier 2: (filename, filesize) + mtime, requires global uniqueness.
+                    candidates = fuzzy_candidates.get((filename, filesize), [])
+                    if (len(candidates) == 1
+                            and candidates[0]['mtime'] is not None
+                            and abs(candidates[0]['mtime'] - current_mtime) < 0.01):
+                        cached = candidates[0]
+
+                if cached is not None:
+                    # Reuse cached phash for relocated/renamed-parent file.
                     fuzzy_inserts.append((
                         filename, filesize, file_path,
                         cached['phash'], cached['resolution'],
                         os.path.dirname(file_path), current_mtime,
                     ))
+                    fuzzy_path_pairs.append((cached['file_path'], file_path))
                     skipped_count += 1
                 else:
-                    # Multiple candidates (ambiguous) or mtime differs → recompute.
+                    # No fuzzy match found → schedule full phash computation.
                     files_to_compute.append(file_path)
             # status='pending': phash already in DB, awaiting Phase 2 — skip silently.
 
@@ -482,6 +507,32 @@ class DuplicateFinderWorkflow:
             conn.commit()
             fuzzy_matched_count = len(fuzzy_inserts)
             print(f"[Phase 1] Step 2: Fuzzy-matched {fuzzy_matched_count} moved files (phash reused)")
+
+            # Migrate whitelist entries: old_id → new_id, before Step 4 deletes old records.
+            # ON DELETE CASCADE would otherwise silently drop the whitelist entries.
+            migrated_wl = 0
+            for old_path, new_path in fuzzy_path_pairs:
+                row_old = cursor.execute(
+                    "SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?", (old_path,)
+                ).fetchone()
+                row_new = cursor.execute(
+                    "SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?", (new_path,)
+                ).fetchone()
+                if not row_old or not row_new:
+                    continue
+                old_id, new_id = row_old[0], row_new[0]
+                wl_row = cursor.execute(
+                    "SELECT added_time, note FROM duplicate_finder_whitelist WHERE image_id = ?", (old_id,)
+                ).fetchone()
+                if wl_row:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO duplicate_finder_whitelist (image_id, added_time, note) VALUES (?, ?, ?)",
+                        (new_id, wl_row[0], wl_row[1]),
+                    )
+                    migrated_wl += 1
+            if migrated_wl:
+                conn.commit()
+                print(f"[Phase 1] Step 2: Migrated {migrated_wl} whitelist entries to new paths")
 
         if scan_stopped:
             print(f"[Phase 1] ⏸️ Scan stopped: checked {checked_count}/{total_files} files, "
@@ -686,7 +737,7 @@ class DuplicateFinderWorkflow:
         batch_data = []
         for item in batch:
             file_path = item['file_path']
-            filename = Path(file_path).name
+            filename = os.path.basename(file_path)
             dir_path = os.path.dirname(file_path)
             batch_data.append((
                 filename,
@@ -774,21 +825,24 @@ class DuplicateFinderWorkflow:
             print("[Phase 2] No pending images, nothing to do")
             return {'processed': 0, 'similarities_found': 0, 'elapsed': 0}
 
-        # Get all images (for distance comparison)
-        print(f"[Phase 2] Step 2: Getting all images for comparison...")
-        cursor.execute("SELECT id, phash FROM duplicate_finder_image_hashes")
-        all_images = cursor.fetchall()
+        # Get count of all images for progress reporting; also build id→dir_path map
+        # so same-folder pairs can be skipped before being written to phash_similarities.
+        print(f"[Phase 2] Step 2: Getting total image count + building id→dir_path map...")
+        cursor.execute("SELECT id, dir_path FROM duplicate_finder_image_hashes")
+        id_to_dir: dict = {row[0]: row[1] for row in cursor.fetchall()}
+        total_images_count = len(id_to_dir)
 
-        print(f"[Phase 2] Step 2 DONE: Processing {len(pending_images)} pending images against {len(all_images)} total images")
+        print(f"[Phase 2] Step 2 DONE: Processing {len(pending_images)} pending images against {total_images_count} total images")
 
+        db_path = self._db_path
         print(f"[Phase 2] Step 3: Starting multiprocessing with {num_workers} workers, db_commit_batch_size={db_commit_batch_size}, ipc_chunk_size={ipc_chunk_size}")
-        print(f"[Phase 2] Using NEW architecture: Pool(initializer) - all_images transmitted only {num_workers} times (once per worker)")
+        print(f"[Phase 2] Workers will each load all_images from DB (avoids large IPC on Windows)")
 
         similarities_count = 0
         processed_count = 0
 
         # Use apply_async for true control over task submission
-        with Pool(processes=num_workers, initializer=_phase2_worker_init, initargs=(all_images,)) as pool:
+        with Pool(processes=num_workers, initializer=_phase2_worker_init, initargs=(db_path,)) as pool:
             stop_requested = False
             pending_results = []  # Store (AsyncResult, img_id) tuples
             submitted_count = 0
@@ -834,13 +888,20 @@ class DuplicateFinderWorkflow:
 
                             # ⚠️ CRITICAL: Commit similarities BEFORE updating status
                             if similarities_list:
-                                cursor.executemany('''
-                                    INSERT OR REPLACE INTO duplicate_finder_phash_similarities
-                                    (image_id_a, image_id_b, threshold, distance)
-                                    VALUES (?, ?, 80, ?)
-                                ''', similarities_list)
-                                conn.commit()
-                                similarities_count += len(similarities_list)
+                                # Drop same-folder pairs before writing to DB.
+                                filtered = [
+                                    (a, b, d) for a, b, d in similarities_list
+                                    if id_to_dir.get(a) != id_to_dir.get(b)
+                                    or id_to_dir.get(a) is None
+                                ]
+                                if filtered:
+                                    cursor.executemany('''
+                                        INSERT OR REPLACE INTO duplicate_finder_phash_similarities
+                                        (image_id_a, image_id_b, threshold, distance)
+                                        VALUES (?, ?, 80, ?)
+                                    ''', filtered)
+                                    conn.commit()
+                                    similarities_count += len(filtered)
                                 if stop_requested:
                                     print(f"[Phase 2 Main] (STOP mode) Committed {len(similarities_list)} similarities for image {result_img_id}")
                                 else:
@@ -901,7 +962,7 @@ class DuplicateFinderWorkflow:
             'processed': processed_count,
             'similarities_found': similarities_count,
             'elapsed': elapsed,
-            'stopped': stop_requested  # 新增标志
+            'stopped': stop_requested
         }
 
     def _hamming_distance(self, hash1: str, hash2: str) -> int:
@@ -1013,6 +1074,8 @@ class DuplicateFinderWorkflow:
                     continue
                 dirs[:] = [d for d in dirs if not is_excluded(os.path.join(root, d))]
                 for fname in files:
+                    if fname.startswith('.'):
+                        continue  # skip hidden/system files (macOS ._* resource forks, etc.)
                     if fname.lower().endswith(IMAGE_EXTS):
                         fs_files.append(os.path.join(root, fname))
         print(f"[Compare Focused] Step 2: {len(fs_files)} files on disk in scope")
@@ -1117,13 +1180,16 @@ class DuplicateFinderWorkflow:
         SCHEMA_THRESHOLD = 80
 
         for i in range(n):
-            id_a, phash_a, _ = scope_images[i]
+            id_a, phash_a, path_a = scope_images[i]
+            dir_a = os.path.dirname(path_a)
             try:
                 int_a = int(phash_a, 16)
             except (ValueError, TypeError):
                 continue
             for j in range(i + 1, n):
-                id_b, phash_b, _ = scope_images[j]
+                id_b, phash_b, path_b = scope_images[j]
+                if os.path.dirname(path_b) == dir_a:
+                    continue  # same folder — skip
                 try:
                     int_b = int(phash_b, 16)
                 except (ValueError, TypeError):
@@ -2099,6 +2165,7 @@ class DuplicateFinderWorkflow:
                 dp = m['_dir_path']
                 m['folder_dup']   = int(folder_dup_counts.get(dp, 0))
                 m['folder_total'] = int(folder_counts.get(dp, 0))
+                m['group_id']     = gid
                 m.pop('_dir_path', None)
 
         # 6. Compute display_path for THIS page only (current page ≈ a few hundred images;

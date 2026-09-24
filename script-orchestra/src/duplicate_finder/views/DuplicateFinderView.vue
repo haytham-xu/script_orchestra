@@ -68,6 +68,20 @@
           >
             ⏹️ Stop
           </el-button>
+          <el-tooltip
+            v-if="!isPhase2Running"
+            content="Reset all computed images to pending and re-run Phase 2 with the current threshold. Use this when you changed the similarity threshold or added new folders without re-running Phase 2."
+            placement="top"
+          >
+            <el-button
+              type="warning"
+              size="large"
+              :disabled="isPhase2Running"
+              @click="forceRerunPhase2"
+            >
+              🔄 Force Re-run
+            </el-button>
+          </el-tooltip>
 
           <!-- Phase 2.5: Materialize Groups (manual trigger between Phase 2 and Phase 3) -->
           <el-tooltip
@@ -383,6 +397,15 @@
                       </el-button>
                     </span>
                   </el-tooltip>
+                  <el-button
+                    size="small"
+                    type="warning"
+                    plain
+                    :disabled="getSelectedCountInGroup(group) === 0 || getSelectedCountInGroup(group) === group.length"
+                    @click="splitGroup(group, groupIndex)"
+                  >
+                    ✂️ Split Selected ({{ getSelectedCountInGroup(group) }})
+                  </el-button>
                   <el-button
                     size="small"
                     type="danger"
@@ -1211,19 +1234,36 @@
               :key="'bad-' + idx"
               class="deep-replace-bad-group"
             >
-              <div class="deep-replace-bad-header">
-                Group with {{ g.length }} images (cannot Replace)
+              <div class="deep-replace-bad-header" style="display:flex;align-items:center;justify-content:space-between;">
+                <span>Group with {{ g.length }} images (cannot Replace)</span>
+                <el-button
+                  size="small"
+                  type="warning"
+                  plain
+                  :disabled="g.filter((img: any) => selectedForDelete.has(img.file_path)).length === 0 || g.filter((img: any) => selectedForDelete.has(img.file_path)).length === g.length"
+                  @click.stop="deepReplaceSplitGroup(g, idx)"
+                >
+                  ✂️ Split Selected ({{ g.filter((img: any) => selectedForDelete.has(img.file_path)).length }})
+                </el-button>
               </div>
               <div class="deep-replace-bad-thumbs">
                 <div
                   v-for="(img, i) in g"
                   :key="i"
                   class="deep-replace-thumb"
+                  :style="{ cursor: 'pointer', opacity: selectedForDelete.has(img.file_path) ? 1 : 0.75 }"
+                  @click.stop="toggleFileSelection(img.file_path)"
                 >
-                  <img :src="getImageUrl(img.file_path)" :alt="img.filename || ''" loading="lazy" />
+                  <img
+                    :src="getImageUrl(img.file_path)"
+                    :alt="img.filename || ''"
+                    loading="lazy"
+                    :style="selectedForDelete.has(img.file_path) ? 'outline: 3px solid #409eff; border-radius: 4px;' : ''"
+                  />
                   <div class="deep-replace-thumb-label" :title="img.file_path">
                     {{ img.filename || getFilenameFromPath(img.file_path) }}
                   </div>
+                  <div v-if="selectedForDelete.has(img.file_path)" style="font-size:10px;color:#409eff;font-weight:700;">✔ Selected</div>
                 </div>
               </div>
             </div>
@@ -1346,6 +1386,7 @@ const {
   stopPhase1,
   runPhase2,
   stopPhase2,
+  forceRerunPhase2,
   runPhase25,
   stopPhase25,
   whitelistCurrentPage,
@@ -1370,6 +1411,7 @@ const {
   isDeepReplacing,
   cancelDeepReplace,
   confirmDeepReplace,
+  deepReplaceSplitGroup,
   runPhase3,
   stopPhase3,
   toggleFileSelection,
@@ -1408,7 +1450,8 @@ const {
   formatTimestamp,
   verifyAndCleanup,
   addPreferFolder,
-  removePreferFolder
+  removePreferFolder,
+  splitGroup,
 } = useDuplicateFinderView()
 </script>
 

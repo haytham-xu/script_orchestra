@@ -20,6 +20,7 @@ export interface ImageInfo {
   filename?: string
   folder_dup?: number
   folder_total?: number
+  group_id?: number
 }
 
 export interface ScanResult {
@@ -149,6 +150,17 @@ export class DuplicateFinderService {
    */
   static async addGroupToWhitelist(image_ids: number[]): Promise<{ message: string }> {
     const response = await postRequest(`${this.BASE_URL}/whitelist`, {}, { image_ids })
+    return response
+  }
+
+  static async splitGroup(
+    source_group_id: number,
+    image_ids: number[],
+  ): Promise<{ new_group_id: number; source_remaining: number; message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/groups/split`, {}, {
+      source_group_id,
+      image_ids,
+    })
     return response
   }
 
@@ -421,6 +433,11 @@ export class DuplicateFinderService {
    */
   static async phase2Stop(): Promise<{ message: string }> {
     const response = await postRequest(`${this.BASE_URL}/phase2/stop`, {}, {})
+    return response
+  }
+
+  static async phase2ResetStatus(): Promise<{ reset_count: number; message: string }> {
+    const response = await postRequest(`${this.BASE_URL}/phase2/reset-status`, {}, {})
     return response
   }
 

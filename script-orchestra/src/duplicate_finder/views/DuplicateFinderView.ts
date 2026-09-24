@@ -674,8 +674,9 @@ export function useDuplicateFinderView() {
         }
       })
 
-      // Convert threshold percentage to distance (80% = 12, 90% = 6)
-      const thresholdDistance = Math.round(64 * (100 - threshold.value) / 100)
+      // Convert threshold percentage to distance. Hash is 256-bit (16×16 phash).
+      // 80% similarity → distance ≤ Math.round(256 × 0.20) = 51
+      const thresholdDistance = Math.round(256 * (100 - threshold.value) / 100)
 
       // Now call API with the scan_id
       console.log('[Phase 2] Calling API with scan_id:', scanId)
@@ -740,6 +741,26 @@ export function useDuplicateFinderView() {
     } catch (error: any) {
       console.error('[Frontend] ❌ Stop Phase 2 failed:', error)
       ElMessage.error(error.message || 'Failed to stop Phase 2')
+    }
+  }
+
+  async function forceRerunPhase2() {
+    try {
+      await ElMessageBox.confirm(
+        `Reset all computed images to "pending" and re-run Phase 2 with current threshold (${threshold.value}% similarity = distance ≤ ${Math.round(256 * (100 - threshold.value) / 100)})?\n\nThis will find pairs that the previous run missed due to the old threshold. May take significant time.`,
+        'Force Re-run Phase 2',
+        {
+          confirmButtonText: 'Reset & Re-run',
+          cancelButtonText: 'Cancel',
+          type: 'warning',
+        }
+      )
+      const resetResult = await DuplicateFinderService.phase2ResetStatus()
+      ElMessage.info(`Reset ${resetResult.reset_count} images to pending. Starting Phase 2...`)
+      await runPhase2()
+    } catch (error: any) {
+      if (error === 'cancel' || error?.toString() === 'cancel') return
+      ElMessage.error(error.message || 'Failed to reset Phase 2 status')
     }
   }
 
@@ -1522,6 +1543,45 @@ export function useDuplicateFinderView() {
     }
   }
 
+  async function splitGroup(group: ImageInfo[], groupIndex: number) {
+    const selected = group.filter(img => selectedForDelete.value.has(img.file_path))
+    if (selected.length === 0) {
+      ElMessage.warning('No files selected')
+      return
+    }
+    if (selected.length === group.length) {
+      ElMessage.warning('Cannot split all images out — select a subset')
+      return
+    }
+    const sourceGroupId = group[0]?.group_id
+    if (!sourceGroupId) {
+      ElMessage.error('Group ID missing — try refreshing')
+      return
+    }
+    const image_ids = selected.map(img => img.id as number).filter(Boolean)
+    if (image_ids.length !== selected.length) {
+      ElMessage.error('Some images are missing IDs — try refreshing')
+      return
+    }
+    try {
+      const result = await DuplicateFinderService.splitGroup(sourceGroupId, image_ids)
+      ElMessage.success(result.message)
+      if (!scanResult.value) return
+      const groups = scanResult.value.duplicate_groups
+      const newGroupMembers = selected.map(img => ({ ...img, group_id: result.new_group_id }))
+      const remaining = group.filter(img => !selectedForDelete.value.has(img.file_path))
+      if (result.source_remaining < 2) {
+        groups.splice(groupIndex, 1)
+      } else {
+        groups[groupIndex] = remaining
+      }
+      groups.splice(groupIndex + 1, 0, newGroupMembers)
+      selected.forEach(img => selectedForDelete.value.delete(img.file_path))
+    } catch (error: any) {
+      ElMessage.error(error.message || 'Split failed')
+    }
+  }
+
   /**
    * Replace operation: keep the single selected image in the group, delete
    * all others (move to delete target), and move the selected one into the
@@ -1688,6 +1748,63 @@ export function useDuplicateFinderView() {
 
   function cancelDeepReplace() {
     showDeepReplaceDialog.value = false
+  }
+
+  async function deepReplaceSplitGroup(badGroup: ImageInfo[], badGroupIdx: number) {
+    const selected = badGroup.filter(img => selectedForDelete.value.has(img.file_path))
+    if (selected.length === 0) { ElMessage.warning('No images selected in this group'); return }
+    if (selected.length === badGroup.length) { ElMessage.warning('Cannot split all images — select a subset'); return }
+    const sourceGroupId = badGroup[0]?.group_id
+    const image_ids = selected.map(img => img.id as number).filter(Boolean)
+    if (!sourceGroupId || image_ids.length !== selected.length) {
+      ElMessage.error('Group ID or image IDs missing — try re-opening Deep Replace')
+      return
+    }
+    try {
+      const result = await DuplicateFinderService.splitGroup(sourceGroupId, image_ids)
+      ElMessage.success(result.message)
+      const remaining = badGroup.filter(img => !selectedForDelete.value.has(img.file_path))
+      selected.forEach(img => selectedForDelete.value.delete(img.file_path))
+
+      // Mirror split into the main scanResult groups list
+      if (scanResult.value) {
+        const allGroups = scanResult.value.duplicate_groups
+        const srcIdx = allGroups.findIndex(g => g.length > 0 && g[0].group_id === sourceGroupId)
+        if (srcIdx >= 0) {
+          const newMembers = selected.map(img => ({ ...img, group_id: result.new_group_id }))
+          if (result.source_remaining < 2) {
+            allGroups.splice(srcIdx, 1)
+          } else {
+            allGroups[srcIdx] = remaining
+          }
+          allGroups.splice(srcIdx + 1, 0, newMembers)
+        }
+      }
+
+      // Update deepReplacePreview: remove the bad group
+      const preview = deepReplacePreview.value
+      const dirPath = preview.folderPath
+      const sep = dirPath.includes('\\') ? '\\' : '/'
+      const dirPrefix = dirPath.endsWith(sep) ? dirPath : dirPath + sep
+      preview.badGroups.splice(badGroupIdx, 1)
+
+      // If source now has exactly 2 members it may qualify as a ready operation
+      if (result.source_remaining === 2) {
+        const keepImg = remaining.find(img => img.file_path === dirPath || img.file_path.startsWith(dirPrefix))
+        const anchor = remaining.find(img => img !== keepImg)
+        if (keepImg && anchor) {
+          preview.operations.push({ selected: keepImg, anchor, group: remaining.slice() })
+        } else {
+          // Folder match ambiguous — keep it as a bad group for now
+          preview.badGroups.splice(badGroupIdx, 0, remaining.slice())
+        }
+      } else if (result.source_remaining >= 3) {
+        // Still too large — put remaining back as a bad group
+        preview.badGroups.splice(badGroupIdx, 0, remaining.slice())
+      }
+    } catch (error: any) {
+      ElMessage.error(error.message || 'Split failed')
+    }
   }
 
   async function confirmDeepReplace() {
@@ -2083,7 +2200,7 @@ export function useDuplicateFinderView() {
   }
 
   /**
-   * Execute deep path delete (全局批量删除指定路径下的所有duplicate文件)
+   * Execute deep path delete: bulk-delete all duplicate files under the given path.
    */
   async function executeDeepPathDelete() {
     console.log('[DEBUG] executeDeepPathDelete called, deepPathDelete.value:', deepPathDelete.value)
@@ -2489,6 +2606,7 @@ export function useDuplicateFinderView() {
     stopPhase1,
     runPhase2,
     stopPhase2,
+    forceRerunPhase2,
     runPhase25,
     stopPhase25,
     whitelistCurrentPage,
@@ -2513,6 +2631,7 @@ export function useDuplicateFinderView() {
     isDeepReplacing,
     cancelDeepReplace,
     confirmDeepReplace,
+    deepReplaceSplitGroup,
     runPhase3,
     stopPhase3,
     toggleFileSelection,
@@ -2521,6 +2640,7 @@ export function useDuplicateFinderView() {
     selectAllInGroup,
     getSelectedCountInGroup,
     deleteSelectedInGroup,
+    splitGroup,
     openFolder,
     getImageUrl,
     getRelativePath,

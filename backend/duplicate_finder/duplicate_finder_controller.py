@@ -4,6 +4,7 @@ Duplicate Finder API Controller
 import os
 import uuid
 import shutil
+from collections import Counter
 from pathlib import Path
 from flask import request, send_file
 from flask_restx import Namespace, Resource
@@ -109,7 +110,7 @@ class ScanResource(Resource):
                 continue
 
             if os.path.isfile(path):
-                if path.lower().endswith(IMAGE_EXTS):
+                if path.lower().endswith(IMAGE_EXTS) and not os.path.basename(path).startswith('.'):
                     image_files.append(os.path.abspath(path))
             elif os.path.isdir(path):
                 # Recursively scan directory
@@ -126,6 +127,8 @@ class ScanResource(Resource):
                         continue
 
                     for file in files:
+                        if file.startswith('.'):
+                            continue  # skip hidden/system files (macOS ._* resource forks, etc.)
                         if file.lower().endswith(IMAGE_EXTS):
                             full_path = os.path.join(root, file)
                             image_files.append(os.path.abspath(full_path))
@@ -1580,6 +1583,133 @@ class WhitelistCleanupResource(Resource):
             return {"error": str(e)}, 500
 
 
+def _recompute_group_stats(cursor, group_id: int) -> None:
+    """Recompute and upsert duplicate_finder_group_stats for one group."""
+    cursor.execute(
+        "SELECT i.filesize, i.mtime, i.dir_path, i.file_path "
+        "FROM duplicate_finder_duplicate_groups dg "
+        "JOIN duplicate_finder_image_hashes i ON dg.image_id = i.id "
+        "WHERE dg.group_id = ?",
+        (group_id,),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.execute(
+            "DELETE FROM duplicate_finder_group_stats WHERE group_id = ?",
+            (group_id,),
+        )
+        return
+    member_count = len(rows)
+    filesizes = [r[0] for r in rows if r[0] is not None]
+    mtimes    = [r[1] for r in rows if r[1] is not None]
+    dir_counts = Counter(r[2] for r in rows if r[2])
+    primary_folder = dir_counts.most_common(1)[0][0] if dir_counts else None
+    folder_dup_count = dir_counts.get(primary_folder, 0) if primary_folder else 0
+    representative = next(
+        (r[3] for r in rows if r[2] == primary_folder), rows[0][3]
+    )
+    cursor.execute(
+        "INSERT OR REPLACE INTO duplicate_finder_group_stats "
+        "(group_id, member_count, max_filesize, min_filesize, max_mtime, min_mtime, "
+        " primary_folder, folder_dup_count, representative_file_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            group_id, member_count,
+            max(filesizes) if filesizes else None,
+            min(filesizes) if filesizes else None,
+            max(mtimes) if mtimes else None,
+            min(mtimes) if mtimes else None,
+            primary_folder, folder_dup_count, representative,
+        ),
+    )
+
+
+@ns.route("/groups/split")
+class GroupSplitResource(Resource):
+    def post(self):
+        """
+        Split selected images out of a group into a new group.
+
+        Request body:
+        {
+            "source_group_id": int,
+            "image_ids": [int, ...]   // images to move to new group
+        }
+
+        Response:
+        {
+            "new_group_id": int,
+            "source_remaining": int,   // 0 means source group was dissolved
+            "message": str
+        }
+        """
+        data = request.json or {}
+        source_group_id = data.get('source_group_id')
+        image_ids = list(data.get('image_ids') or [])
+        if not source_group_id or not image_ids:
+            return {'error': 'source_group_id and image_ids are required'}, 400
+
+        workflow = get_workflow()
+        conn = workflow._get_connection()
+        cursor = conn.cursor()
+        try:
+            ph = ','.join('?' * len(image_ids))
+            cursor.execute(
+                f"SELECT COUNT(*) FROM duplicate_finder_duplicate_groups "
+                f"WHERE group_id = ? AND image_id IN ({ph})",
+                [source_group_id] + image_ids,
+            )
+            found = cursor.fetchone()[0]
+            if found != len(image_ids):
+                return {'error': 'Some image_ids do not belong to source_group_id'}, 400
+
+            cursor.execute(
+                "SELECT COALESCE(MAX(group_id), 0) FROM duplicate_finder_duplicate_groups"
+            )
+            new_group_id = cursor.fetchone()[0] + 1
+
+            cursor.executemany(
+                "INSERT INTO duplicate_finder_duplicate_groups (group_id, image_id) VALUES (?, ?)",
+                [(new_group_id, iid) for iid in image_ids],
+            )
+            cursor.execute(
+                f"DELETE FROM duplicate_finder_duplicate_groups "
+                f"WHERE group_id = ? AND image_id IN ({ph})",
+                [source_group_id] + image_ids,
+            )
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM duplicate_finder_duplicate_groups WHERE group_id = ?",
+                (source_group_id,),
+            )
+            source_remaining = cursor.fetchone()[0]
+
+            if source_remaining < 2:
+                cursor.execute(
+                    "DELETE FROM duplicate_finder_duplicate_groups WHERE group_id = ?",
+                    (source_group_id,),
+                )
+                cursor.execute(
+                    "DELETE FROM duplicate_finder_group_stats WHERE group_id = ?",
+                    (source_group_id,),
+                )
+                source_remaining = 0
+            else:
+                _recompute_group_stats(cursor, source_group_id)
+
+            _recompute_group_stats(cursor, new_group_id)
+            conn.commit()
+
+            return {
+                'new_group_id': new_group_id,
+                'source_remaining': source_remaining,
+                'message': f'Moved {len(image_ids)} image(s) to new group {new_group_id}',
+            }
+        except Exception as e:
+            conn.rollback()
+            return {'error': str(e)}, 500
+
+
 @ns.route("/cleanup")
 class CleanupResource(Resource):
     def post(self):
@@ -1976,6 +2106,25 @@ class Phase2StopResource(Resource):
         print("[Phase 2 API] ✅ Stop signal sent to workflow")
         print("=" * 80)
         return {"message": "Phase 2 stop signal sent"}
+
+
+@ns.route("/phase2/reset-status")
+class Phase2ResetStatusResource(Resource):
+    def post(self):
+        """Reset all computed images back to pending so Phase 2 can re-run at a new threshold."""
+        workflow = get_workflow()
+        conn = workflow._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM duplicate_finder_image_hashes WHERE status = 'computed'"
+        )
+        count = cursor.fetchone()[0]
+        cursor.execute(
+            "UPDATE duplicate_finder_image_hashes SET status = 'pending' WHERE status = 'computed'"
+        )
+        conn.commit()
+        print(f"[Phase 2 Reset] Reset {count} images from 'computed' to 'pending'")
+        return {"reset_count": count, "message": f"Reset {count} images to pending."}
 
 
 @ns.route("/phase2.5/materialize")
@@ -2924,3 +3073,97 @@ class CypressTestCleanupResource(Resource):
             return {'error': str(e)}, 500
 
 
+@ns.route("/phash-debug")
+class PHashDebugResource(Resource):
+    def post(self):
+        """
+        Debug endpoint: given a folder path, return the top-N similar pairs
+        (by phash distance) among all DB images inside that folder.
+        Also accepts two specific file paths to compute their exact distance.
+
+        Request body (option A — two specific files):
+            { "file_a": "/abs/path/a.jpg", "file_b": "/abs/path/b.webp" }
+
+        Request body (option B — folder inspection):
+            { "folder": "/abs/path/folder", "limit": 20 }
+
+        Request body (option C — inspect all similarities for one file):
+            { "file": "/abs/path/file.jpg", "limit": 20 }
+        """
+        data = request.json or {}
+        workflow = get_workflow()
+        conn = workflow._get_connection()
+        cursor = conn.cursor()
+
+        def hamming(h1: str, h2: str) -> int:
+            return bin(int(h1, 16) ^ int(h2, 16)).count('1')
+
+        # Option A: two specific files
+        if data.get('file_a') and data.get('file_b'):
+            fa, fb = data['file_a'], data['file_b']
+            ra = cursor.execute(
+                "SELECT id, phash, status FROM duplicate_finder_image_hashes WHERE file_path = ?", (fa,)
+            ).fetchone()
+            rb = cursor.execute(
+                "SELECT id, phash, status FROM duplicate_finder_image_hashes WHERE file_path = ?", (fb,)
+            ).fetchone()
+            if not ra:
+                return {"error": f"file_a not in DB: {fa}"}, 404
+            if not rb:
+                return {"error": f"file_b not in DB: {fb}"}, 404
+            dist = hamming(ra[1], rb[1])
+            return {
+                "file_a": {"id": ra[0], "phash": ra[1], "status": ra[2]},
+                "file_b": {"id": rb[0], "phash": rb[1], "status": rb[2]},
+                "distance": dist,
+                "similarity_pct": round((1 - dist / 256) * 100, 1),
+                "threshold_51_passes": dist <= 51,
+            }
+
+        # Option C: one file → closest neighbours in DB
+        if data.get('file'):
+            fpath = data['file']
+            limit = int(data.get('limit', 20))
+            row = cursor.execute(
+                "SELECT id, phash FROM duplicate_finder_image_hashes WHERE file_path = ?", (fpath,)
+            ).fetchone()
+            if not row:
+                return {"error": f"file not in DB: {fpath}"}, 404
+            target_id, target_phash = row
+            cursor.execute(
+                "SELECT id, file_path, phash FROM duplicate_finder_image_hashes WHERE id != ?", (target_id,)
+            )
+            rows = cursor.fetchall()
+            results = sorted(
+                [{"id": r[0], "file_path": r[1], "distance": hamming(target_phash, r[2]),
+                  "similarity_pct": round((1 - hamming(target_phash, r[2]) / 256) * 100, 1)}
+                 for r in rows],
+                key=lambda x: x["distance"]
+            )[:limit]
+            return {"target": {"id": target_id, "file_path": fpath, "phash": target_phash}, "neighbours": results}
+
+        # Option B: folder → all images in that folder, show closest cross-folder pairs
+        if data.get('folder'):
+            folder = data['folder'].rstrip('/\\')
+            limit = int(data.get('limit', 20))
+            cursor.execute(
+                "SELECT id, file_path, phash FROM duplicate_finder_image_hashes WHERE dir_path = ?", (folder,)
+            )
+            folder_rows = cursor.fetchall()
+            if not folder_rows:
+                return {"error": f"No DB entries for folder: {folder}", "hint": "dir_path must match exactly"}, 404
+            cursor.execute(
+                "SELECT id, file_path, phash FROM duplicate_finder_image_hashes WHERE dir_path != ?", (folder,)
+            )
+            other_rows = cursor.fetchall()
+            pairs = []
+            for aid, afp, aphash in folder_rows:
+                for bid, bfp, bphash in other_rows:
+                    d = hamming(aphash, bphash)
+                    pairs.append({"file_a": afp, "file_b": bfp, "distance": d,
+                                  "similarity_pct": round((1 - d / 256) * 100, 1)})
+            pairs.sort(key=lambda x: x["distance"])
+            return {"folder_files": len(folder_rows), "other_files": len(other_rows),
+                    "top_pairs": pairs[:limit]}
+
+        return {"error": "Provide file_a+file_b, file, or folder"}, 400
