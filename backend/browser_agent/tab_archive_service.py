@@ -640,6 +640,25 @@ class TabArchiveService:
         close_tab_to_record_id: Dict[int, int] = {}
         failures: List[Dict[str, Any]] = []
 
+        # Build window index map: windowId -> 0-based sequential position
+        window_order: List[int] = []
+        for tab in live_tabs:
+            wid = tab.get("windowId")
+            if wid is not None and wid not in window_order:
+                window_order.append(wid)
+        window_index_map: Dict[int, int] = {wid: i for i, wid in enumerate(window_order)}
+
+        # Build per-window tab position counter (0-based, in live_tabs order)
+        tab_window_pos: Dict[int, int] = {}
+        per_window_counter: Dict[int, int] = {}
+        for tab in live_tabs:
+            wid = tab.get("windowId")
+            tid = int(tab["id"])
+            if wid is not None:
+                pos = per_window_counter.get(wid, 0)
+                tab_window_pos[tid] = pos
+                per_window_counter[wid] = pos + 1
+
         for tab in live_tabs:
             tab_id = int(tab["id"])
             if tab_id not in selected_set:
@@ -680,7 +699,8 @@ class TabArchiveService:
             )
             persisted.append(record)
             close_tab_ids.append(tab_id)
-            close_tab_to_record_id[tab_id] = int(record["id"])
+            record_id = int(record["id"])
+            close_tab_to_record_id[tab_id] = record_id
 
         for missing_tab_id in sorted(selected_set - seen_selected_ids):
             failures.append(
@@ -715,7 +735,30 @@ class TabArchiveService:
                 ]
 
         if closed_record_ids:
-            archive_repo.mark_archived(closed_record_ids, timestamp_text=now)
+            # Build record_id -> window/tab index maps for the successfully closed tabs
+            tab_id_to_window_idx: Dict[int, int] = {}
+            for tab in live_tabs:
+                wid = tab.get("windowId")
+                if wid is not None:
+                    tab_id_to_window_idx[int(tab["id"])] = window_index_map.get(wid, 0)
+
+            record_window_indices: Dict[int, int] = {}
+            record_tab_indices: Dict[int, int] = {}
+            for tab_id, rec_id in close_tab_to_record_id.items():
+                if rec_id in closed_record_ids:
+                    w_idx = tab_id_to_window_idx.get(tab_id)
+                    t_idx = tab_window_pos.get(tab_id)
+                    if w_idx is not None:
+                        record_window_indices[rec_id] = w_idx
+                    if t_idx is not None:
+                        record_tab_indices[rec_id] = t_idx
+
+            archive_repo.mark_archived(
+                closed_record_ids,
+                timestamp_text=now,
+                window_indices=record_window_indices or None,
+                tab_indices=record_tab_indices or None,
+            )
 
         for item in failed_close:
             failures.append(
@@ -786,8 +829,8 @@ class TabArchiveService:
                 "results": [],
             }
 
-        if destination not in ("new_window", "current_window"):
-            raise ValueError("destination must be one of: new_window, current_window")
+        if destination not in ("new_window", "current_window", "restore_to_windows"):
+            raise ValueError("destination must be one of: new_window, current_window, restore_to_windows")
 
         records = archive_repo.get_records_by_ids(ids)
         if not records:
@@ -960,24 +1003,72 @@ class TabArchiveService:
                     )
 
         if to_open:
-            try:
-                open_results = self._open_tabs(to_open, destination=destination)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "tab_archive.restore.open_tabs_failed count=%s error=%s",
-                    len(to_open),
-                    str(exc),
-                )
-                open_results = [
-                    {
-                        "record_id": int(row["record_id"]),
-                        "url": row.get("url") or "",
-                        "ok": False,
-                        "tab_id": None,
-                        "error": str(exc),
-                    }
-                    for row in to_open
-                ]
+            if destination == "restore_to_windows":
+                # Group records by their original window index, sort by tab index,
+                # then open each group as a separate new window.
+                from collections import defaultdict
+                window_groups: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+                no_window_index: List[Dict[str, Any]] = []
+                for item in to_open:
+                    rec = records_by_id.get(int(item["record_id"])) or {}
+                    w_idx = rec.get("last_archived_window_index")
+                    if w_idx is None:
+                        no_window_index.append(item)
+                    else:
+                        window_groups[int(w_idx)].append((rec.get("last_archived_tab_index") or 0, item))
+
+                batches: List[List[Dict[str, Any]]] = []
+                for w_idx in sorted(window_groups.keys()):
+                    sorted_items = [pair[1] for pair in sorted(window_groups[w_idx], key=lambda p: p[0])]
+                    batches.append(sorted_items)
+                if no_window_index:
+                    batches.append(no_window_index)
+
+                all_open_results: List[Dict[str, Any]] = []
+                open_error = None
+                for batch in batches:
+                    try:
+                        batch_results = self._open_tabs(batch, destination="new_window")
+                        all_open_results.extend(batch_results)
+                    except Exception as exc:  # noqa: BLE001
+                        open_error = exc
+                        logger.warning(
+                            "tab_archive.restore.open_tabs_failed count=%s error=%s",
+                            len(batch),
+                            str(exc),
+                        )
+                        all_open_results.extend(
+                            [
+                                {
+                                    "record_id": int(row["record_id"]),
+                                    "url": row.get("url") or "",
+                                    "ok": False,
+                                    "tab_id": None,
+                                    "error": str(exc),
+                                }
+                                for row in batch
+                            ]
+                        )
+                open_results = all_open_results
+            else:
+                try:
+                    open_results = self._open_tabs(to_open, destination=destination)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "tab_archive.restore.open_tabs_failed count=%s error=%s",
+                        len(to_open),
+                        str(exc),
+                    )
+                    open_results = [
+                        {
+                            "record_id": int(row["record_id"]),
+                            "url": row.get("url") or "",
+                            "ok": False,
+                            "tab_id": None,
+                            "error": str(exc),
+                        }
+                        for row in to_open
+                    ]
 
             for row in open_results:
                 if row.get("ok"):

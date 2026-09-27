@@ -359,6 +359,18 @@ def init_db() -> None:
             f"ALTER TABLE {TABLE_LIVE_TAB_GROUP} ADD COLUMN custom_header TEXT"
         )
 
+    # Add window/tab position columns to archived_tab for restore-to-windows
+    cur.execute(f"PRAGMA table_info({TABLE_ARCHIVED_TAB})")
+    at_cols2 = {r["name"] for r in cur.fetchall()}
+    if "last_archived_window_index" not in at_cols2:
+        cur.execute(
+            f"ALTER TABLE {TABLE_ARCHIVED_TAB} ADD COLUMN last_archived_window_index INTEGER"
+        )
+    if "last_archived_tab_index" not in at_cols2:
+        cur.execute(
+            f"ALTER TABLE {TABLE_ARCHIVED_TAB} ADD COLUMN last_archived_tab_index INTEGER"
+        )
+
     cur.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {TABLE_TAB_ACTIVATION} (
@@ -400,6 +412,8 @@ def _row_to_record(row: sqlite3.Row) -> Dict[str, Any]:
         "group_id": row["archive_group_id"] if "archive_group_id" in keys else (row["group_id"] if "group_id" in keys else None),
         "group_name": row["group_name"] if "group_name" in keys else None,
         "display_order": float(row["display_order"]) if "display_order" in keys else 0.0,
+        "last_archived_window_index": int(row["last_archived_window_index"]) if "last_archived_window_index" in keys and row["last_archived_window_index"] is not None else None,
+        "last_archived_tab_index": int(row["last_archived_tab_index"]) if "last_archived_tab_index" in keys and row["last_archived_tab_index"] is not None else None,
     }
 
 
@@ -701,26 +715,37 @@ def touch_existing_from_live(
     return get_record_by_id(existing["id"])
 
 
-def mark_archived(record_ids: List[int], timestamp_text: Optional[str] = None) -> None:
+def mark_archived(
+    record_ids: List[int],
+    timestamp_text: Optional[str] = None,
+    window_indices: Optional[Dict[int, int]] = None,
+    tab_indices: Optional[Dict[int, int]] = None,
+) -> None:
     ids = [int(x) for x in record_ids]
     if not ids:
         return
 
     ts = timestamp_text or _now_text()
     conn = _conn()
-    placeholders = ",".join(["?"] * len(ids))
     cur = conn.cursor()
-    cur.execute(
-        f"""
-        UPDATE {TABLE_ARCHIVED_TAB}
-        SET first_archived_at = COALESCE(first_archived_at, ?),
-            last_archived_at = ?,
-            archive_count = archive_count + 1,
-            updated_at = ?
-        WHERE id IN ({placeholders})
-        """,
-        [ts, ts, ts] + ids,
-    )
+
+    for rid in ids:
+        w_idx = window_indices.get(rid) if window_indices else None
+        t_idx = tab_indices.get(rid) if tab_indices else None
+        cur.execute(
+            f"""
+            UPDATE {TABLE_ARCHIVED_TAB}
+            SET first_archived_at = COALESCE(first_archived_at, ?),
+                last_archived_at = ?,
+                archive_count = archive_count + 1,
+                last_archived_window_index = COALESCE(?, last_archived_window_index),
+                last_archived_tab_index = COALESCE(?, last_archived_tab_index),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            [ts, ts, w_idx, t_idx, ts, rid],
+        )
+
     conn.commit()
     conn.close()
 
