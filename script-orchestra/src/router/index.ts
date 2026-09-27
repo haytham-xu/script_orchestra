@@ -33,6 +33,8 @@ import DownloadSSMHView from '@/browser_agent/views/DownloadSSMHView.vue'
 import DownloadJMView from '@/browser_agent/views/DownloadJMView.vue'
 import MemoryCurveView from '@/memory_curve/views/MemoryCurveView.vue'
 import KnowledgeVaultView from '@/knowledge_vault/views/KnowledgeVaultView.vue'
+import KnowledgeVaultCaptureView from '@/knowledge_vault/views/KnowledgeVaultCaptureView.vue'
+import KnowledgeVaultSettingsView from '@/knowledge_vault/views/KnowledgeVaultSettingsView.vue'
 import TranslatorView from '@/translator/views/TranslatorView.vue'
 import ClaudeBridgeChatView from '@/claude_bridge/views/ChatView.vue'
 import ClaudeBridgeTerminalView from '@/claude_bridge/views/TerminalView.vue'
@@ -102,7 +104,9 @@ const router = createRouter({
     { path: '/browser-agent/download-jm', name: 'browser-agent-download-jm', component: DownloadJMView },
 
     { path: '/memory-curve', name: 'memory-curve', component: MemoryCurveView },
-    { path: '/knowledge-vault', name: 'knowledge-vault', component: KnowledgeVaultView },
+    { path: '/knowledge-vault', name: 'knowledge-vault', component: KnowledgeVaultCaptureView },
+    { path: '/knowledge-vault/search', name: 'knowledge-vault-search', component: KnowledgeVaultView },
+    { path: '/knowledge-vault/settings', name: 'knowledge-vault-settings', component: KnowledgeVaultSettingsView },
     { path: '/translator', name: 'translator', component: TranslatorView },
     { path: '/claude-bridge', name: 'claude-bridge', component: ClaudeBridgeChatView },
     { path: '/claude-bridge/terminal', name: 'claude-bridge-terminal', component: ClaudeBridgeTerminalView },

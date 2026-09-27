@@ -10,7 +10,7 @@ export default defineComponent({
   setup() {
     const router = useRouter()
     function goBack() { router.push('/') }
-    function goCapture() { router.push({ name: 'knowledge-vault-capture' }) }
+    function goCapture() { router.push({ name: 'knowledge-vault' }) }
 
     const labels = ref<Label[]>([])
     const labelMap = ref<Record<number, Label>>({})

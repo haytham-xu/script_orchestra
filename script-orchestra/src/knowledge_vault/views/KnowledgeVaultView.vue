@@ -69,7 +69,7 @@
               <div class="kv-det-title">{{ searchDetail.header || fragmentSummary(searchDetail) }}</div>
             </div>
             <div class="kv-det-acts">
-              <el-button text size="small" @click="$router.push({ name: 'knowledge-vault-capture', query: { open: String(searchDetail.id) } })">Edit</el-button>
+              <el-button text size="small" @click="$router.push({ name: 'knowledge-vault', query: { open: String(searchDetail.id) } })">Edit</el-button>
               <el-button text size="small" @click="searchDetail = null">✕</el-button>
             </div>
           </div>

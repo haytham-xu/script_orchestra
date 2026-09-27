@@ -8,6 +8,7 @@
       <el-button v-if="captureMode === 'fragments'" text size="small" @click="captureMode = 'organize'">Organize</el-button>
       <el-button v-if="captureMode === 'fragments'" text size="small"
         :class="{ 'kv-btn-active': showArchived }" @click="toggleArchived">Archive</el-button>
+      <el-button v-if="captureMode === 'fragments'" text size="small" @click="goSearch">Search</el-button>
       <el-button text size="small" :disabled="reindexStatus.running" @click="triggerReindex">
         <el-icon><Refresh /></el-icon>
         <span v-if="reindexStatus.running" style="margin-left:4px;font-size:12px;">{{ reindexStatus.indexed }}/{{ reindexStatus.total }}</span>

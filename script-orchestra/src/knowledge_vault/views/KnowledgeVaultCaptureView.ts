@@ -13,8 +13,8 @@ export default defineComponent({
   setup() {
     const router = useRouter()
     const route = useRoute()
-    function goBack() { router.push({ name: 'knowledge-vault' }) }
-    function goSearch() { router.push({ name: 'knowledge-vault' }) }
+    function goBack() { router.push('/') }
+    function goSearch() { router.push({ name: 'knowledge-vault-search' }) }
     function goSettings() { router.push({ name: 'knowledge-vault-settings' }) }
 
     // ---- labels ----
