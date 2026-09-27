@@ -55,4 +55,6 @@ export const FILE_TRACKER_ENDPOINT = '/file-tracker'
 
 export const APPRENTICE_ENDPOINT = '/apprentice'
 
+export const FILE_DUPLICATE_ENDPOINT = '/file-duplicate'
+
 export const ENABLED_TOOLS_ENDPOINT = '/enabled-tools'

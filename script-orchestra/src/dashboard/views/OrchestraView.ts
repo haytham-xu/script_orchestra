@@ -31,6 +31,7 @@ const TOOLS: Tool[] = [
   { key: 'file-pipeline',          name: 'File Pipeline',          path: '/file-pipeline' },
   { key: 'file-tracker',           name: 'File Tracker',           path: '/file-tracker' },
   { key: 'apprentice',             name: 'Apprentice',             path: '/apprentice' },
+  { key: 'file-duplicate',         name: 'File Duplicate',         path: '/file-duplicate' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))

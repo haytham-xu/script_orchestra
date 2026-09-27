@@ -55,6 +55,7 @@ import FilePipelineView from '@/file_pipeline/views/FilePipelineView.vue'
 import FileTrackerView from '@/file_tracker/views/FileTrackerView.vue'
 import FileTrackerSettingsView from '@/file_tracker/views/FileTrackerSettingsView.vue'
 import ApprenticeView from '@/apprentice/views/ApprenticeView.vue'
+import FileDuplicateView from '@/file_duplicate/views/FileDuplicateView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -129,6 +130,7 @@ const router = createRouter({
     { path: '/file-tracker', name: 'file-tracker', component: FileTrackerView },
     { path: '/file-tracker/settings', name: 'file-tracker-settings', component: FileTrackerSettingsView },
     { path: '/apprentice', name: 'apprentice', component: ApprenticeView },
+    { path: '/file-duplicate', name: 'file-duplicate', component: FileDuplicateView },
   ],
 })
 
@@ -141,7 +143,7 @@ export const ALL_TOOL_KEYS = [
   'browser-agent', 'memory-curve', 'knowledge-vault', 'translator', 'claude-bridge',
   'assistant', 'file-git', 'proxy-forward', 'relay-proxy', 'clean-keyword',
   'loans-calc', 'compress-image', 'dedup-folder', 'file-pipeline', 'file-tracker',
-  'apprentice',
+  'apprentice', 'file-duplicate',
 ]
 
 // Navigation guard: redirect to dashboard when navigating to a disabled tool,

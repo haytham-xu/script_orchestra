@@ -251,4 +251,14 @@ export const toolIcons: Record<string, string> = {
       <line x1="48" y1="27" x2="48" y2="38" stroke="#a5b4fc" stroke-width="2.5" stroke-linecap="round"/>
       <circle cx="48" cy="40" r="3" fill="#818cf8"/>
     </svg>`,
+
+  // File Duplicate — two overlapping document pages with a scissors glyph
+  'file-duplicate': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#0891b2"/>
+      <rect x="12" y="20" width="24" height="30" rx="3" fill="#fff" opacity="0.9"/>
+      <rect x="28" y="14" width="24" height="30" rx="3" fill="#bae6fd"/>
+      <path d="M33 14v8h8" fill="none" stroke="#0891b2" stroke-width="1.5"/>
+      <path d="M22 30h12M22 35h12M22 40h8" stroke="#0891b2" stroke-width="2" stroke-linecap="round"/>
+    </svg>`,
 }

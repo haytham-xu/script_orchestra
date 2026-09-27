@@ -185,6 +185,15 @@ else:
     apprentice_blueprint = None
     apprentice_repo = None
 
+if _on('file-duplicate'):
+    from file_duplicate.blueprint import blueprint as file_duplicate_blueprint
+    from file_duplicate import repository as file_duplicate_repo
+    from file_duplicate import websocket_service as fd_websocket
+else:
+    file_duplicate_blueprint = None
+    file_duplicate_repo = None
+    fd_websocket = None
+
 # claude_bridge: Unix-only deps, guarded by both feature flag and import availability
 if _on('claude-bridge'):
     try:
@@ -291,6 +300,8 @@ def create_app() -> Flask:
         app.register_blueprint(file_tracker_blueprint)
     if apprentice_blueprint:
         app.register_blueprint(apprentice_blueprint)
+    if file_duplicate_blueprint:
+        app.register_blueprint(file_duplicate_blueprint)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
 
@@ -362,6 +373,8 @@ def create_app() -> Flask:
             get_browser_agent_service().register_broadcaster(ba_websocket.broadcast_progress)
         if fp_websocket:
             fp_websocket.init_socketio(socketio)
+        if fd_websocket:
+            fd_websocket.init_socketio(socketio)
         if _claude_bridge_available and cb_websocket:
             cb_websocket.init_socketio(socketio)
             cb_websocket.register_socketio_events()
@@ -390,6 +403,8 @@ def create_app() -> Flask:
         file_tracker_repo.init_db()
     if apprentice_repo:
         apprentice_repo.init_db()
+    if file_duplicate_repo:
+        file_duplicate_repo.init_db()
     if claude_bridge_repo:
         claude_bridge_repo.init_db()
 
