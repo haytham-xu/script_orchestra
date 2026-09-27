@@ -1717,6 +1717,34 @@ const allVisibleLiveSelected = computed(() => {
         .map(t => t.tab_id)
     }
 
+    function getWindowTabIds(windowId: number): number[] {
+      return liveRows.value
+        .filter(t => t.window_id === windowId)
+        .map(t => t.tab_id)
+    }
+
+    function isWindowFullySelected(windowId: number): boolean {
+      const ids = getWindowTabIds(windowId)
+      return ids.length > 0 && ids.every(id => selectedLiveTabIds.value.has(id))
+    }
+
+    function isWindowPartiallySelected(windowId: number): boolean {
+      const ids = getWindowTabIds(windowId)
+      const count = ids.filter(id => selectedLiveTabIds.value.has(id)).length
+      return count > 0 && count < ids.length
+    }
+
+    function toggleWindowSelection(windowId: number) {
+      const ids = getWindowTabIds(windowId)
+      const next = new Set(selectedLiveTabIds.value)
+      if (isWindowFullySelected(windowId)) {
+        ids.forEach(id => next.delete(id))
+      } else {
+        ids.forEach(id => next.add(id))
+      }
+      selectedLiveTabIds.value = next
+    }
+
     function isGroupFullySelected(groupId: number): boolean {
       const ids = getGroupTabIds(groupId)
       return ids.length > 0 && ids.every(id => selectedLiveTabIds.value.has(id))
@@ -2577,6 +2605,9 @@ async function archiveSelectedLive() {
       toggleGroupSelection,
       isGroupFullySelected,
       isGroupPartiallySelected,
+      toggleWindowSelection,
+      isWindowFullySelected,
+      isWindowPartiallySelected,
       toggleVisibleLiveSelection,
       toggleArchiveSelection,
       toggleVisibleArchiveSelection,

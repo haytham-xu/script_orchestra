@@ -102,7 +102,7 @@ export async function tabArchiveSelected(tabIds: number[]): Promise<TabArchiveAr
 
 export async function tabArchiveRestore(
   recordIds: number[],
-  destination: 'new_window' | 'current_window',
+  destination: 'new_window' | 'current_window' | 'restore_to_windows',
 ): Promise<TabArchiveRestoreResult> {
   return postRequest<TabArchiveRestoreResult>(
     `${BROWSER_AGENT_ENDPOINT}/tab-archive/restore`, {}, {

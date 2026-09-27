@@ -62,12 +62,13 @@
         </el-select>
         <el-button @click="createGroupPrompt()">+ Group</el-button>
         <el-dropdown split-button type="primary" :disabled="selectedArchiveIds.size === 0"
-          @click="restoreSelectedArchive" @command="(cmd: 'new_window' | 'current_window') => { restoreDestination = cmd }">
-          {{ restoreDestination === 'new_window' ? '↗' : '→' }} Restore ({{ selectedArchiveIds.size }})
+          @click="restoreSelectedArchive" @command="(cmd: 'new_window' | 'current_window' | 'restore_to_windows') => { restoreDestination = cmd }">
+          {{ restoreDestination === 'new_window' ? '↗' : restoreDestination === 'restore_to_windows' ? '⊞' : '→' }} Restore ({{ selectedArchiveIds.size }})
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="new_window">↗ New window</el-dropdown-item>
               <el-dropdown-item command="current_window">→ Current window</el-dropdown-item>
+              <el-dropdown-item command="restore_to_windows">⊞ Restore to original windows</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -136,6 +137,12 @@
           <!-- Per-window blocks -->
           <template v-for="win in liveRenderList" :key="win.windowId">
             <div class="window-header-row">
+              <el-checkbox
+                :model-value="isWindowFullySelected(win.windowId)"
+                :indeterminate="isWindowPartiallySelected(win.windowId)"
+                @change="toggleWindowSelection(win.windowId)"
+                size="small"
+              />
               <span class="window-header-label">Window {{ win.windowId }} &middot; {{ win.tabCount }} tabs</span>
               <el-button size="small" text @click="sortByGroup(win.windowId)">Sort by group</el-button>
               <el-button size="small" text @click="groupAsWindow(win.windowId)">Group as window</el-button>
@@ -256,7 +263,7 @@
       </template>
     </div>
 
-    <div v-show="activePane === 'archive'">
+    <div v-if="activePane === 'archive'">
         <!-- Organize mode -->
         <div v-if="archiveOrganizeMode" class="organize-wrap">
           <div class="organize-toolbar">
@@ -425,7 +432,7 @@
     </div>
 
     <!-- Shelf pane -->
-    <div v-show="activePane === 'shelf'" v-loading="shelfLoading">
+    <div v-if="activePane === 'shelf'" v-loading="shelfLoading">
       <div class="table-wrap shelf-table-wrap" v-if="shelfItems.length > 0">
 
         <!-- Groups -->
@@ -517,7 +524,7 @@
     </div>
 
     <!-- Mock pane -->
-    <div v-show="activePane === 'mock'" class="mock-pane-wrap">
+    <div v-if="activePane === 'mock'" class="mock-pane-wrap">
       <MockLiveView />
     </div>
 
