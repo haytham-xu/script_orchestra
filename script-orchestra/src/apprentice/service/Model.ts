@@ -58,5 +58,12 @@ export interface SseEvent {
   content?: string
   status?: string
   reason?: string
+  seq?: number
+  prompt_preview?: string
+  output_preview?: string
+  preview?: string
+  // set on history entries loaded from DB
+  id?: number
+  created_at?: string
   [key: string]: any
 }

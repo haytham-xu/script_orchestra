@@ -77,3 +77,13 @@ def should_auto_distill() -> bool:
     threshold = int(settings.get("distillation_threshold") or 10)
     undistilled = repository.get_undistilled_short_memory()
     return len(undistilled) >= threshold
+
+
+def trigger_distillation_if_needed() -> None:
+    """Trigger distillation if the threshold is reached. Silent on failure — for background use."""
+    if not should_auto_distill():
+        return
+    try:
+        trigger_distillation()
+    except Exception as e:
+        print(f"[apprentice] Auto-distillation failed: {e}")

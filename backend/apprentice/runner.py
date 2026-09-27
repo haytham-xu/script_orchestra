@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import repository
+from . import memory_service
 
 WORKER_SCRIPT = Path(__file__).parent / "worker.py"
 LOGS_DIR = Path(__file__).resolve().parent.parent.parent / ".claude" / "log"
@@ -61,7 +62,20 @@ def unsubscribe(sub_id: str) -> None:
                 _state.subscribers.pop(sub_id, None)
 
 
+_SKIP_PERSIST = {"heartbeat", "run_finished"}
+
+
 def _broadcast(event: dict) -> None:
+    # Persist to DB (skip noise events)
+    task_id = event.get("task_id")
+    evt_type = event.get("event", "")
+    if task_id is not None and evt_type not in _SKIP_PERSIST:
+        try:
+            payload = {k: v for k, v in event.items() if k not in ("task_id", "event")}
+            repository.append_task_event(task_id, evt_type, json.dumps(payload))
+        except Exception:
+            pass  # never let persistence failure kill the broadcast
+
     with _state_lock:
         if not _state:
             return
@@ -82,6 +96,13 @@ def _handle_event(task_id: int, event: dict) -> None:
         status = event.get("status", "done")
         db_status = "done" if status == "completed" else "failed"
         repository.update_task_status(task_id, db_status)
+        # Auto-distillation in background — it's a blocking subprocess call
+        t = threading.Thread(
+            target=memory_service.trigger_distillation_if_needed,
+            daemon=True,
+            name=f"apprentice-distill-{task_id}",
+        )
+        t.start()
 
 
 def _reader_loop(task_id: int, process: subprocess.Popen) -> None:

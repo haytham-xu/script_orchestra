@@ -55,6 +55,13 @@ class TaskStop(Resource):
         return {"status": "stopped"}
 
 
+@ns.route('/tasks/<int:task_id>/event-log')
+class TaskEventLog(Resource):
+    def get(self, task_id: int):
+        events = repository.list_task_events(task_id)
+        return {"events": [e.to_dict() for e in events]}
+
+
 @ns.route('/tasks/<int:task_id>/events')
 class TaskEvents(Resource):
     def get(self, task_id: int):

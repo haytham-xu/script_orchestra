@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from shared.db import get_conn
-from .entity import Task, MemoryShort, MemoryLong, HumanMessage, RedLine
+from .entity import Task, MemoryShort, MemoryLong, HumanMessage, RedLine, TaskEvent
 
 _SCHEMA = [
     """
@@ -63,6 +63,15 @@ _SCHEMA = [
     CREATE TABLE IF NOT EXISTS apprentice_red_line (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rule TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS apprentice_task_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        event_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
         created_at TEXT NOT NULL
     )
     """,
@@ -291,3 +300,25 @@ def delete_red_line(red_line_id: int) -> bool:
     conn.commit()
     conn.close()
     return cur.rowcount > 0
+
+
+# ── Task events ───────────────────────────────────────────────
+
+def append_task_event(task_id: int, event_type: str, payload: str) -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO apprentice_task_event (task_id, event_type, payload, created_at) VALUES (?,?,?,?)",
+        (task_id, event_type, payload, _now()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_task_events(task_id: int) -> list:
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT * FROM apprentice_task_event WHERE task_id=? ORDER BY id",
+        (task_id,),
+    ).fetchall()
+    conn.close()
+    return [TaskEvent.from_row(r) for r in rows]

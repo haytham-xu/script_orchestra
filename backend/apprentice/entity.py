@@ -123,6 +123,34 @@ class HumanMessage:
 
 
 @dataclass
+class TaskEvent:
+    id: int
+    task_id: int
+    event_type: str
+    payload: str  # raw JSON string
+    created_at: str
+
+    def to_dict(self) -> dict:
+        import json
+        try:
+            data = json.loads(self.payload)
+        except Exception:
+            data = {"content": self.payload}
+        return {"id": self.id, "task_id": self.task_id, "event_type": self.event_type,
+                "created_at": self.created_at, **data}
+
+    @classmethod
+    def from_row(cls, row) -> "TaskEvent":
+        return cls(
+            id=row["id"],
+            task_id=row["task_id"],
+            event_type=row["event_type"],
+            payload=row["payload"],
+            created_at=row["created_at"],
+        )
+
+
+@dataclass
 class RedLine:
     id: int
     rule: str

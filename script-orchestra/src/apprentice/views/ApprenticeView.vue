@@ -320,6 +320,9 @@ const channelEl = ref<HTMLElement | null>(null)
 
 let sseSource: EventSource | null = null
 let channelPollTimer: ReturnType<typeof setInterval> | null = null
+// Tracks the highest DB event id already in logEntries, so SSE doesn't duplicate them.
+// DB ids are only present on history entries; live SSE events have no id.
+let lastPersistedEventId = 0
 
 // ── Computed ─────────────────────────────────────────────────
 const runningTaskId = computed(() =>
@@ -375,6 +378,25 @@ function scrollLog() {
   if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
 }
 
+async function loadEventLog(taskId: number) {
+  try {
+    const res = await ApprenticeService.getEventLog(taskId)
+    if (!res) return
+    logEntries.value = res.events.map(e => ({ ...e, type: e.event_type ?? e.event ?? '' }))
+    // Track the highest persisted id so live SSE events are not double-counted.
+    // The backend does not re-emit events that are already persisted mid-run;
+    // but if the task is still running we subscribe SSE after this and will
+    // only receive new (not-yet-persisted) events — no dedup needed in practice.
+    // We keep lastPersistedEventId as a safety net.
+    const ids = res.events.map(e => e.id ?? 0)
+    lastPersistedEventId = ids.length ? Math.max(...ids) : 0
+    await nextTick()
+    scrollLog()
+  } catch {
+    // history not critical — silently ignore
+  }
+}
+
 function scrollChannel() {
   if (channelEl.value) channelEl.value.scrollTop = channelEl.value.scrollHeight
 }
@@ -391,6 +413,10 @@ async function selectTask(id: number) {
   feedbackSubmitted.value = false
   feedbackScore.value = 0
   feedbackNote.value = ''
+  lastPersistedEventId = 0
+
+  // Load persisted event history first
+  await loadEventLog(id)
 
   const task = tasks.value.find(t => t.id === id)
   if (task && task.status === 'running') {

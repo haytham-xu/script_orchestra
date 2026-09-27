@@ -1,7 +1,7 @@
 import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/RequestService'
 import { APPRENTICE_ENDPOINT } from '@/basic/Constants'
 import type {
-  Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings
+  Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings, SseEvent
 } from './Model'
 
 const BASE = APPRENTICE_ENDPOINT
@@ -36,5 +36,9 @@ export const ApprenticeService = {
   // Settings
   getSettings: () => getRequest<ApprenticeSettings>(`${BASE}/settings`),
   saveSettings: (data: Partial<ApprenticeSettings>) =>
-    putRequest<ApprenticeSettings>(`${BASE}/settings`, data),
+    putRequest<ApprenticeSettings>(`${BASE}/settings`, {}, data),
+
+  // Event log (persisted history)
+  getEventLog: (taskId: number) =>
+    getRequest<{ events: SseEvent[] }>(`${BASE}/tasks/${taskId}/event-log`),
 }
