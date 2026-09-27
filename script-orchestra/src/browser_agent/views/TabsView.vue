@@ -147,7 +147,7 @@
                 v-if="item.kind === 'group' && item.ancestorIds.every(id => !collapsedLiveGroups.has(id))"
                 class="group-header-row"
                 :class="{ 'dnd-drop-into': liveDndIndicator?.key === item.dragKey && liveDndIndicator.edge === 'into' }"
-                :style="{ paddingLeft: item.depth * 16 + 'px' }"
+                :style="{ paddingLeft: (item.depth * 16 + 12) + 'px' }"
                 v-pdnd-live-row="{
                   drag: { type: 'live-group', id: item.group.id },
                   dropKey: item.dragKey,
@@ -157,6 +157,13 @@
               >
                 <div v-if="liveDndIndicator?.key === item.dragKey && liveDndIndicator.edge === 'top'" class="drop-line drop-line-top" />
                 <div v-if="liveDndIndicator?.key === item.dragKey && liveDndIndicator.edge === 'bottom'" class="drop-line drop-line-bottom" />
+                <el-checkbox
+                  :model-value="isGroupFullySelected(item.group.id)"
+                  :indeterminate="isGroupPartiallySelected(item.group.id)"
+                  @change="toggleGroupSelection(item.group.id)"
+                  @click.stop
+                  size="small"
+                />
                 <span class="group-collapse-icon">{{ collapsedLiveGroups.has(item.group.id) ? '&#9654;' : '&#9660;' }}</span>
                 <span class="group-header-name">{{ item.group.name }}</span>
                 <span class="group-header-count">{{ item.tabCount }}</span>

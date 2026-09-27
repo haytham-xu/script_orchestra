@@ -55,7 +55,7 @@ import type {
 } from '@/browser_agent/service/Model'
 
 type Pane = 'live' | 'archive' | 'shelf' | 'mock'
-type RestoreDestination = 'new_window' | 'current_window'
+type RestoreDestination = 'new_window' | 'current_window' | 'restore_to_windows'
 
 type EternalFilter = 'all' | 'eternal' | 'not_eternal'
 
@@ -1711,6 +1711,34 @@ const allVisibleLiveSelected = computed(() => {
       selectedLiveTabIds.value = next
     }
 
+    function getGroupTabIds(groupId: number): number[] {
+      return liveRows.value
+        .filter(t => t.group_id === groupId)
+        .map(t => t.tab_id)
+    }
+
+    function isGroupFullySelected(groupId: number): boolean {
+      const ids = getGroupTabIds(groupId)
+      return ids.length > 0 && ids.every(id => selectedLiveTabIds.value.has(id))
+    }
+
+    function isGroupPartiallySelected(groupId: number): boolean {
+      const ids = getGroupTabIds(groupId)
+      const count = ids.filter(id => selectedLiveTabIds.value.has(id)).length
+      return count > 0 && count < ids.length
+    }
+
+    function toggleGroupSelection(groupId: number) {
+      const ids = getGroupTabIds(groupId)
+      const next = new Set(selectedLiveTabIds.value)
+      if (isGroupFullySelected(groupId)) {
+        ids.forEach(id => next.delete(id))
+      } else {
+        ids.forEach(id => next.add(id))
+      }
+      selectedLiveTabIds.value = next
+    }
+
     function toggleVisibleLiveSelection() {
       const next = new Set(selectedLiveTabIds.value)
       if (allVisibleLiveSelected.value) {
@@ -2546,6 +2574,9 @@ async function archiveSelectedLive() {
 
       loadSnapshot,
       toggleLiveSelection,
+      toggleGroupSelection,
+      isGroupFullySelected,
+      isGroupPartiallySelected,
       toggleVisibleLiveSelection,
       toggleArchiveSelection,
       toggleVisibleArchiveSelection,
