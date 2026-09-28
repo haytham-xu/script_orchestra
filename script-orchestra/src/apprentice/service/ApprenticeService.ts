@@ -1,7 +1,7 @@
 import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/RequestService'
 import { APPRENTICE_ENDPOINT } from '@/basic/Constants'
 import type {
-  Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings, SseEvent
+  Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings, SseEvent, UserProfile, Reflection
 } from './Model'
 
 const BASE = APPRENTICE_ENDPOINT
@@ -28,6 +28,10 @@ export const ApprenticeService = {
   submitFeedback: (entryId: number, score: number | null, note: string) =>
     postRequest(`${BASE}/memory/short/${entryId}/feedback`, {}, { score, note }),
 
+  // Reflection
+  getReflection: (entryId: number) =>
+    getRequest<Reflection>(`${BASE}/memory/short/${entryId}/reflection`),
+
   // Red lines
   listRedLines: () => getRequest<{ red_lines: RedLine[] }>(`${BASE}/red-lines`),
   addRedLine: (rule: string) => postRequest<RedLine>(`${BASE}/red-lines`, {}, { rule }),
@@ -37,6 +41,11 @@ export const ApprenticeService = {
   getSettings: () => getRequest<ApprenticeSettings>(`${BASE}/settings`),
   saveSettings: (data: Partial<ApprenticeSettings>) =>
     putRequest<ApprenticeSettings>(`${BASE}/settings`, {}, data),
+
+  // User profile
+  getUserProfile: () => getRequest<UserProfile>(`${BASE}/profile`),
+  updateUserProfile: (content: string) =>
+    putRequest<UserProfile>(`${BASE}/profile`, {}, { content }),
 
   // Event log (persisted history)
   getEventLog: (taskId: number) =>

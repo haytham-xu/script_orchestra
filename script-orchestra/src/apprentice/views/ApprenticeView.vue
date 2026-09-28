@@ -144,6 +144,9 @@
               />
               <el-button size="small" type="primary" @click="submitFeedback">Submit</el-button>
             </div>
+            <div v-if="selectedTask.status === 'done' && feedbackSubmitted" class="ap-reflect-notice">
+              Self-reflection triggered — check the Memory tab to see the result.
+            </div>
           </div>
           <div class="ap-task-detail ap-task-empty" v-else>
             <span>Select a task to view details.</span>
@@ -171,14 +174,52 @@
             <div class="ap-memory-section-header">
               <span class="ap-section-title">Short-term Memory (recent tasks)</span>
             </div>
-            <el-table :data="shortMemory" size="small" style="width:100%">
+            <el-table :data="shortMemory" size="small" style="width:100%" row-key="id">
+              <el-table-column type="expand">
+                <template #default="{ row }">
+                  <div class="ap-reflect-expand">
+                    <div class="ap-reflect-narrative">
+                      <div class="ap-reflect-label">Narrative</div>
+                      <pre class="ap-reflect-pre">{{ row.raw_log }}</pre>
+                    </div>
+                    <div class="ap-reflect-section">
+                      <div class="ap-reflect-label">
+                        Self-Reflection
+                        <el-button
+                          v-if="!reflections[row.id] && !loadingReflection[row.id]"
+                          size="small" text type="primary"
+                          @click="loadReflection(row.id)"
+                        >Load</el-button>
+                        <span v-if="loadingReflection[row.id]" class="ap-reflect-loading">Loading...</span>
+                      </div>
+                      <div v-if="reflections[row.id]" class="ap-reflect-content">
+                        <pre class="ap-reflect-pre">{{ reflections[row.id]!.content }}</pre>
+                        <div class="ap-reflect-meta">Generated {{ formatDate(reflections[row.id]!.created_at) }}</div>
+                      </div>
+                      <div v-else-if="reflections[row.id] === null && !loadingReflection[row.id]" class="ap-reflect-pending">
+                        Not yet available. Submit feedback to trigger self-reflection.
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column prop="task_id" label="Task" width="70" />
-              <el-table-column prop="created_at" label="Date" width="180" :formatter="(r) => formatDate(r.created_at)" />
+              <el-table-column prop="created_at" label="Date" width="180" :formatter="(r: MemoryShortEntry) => formatDate(r.created_at)" />
               <el-table-column prop="user_score" label="Score" width="70" />
               <el-table-column label="Distilled" width="90">
                 <template #default="{ row }">
                   <el-tag :type="row.distilled ? 'success' : 'info'" size="small">
                     {{ row.distilled ? 'Yes' : 'No' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="Reflection" width="100">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="reflections[row.id] ? 'success' : (row.user_score != null ? 'warning' : 'info')"
+                    size="small"
+                  >
+                    {{ reflections[row.id] ? 'Done' : (row.user_score != null ? 'Pending' : 'No feedback') }}
                   </el-tag>
                 </template>
               </el-table-column>
@@ -192,6 +233,23 @@
       <!-- ── Tab 3: Boundaries & Settings ──────────── -->
       <el-tab-pane label="Boundaries & Settings" name="settings">
         <div class="ap-settings-layout">
+          <!-- User profile -->
+          <div class="ap-settings-section">
+            <div class="ap-settings-section-header">
+              <span class="ap-section-title">User Profile</span>
+              <el-button size="small" type="primary" @click="saveUserProfile" :loading="savingProfile">Save</el-button>
+            </div>
+            <div class="ap-profile-hint">Commander observes your preferences and updates this automatically after each task. You can also edit it directly.</div>
+            <el-input
+              v-model="profileContent"
+              type="textarea"
+              :rows="10"
+              placeholder="No profile yet. Commander will build this over time as you work together."
+              class="ap-profile-textarea"
+            />
+            <div v-if="profileUpdatedAt" class="ap-profile-meta">Last updated: {{ formatDate(profileUpdatedAt) }}</div>
+          </div>
+
           <!-- Red lines -->
           <div class="ap-settings-section">
             <div class="ap-settings-section-header">
@@ -286,7 +344,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ApprenticeService } from '../service/ApprenticeService'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
-import type { Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings, SseEvent } from '../service/Model'
+import type { Task, MemoryShortEntry, HumanMessage, RedLine, ApprenticeSettings, SseEvent, UserProfile, Reflection } from '../service/Model'
 
 // ── State ────────────────────────────────────────────────────
 const activeTab = ref('tasks')
@@ -302,10 +360,15 @@ const pendingCheckpoint = ref<string | null>(null)
 const longMemory = ref('')
 const shortMemory = ref<MemoryShortEntry[]>([])
 const distilling = ref(false)
+const reflections = ref<Record<number, Reflection | null>>({})
+const loadingReflection = ref<Record<number, boolean>>({})
 
 const redLines = ref<RedLine[]>([])
 const newRedLine = ref('')
 const settingsForm = ref<ApprenticeSettings | null>(null)
+const profileContent = ref('')
+const profileUpdatedAt = ref<string | null>(null)
+const savingProfile = ref(false)
 const savingSettings = ref(false)
 
 const showNewTaskDialog = ref(false)
@@ -365,6 +428,14 @@ async function loadRedLines() {
 async function loadSettings() {
   const res = await ApprenticeService.getSettings()
   if (res) settingsForm.value = { ...res }
+}
+
+async function loadUserProfile() {
+  const res = await ApprenticeService.getUserProfile()
+  if (res) {
+    profileContent.value = res.content
+    profileUpdatedAt.value = res.updated_at
+  }
 }
 
 async function loadChannelMessages(taskId: number) {
@@ -553,7 +624,18 @@ async function submitFeedback() {
   await loadMemory()
 }
 
-// ── Memory ────────────────────────────────────────────────────
+// ── Reflection ────────────────────────────────────────────────
+async function loadReflection(entryId: number) {
+  loadingReflection.value = { ...loadingReflection.value, [entryId]: true }
+  try {
+    const res = await ApprenticeService.getReflection(entryId)
+    reflections.value = { ...reflections.value, [entryId]: res ?? null }
+  } catch {
+    reflections.value = { ...reflections.value, [entryId]: null }
+  } finally {
+    loadingReflection.value = { ...loadingReflection.value, [entryId]: false }
+  }
+}
 async function distill() {
   distilling.value = true
   try {
@@ -593,10 +675,24 @@ async function saveSettings() {
   }
 }
 
+// ── User profile ──────────────────────────────────────────────
+async function saveUserProfile() {
+  const content = profileContent.value.trim()
+  if (!content) return
+  savingProfile.value = true
+  try {
+    const res = await ApprenticeService.updateUserProfile(content)
+    if (res) profileUpdatedAt.value = res.updated_at
+    ElMessage.success('Profile saved')
+  } finally {
+    savingProfile.value = false
+  }
+}
+
 // ── Tab watch (lazy load) ─────────────────────────────────────
 watch(activeTab, async (tab) => {
   if (tab === 'memory') await loadMemory()
-  if (tab === 'settings') { await loadRedLines(); await loadSettings() }
+  if (tab === 'settings') { await loadRedLines(); await loadSettings(); await loadUserProfile() }
 })
 
 // ── Mount ─────────────────────────────────────────────────────
@@ -684,4 +780,19 @@ onMounted(async () => {
 .ap-redline-rule { font-size: 13px; }
 .ap-redline-add { display: flex; gap: 8px; margin-top: 4px; }
 .ap-empty { color: #c0c4cc; font-size: 13px; padding: 8px 0; }
+.ap-profile-hint { font-size: 12px; color: #909399; padding: 8px 14px 4px; }
+.ap-profile-textarea { padding: 8px 14px 12px; }
+.ap-profile-meta { font-size: 11px; color: #c0c4cc; padding: 0 14px 10px; }
+
+/* Reflection expand panel */
+.ap-reflect-expand { display: flex; gap: 20px; padding: 12px 16px; background: #fafafa; }
+.ap-reflect-narrative { flex: 1; min-width: 0; }
+.ap-reflect-section { flex: 1.5; min-width: 0; }
+.ap-reflect-label { font-size: 12px; font-weight: 600; color: #606266; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.ap-reflect-pre { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.5; font-family: inherit; color: #303133; max-height: 300px; overflow-y: auto; }
+.ap-reflect-meta { font-size: 11px; color: #c0c4cc; margin-top: 6px; }
+.ap-reflect-pending { font-size: 12px; color: #909399; font-style: italic; }
+.ap-reflect-loading { font-size: 12px; color: #909399; }
+.ap-reflect-content { border: 1px solid #e4e7ed; border-radius: 6px; padding: 10px; background: #fff; }
+.ap-reflect-notice { padding: 8px 12px; background: #f0f9eb; border: 1px solid #b3e19d; border-radius: 6px; font-size: 12px; color: #67c23a; }
 </style>

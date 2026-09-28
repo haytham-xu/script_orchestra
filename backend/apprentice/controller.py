@@ -4,7 +4,7 @@ import time
 from flask import Response, request, stream_with_context
 from flask_restx import Namespace, Resource
 
-from . import repository, settings_manager, runner
+from . import repository, settings_manager, runner, memory_service
 from .service import get_service
 
 ns = Namespace('apprentice', description='Apprentice autonomous developer agent')
@@ -131,7 +131,18 @@ class MemoryShortFeedback(Resource):
             except (TypeError, ValueError):
                 return {"error": "score must be 1-5"}, 400
         get_service().update_short_feedback(entry_id, score, note)
+        # Trigger self-reflection asynchronously whenever feedback is submitted
+        memory_service.trigger_reflection_if_feedback(entry_id)
         return {"status": "updated"}
+
+
+@ns.route('/memory/short/<int:entry_id>/reflection')
+class MemoryShortReflection(Resource):
+    def get(self, entry_id: int):
+        reflection = repository.get_reflection(entry_id)
+        if reflection is None:
+            return {"error": "reflection not yet available"}, 404
+        return reflection.to_dict()
 
 
 @ns.route('/memory/long')
@@ -193,3 +204,22 @@ class Settings(Resource):
             return {"error": str(e)}, 400
         settings_manager.save_settings(updated)
         return updated
+
+
+# ── User profile ──────────────────────────────────────────────
+
+@ns.route('/profile')
+class UserProfileResource(Resource):
+    def get(self):
+        entry = repository.get_user_profile()
+        if entry is None:
+            return {"content": "", "updated_at": None}
+        return entry.to_dict()
+
+    def put(self):
+        data = request.get_json(force=True) or {}
+        content = (data.get("content") or "").strip()
+        if not content:
+            return {"error": "content is required"}, 400
+        entry = repository.upsert_user_profile(content)
+        return entry.to_dict()

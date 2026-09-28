@@ -35,6 +35,20 @@ export interface RedLine {
   created_at: string
 }
 
+export interface UserProfile {
+  id?: number
+  content: string
+  updated_at: string | null
+}
+
+export interface Reflection {
+  id: number
+  short_memory_id: number
+  task_id: number
+  content: string
+  created_at: string
+}
+
 export interface ApprenticeSettings {
   commander_model: string
   soldier_model: string

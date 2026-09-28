@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from shared.db import get_conn
-from .entity import Task, MemoryShort, MemoryLong, HumanMessage, RedLine, TaskEvent
+from .entity import Task, MemoryShort, MemoryLong, HumanMessage, RedLine, TaskEvent, UserProfile, Reflection
 
 _SCHEMA = [
     """
@@ -72,6 +72,22 @@ _SCHEMA = [
         task_id INTEGER NOT NULL,
         event_type TEXT NOT NULL,
         payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS apprentice_user_profile (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS apprentice_reflection (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        short_memory_id INTEGER NOT NULL UNIQUE,
+        task_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
         created_at TEXT NOT NULL
     )
     """,
@@ -174,6 +190,15 @@ def list_short_memory() -> list:
     rows = conn.execute("SELECT * FROM apprentice_memory_short ORDER BY id DESC").fetchall()
     conn.close()
     return [MemoryShort.from_row(r) for r in rows]
+
+
+def get_short_memory_by_id(entry_id: int) -> Optional[MemoryShort]:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT * FROM apprentice_memory_short WHERE id=?", (entry_id,)
+    ).fetchone()
+    conn.close()
+    return MemoryShort.from_row(row) if row else None
 
 
 def get_undistilled_short_memory() -> list:
@@ -322,3 +347,78 @@ def list_task_events(task_id: int) -> list:
     ).fetchall()
     conn.close()
     return [TaskEvent.from_row(r) for r in rows]
+
+
+# ── User profile ──────────────────────────────────────────────
+
+def get_user_profile() -> Optional[UserProfile]:
+    conn = _conn()
+    row = conn.execute("SELECT * FROM apprentice_user_profile ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return UserProfile.from_row(row) if row else None
+
+
+def upsert_user_profile(content: str) -> UserProfile:
+    conn = _conn()
+    now = _now()
+    existing = conn.execute("SELECT id FROM apprentice_user_profile LIMIT 1").fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE apprentice_user_profile SET content=?, updated_at=? WHERE id=?",
+            (content, now, existing["id"]),
+        )
+        row_id = existing["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO apprentice_user_profile (content, updated_at) VALUES (?,?)", (content, now)
+        )
+        row_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM apprentice_user_profile WHERE id=?", (row_id,)).fetchone()
+    conn.close()
+    return UserProfile.from_row(row)
+
+
+# ── Reflection ────────────────────────────────────────────────
+
+def get_reflection(short_memory_id: int) -> Optional[Reflection]:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT * FROM apprentice_reflection WHERE short_memory_id=?", (short_memory_id,)
+    ).fetchone()
+    conn.close()
+    return Reflection.from_row(row) if row else None
+
+
+def upsert_reflection(short_memory_id: int, task_id: int, content: str) -> Reflection:
+    conn = _conn()
+    now = _now()
+    existing = conn.execute(
+        "SELECT id FROM apprentice_reflection WHERE short_memory_id=?", (short_memory_id,)
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE apprentice_reflection SET content=?, created_at=? WHERE id=?",
+            (content, now, existing["id"]),
+        )
+        row_id = existing["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO apprentice_reflection (short_memory_id, task_id, content, created_at) VALUES (?,?,?,?)",
+            (short_memory_id, task_id, content, now),
+        )
+        row_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("SELECT * FROM apprentice_reflection WHERE id=?", (row_id,)).fetchone()
+    conn.close()
+    return Reflection.from_row(row)
+
+
+def append_to_short_memory_log(entry_id: int, addendum: str) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE apprentice_memory_short SET raw_log = raw_log || ? WHERE id=?",
+        (f"\n\n--- Self-Reflection ---\n{addendum}", entry_id),
+    )
+    conn.commit()
+    conn.close()

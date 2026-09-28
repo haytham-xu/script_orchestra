@@ -162,3 +162,45 @@ class RedLine:
     @classmethod
     def from_row(cls, row) -> "RedLine":
         return cls(id=row["id"], rule=row["rule"], created_at=row["created_at"])
+
+
+@dataclass
+class Reflection:
+    id: int
+    short_memory_id: int
+    task_id: int
+    content: str
+    created_at: str
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "short_memory_id": self.short_memory_id,
+            "task_id": self.task_id,
+            "content": self.content,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_row(cls, row) -> "Reflection":
+        return cls(
+            id=row["id"],
+            short_memory_id=row["short_memory_id"],
+            task_id=row["task_id"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+
+@dataclass
+class UserProfile:
+    id: int
+    content: str
+    updated_at: str
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "content": self.content, "updated_at": self.updated_at}
+
+    @classmethod
+    def from_row(cls, row) -> "UserProfile":
+        return cls(id=row["id"], content=row["content"], updated_at=row["updated_at"])

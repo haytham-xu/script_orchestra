@@ -27,7 +27,10 @@ from apprentice.integration_service import (  # noqa: E402
 
 
 def emit(event_type: str, data: dict) -> None:
-    print(json.dumps({"event": event_type, **data}), flush=True)
+    try:
+        print(json.dumps({"event": event_type, **data}), flush=True)
+    except BrokenPipeError:
+        sys.exit(0)
 
 
 def _text(s: str) -> dict:
@@ -45,6 +48,9 @@ You are Apprentice — an autonomous developer agent.
 ## Your long-term memory (accumulated experience and principles)
 {long_memory}
 
+## User profile (who you are working with)
+{user_profile}
+
 ## Current task
 Title: {task_title}
 Description:
@@ -60,6 +66,7 @@ Target repository: {repo_path}
 - Use check_human_messages periodically — the user may have sent guidance.
 - Use post_checkpoint when you need the user's approval before a risky step.
 - When finished, call write_short_memory with a narrative of what happened and what you learned.
+- When finished, call update_user_profile to record any new observations about the user's preferences and style.
 - End your final response with [DONE] when the task is complete, or [HALTED] if you must stop.
 """
 
@@ -68,6 +75,7 @@ def _build_system_prompt(task_id: int) -> str:
     task = repository.get_task(task_id)
     red_lines = repository.list_red_lines()
     long_memory = memory_service.get_long_memory_text()
+    user_profile = memory_service.get_user_profile_text()
 
     if red_lines:
         red_lines_text = "\n".join(f"- {r.rule}" for r in red_lines)
@@ -77,9 +85,13 @@ def _build_system_prompt(task_id: int) -> str:
     if not long_memory:
         long_memory = "(no experience yet — you are just starting)"
 
+    if not user_profile:
+        user_profile = "(no profile yet — observe and build it over time)"
+
     return _SYSTEM_TEMPLATE.format(
         red_lines=red_lines_text,
         long_memory=long_memory,
+        user_profile=user_profile,
         task_title=task.title,
         task_description=task.description,
         repo_path=task.repo_path,
@@ -208,6 +220,17 @@ async def run(task_id: int) -> None:
         return _text("Memory written.")
 
     @tool(
+        "update_user_profile",
+        "Update the persistent profile of the user based on observations from this task — preferences, communication style, work habits, implicit expectations. Call when the task is complete. This profile is injected into every future task's system prompt.",
+        {"profile": Annotated[str, "Full updated profile text written in second person (e.g. 'The user prefers...'). This replaces the previous profile entirely."]},
+    )
+    async def update_user_profile(args: dict) -> dict:
+        profile = args["profile"]
+        memory_service.upsert_user_profile(profile)
+        emit("profile_updated", {"preview": profile[:200]})
+        return _text("User profile updated.")
+
+    @tool(
         "query_github",
         "Query GitHub for a pull request's status and review comments.",
         {
@@ -247,7 +270,7 @@ async def run(task_id: int) -> None:
         tools=[
             dispatch_soldier, read_long_memory, read_red_lines,
             check_human_messages, post_checkpoint, write_short_memory,
-            query_github, query_jenkins,
+            update_user_profile, query_github, query_jenkins,
         ],
     )
 
@@ -261,6 +284,7 @@ async def run(task_id: int) -> None:
                        "mcp__apprentice__check_human_messages",
                        "mcp__apprentice__post_checkpoint",
                        "mcp__apprentice__write_short_memory",
+                       "mcp__apprentice__update_user_profile",
                        "mcp__apprentice__query_github",
                        "mcp__apprentice__query_jenkins"],
         permission_mode="acceptEdits",

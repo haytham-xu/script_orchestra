@@ -87,3 +87,31 @@ def trigger_distillation_if_needed() -> None:
         trigger_distillation()
     except Exception as e:
         print(f"[apprentice] Auto-distillation failed: {e}")
+
+
+def get_user_profile_text() -> str:
+    entry = repository.get_user_profile()
+    return entry.content if entry else ""
+
+
+def upsert_user_profile(content: str) -> None:
+    repository.upsert_user_profile(content)
+
+
+def trigger_reflection_if_feedback(short_memory_id: int) -> None:
+    """Trigger self-reflection in a background thread. Silent on failure."""
+    import threading
+    from . import reflection_service
+
+    def _run():
+        try:
+            reflection_service.trigger_reflection(short_memory_id)
+        except Exception as e:
+            print(f"[apprentice] Self-reflection failed for entry {short_memory_id}: {e}")
+
+    t = threading.Thread(
+        target=_run,
+        daemon=True,
+        name=f"apprentice-reflect-{short_memory_id}",
+    )
+    t.start()
