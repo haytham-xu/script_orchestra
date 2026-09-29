@@ -93,63 +93,87 @@ def _compute_similarities_batch(args):
 # ========== Phase 2 Single Image Worker (New Architecture) ==========
 
 # Global variable to store all_images in each worker process
-_PHASE2_ALL_IMAGES = None
+_PHASE2_ALL_IMAGES = None   # list[(id, phash_hex)] — kept for fallback
+_PHASE2_IDS = None          # np.ndarray shape (N,) int64
+_PHASE2_BYTES = None        # np.ndarray shape (N, 32) uint8 — phash as bytes
+_PHASE2_POPCOUNT = None     # lookup table uint8[256]
 _PHASE2_DB_PATH = None
 
 
 def _phase2_worker_init(db_path):
     """
     Worker process initializer for Phase 2.
-    Each worker loads all_images from the DB directly — avoids passing 800K+ rows
-    through multiprocessing IPC pipes which causes WinError 6 on Windows.
+    Each worker loads all_images from the DB and converts phashes to a numpy
+    byte matrix for vectorized Hamming distance computation.
     """
-    global _PHASE2_ALL_IMAGES, _PHASE2_DB_PATH
+    global _PHASE2_ALL_IMAGES, _PHASE2_IDS, _PHASE2_BYTES, _PHASE2_POPCOUNT, _PHASE2_DB_PATH
     import sqlite3, os, multiprocessing
+    import numpy as np
+
     _PHASE2_DB_PATH = db_path
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT id, phash FROM duplicate_finder_image_hashes")
-    _PHASE2_ALL_IMAGES = cursor.fetchall()
+    rows = cursor.fetchall()
     conn.close()
+
+    _PHASE2_ALL_IMAGES = rows  # keep original for fallback
+
+    # Build numpy structures for vectorized comparison
+    ids = []
+    byte_rows = []
+    for row_id, row_phash in rows:
+        try:
+            ids.append(row_id)
+            byte_rows.append(list(bytes.fromhex(row_phash)))
+        except (ValueError, TypeError):
+            # Malformed phash — skip (will be missed in comparison)
+            ids.append(row_id)
+            byte_rows.append([0] * 32)
+
+    _PHASE2_IDS = np.array(ids, dtype=np.int64)
+    _PHASE2_BYTES = np.array(byte_rows, dtype=np.uint8)  # (N, 32)
+    _PHASE2_POPCOUNT = np.array([bin(i).count('1') for i in range(256)], dtype=np.uint8)
+
     pid = os.getpid()
     worker_name = multiprocessing.current_process().name
-    print(f"[Worker {worker_name} PID={pid}] Phase 2 initialized with {len(_PHASE2_ALL_IMAGES)} images from DB")
+    print(f"[Worker {worker_name} PID={pid}] Phase 2 initialized with {len(rows)} images "
+          f"({_PHASE2_BYTES.nbytes // 1024} KB numpy array)")
 
 
 def _compute_similarities_single(args):
     """
     Compute similarities for a SINGLE pending image vs all images.
-    Uses global _PHASE2_ALL_IMAGES initialized once per worker.
-
-    Args:
-        args: tuple of (img_id, img_phash, threshold_distance, compare_delay)
-
-    Returns:
-        Tuple of (img_id, similarities_list) where similarities_list contains (id_a, id_b, distance) tuples
+    Uses numpy vectorized XOR + popcount — ~100x faster than Python loop.
     """
-    global _PHASE2_ALL_IMAGES
+    global _PHASE2_IDS, _PHASE2_BYTES, _PHASE2_POPCOUNT
     img_id, img_phash, threshold_distance, compare_delay = args
 
-    def hamming_distance(hash1: str, hash2: str) -> int:
-        return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
-
-    similarities = []
-
-    # Apply compare delay once per image (before processing)
     if compare_delay > 0:
         import time
         time.sleep(compare_delay)
 
-    # Compare with all images
-    for other_id, other_phash in _PHASE2_ALL_IMAGES:
-        if img_id == other_id:
-            continue
+    import numpy as np
 
-        distance = hamming_distance(img_phash, other_phash)
-        if distance <= threshold_distance:
-            # Ensure id_a < id_b
-            id_a, id_b = (img_id, other_id) if img_id < other_id else (other_id, img_id)
-            similarities.append((id_a, id_b, distance))
+    # Decode query phash to bytes
+    try:
+        q_bytes = np.frombuffer(bytes.fromhex(img_phash), dtype=np.uint8)  # (32,)
+    except (ValueError, TypeError):
+        return (img_id, [])
+
+    # Vectorized Hamming: XOR each row with query, then popcount via lookup table
+    xor = _PHASE2_BYTES ^ q_bytes                    # (N, 32) uint8
+    distances = _PHASE2_POPCOUNT[xor].sum(axis=1)    # (N,) uint16/int
+
+    # Find matches within threshold, excluding self
+    mask = (distances <= threshold_distance) & (_PHASE2_IDS != img_id)
+    match_ids = _PHASE2_IDS[mask]
+    match_dists = distances[mask]
+
+    similarities = []
+    for other_id, dist in zip(match_ids.tolist(), match_dists.tolist()):
+        id_a, id_b = (img_id, other_id) if img_id < other_id else (other_id, img_id)
+        similarities.append((id_a, id_b, int(dist)))
 
     return (img_id, similarities)
 
