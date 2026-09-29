@@ -286,7 +286,10 @@ def _err(file_path: str, error_type: str, error_msg: str) -> Dict:
 # Per-process global: populated by _phase2_worker_init.
 # Each Pool worker sees its OWN copy after spawn re-import. Reading from a
 # global is faster than receiving via args every task.
-_PHASE2_ALL_VIDEOS = None  # type: Optional[List[Tuple[int, str]]]
+_PHASE2_ALL_VIDEOS = None  # type: Optional[List[Tuple[int, str]]]  (kept for fallback)
+_PHASE2_IDS = None          # np.ndarray shape (N,) int64
+_PHASE2_BYTES = None        # np.ndarray shape (N, 64) uint8 — video hash as bytes
+_PHASE2_POPCOUNT = None     # lookup table uint8[256]
 # Per-worker compare_delay (seconds, sleep BEFORE each per-video comparison).
 # Set by _phase2_worker_init; sleeps inside the worker where it can actually
 # throttle CPU. Setting compare_delay in the main-process prime loop only
@@ -294,62 +297,99 @@ _PHASE2_ALL_VIDEOS = None  # type: Optional[List[Tuple[int, str]]]
 # review — Backend concurrency dimension.)
 _PHASE2_COMPARE_DELAY = 0.0
 
+# Each video hash is N_FRAMES × HEX_PER_FRAME hex chars joined by '|'.
+# Stripping '|' gives N_FRAMES * HEX_PER_FRAME hex chars = N_FRAMES * 8 bytes.
+_PHASE2_BYTES_PER_HASH = N_FRAMES * (BITS_PER_FRAME // 8)  # 8 × 8 = 64
+
 
 def _phase2_worker_init(all_videos: List[Tuple[int, str]],
                         compare_delay: float = 0.0) -> None:
-    """Pool initializer: stash the global snapshot in this worker process."""
-    global _PHASE2_ALL_VIDEOS
+    """Pool initializer: build numpy byte matrix for vectorized Hamming distance."""
+    global _PHASE2_ALL_VIDEOS, _PHASE2_IDS, _PHASE2_BYTES, _PHASE2_POPCOUNT
     global _PHASE2_COMPARE_DELAY
-    _PHASE2_ALL_VIDEOS = all_videos
-    _PHASE2_COMPARE_DELAY = float(compare_delay or 0.0)
     import os
     import multiprocessing
-    print(f"[Phase 2 Worker {multiprocessing.current_process().name} "
-          f"PID={os.getpid()}] init: {len(all_videos)} videos in memory, "
+    import numpy as np
+
+    _PHASE2_ALL_VIDEOS = all_videos
+    _PHASE2_COMPARE_DELAY = float(compare_delay or 0.0)
+
+    ids = []
+    byte_rows = []
+    for vid_id, vid_hash in all_videos:
+        ids.append(vid_id)
+        try:
+            # Strip '|' separators: "aabb...|ccdd...|..." → "aabbccdd..."
+            hex_clean = (vid_hash or '').replace('|', '')
+            byte_rows.append(list(bytes.fromhex(hex_clean)))
+        except (ValueError, TypeError, AttributeError):
+            byte_rows.append([0] * _PHASE2_BYTES_PER_HASH)
+
+    _PHASE2_IDS = np.array(ids, dtype=np.int64)
+    _PHASE2_BYTES = np.array(byte_rows, dtype=np.uint8)   # (N, 64)
+    _PHASE2_POPCOUNT = np.array([bin(i).count('1') for i in range(256)], dtype=np.uint8)
+
+    pid = os.getpid()
+    worker_name = multiprocessing.current_process().name
+    print(f"[Phase 2 Worker {worker_name} PID={pid}] init: {len(all_videos)} videos, "
+          f"{_PHASE2_BYTES.nbytes // 1024} KB numpy array, "
           f"compare_delay={_PHASE2_COMPARE_DELAY}s")
 
 
 def _compute_video_similarities_single(args) -> Tuple[int, List[Tuple[int, int, int]]]:
     """
-    Compute similarities for ONE pending video against the worker-local
-    snapshot `_PHASE2_ALL_VIDEOS`.
+    Compute similarities for ONE pending video against the worker-local snapshot.
+
+    Uses numpy vectorized XOR + popcount — same approach as the image-version
+    `_compute_similarities_single` in phash_new_workflow.py, adapted for the
+    64-byte video hash (8 frames × 8 bytes each).
 
     args = (video_id, video_hash, threshold_distance)
 
     Returns: (video_id, similarities_list)
         where similarities_list is [(id_a, id_b, distance), ...] with
         id_a < id_b (canonical ordering matches video_similarities CHECK).
-
-    Returns an empty list if no neighbors are within threshold. Self-pair
-    (video_id == other_id) is always skipped.
-
-    Never raises — distance failures are silently encoded as MAX_DISTANCE,
-    which gets filtered out by the threshold_distance comparison.
     """
     video_id, video_hash, threshold_distance = args
-    sims: List[Tuple[int, int, int]] = []
 
-    if _PHASE2_ALL_VIDEOS is None:
-        return (video_id, sims)  # defensive: initializer didn't run
-
-    # Apply per-worker compare_delay before the pairwise loop so the setting
-    # actually throttles worker CPU (Tier-2 review).
     if _PHASE2_COMPARE_DELAY > 0:
         time.sleep(_PHASE2_COMPARE_DELAY)
 
-    # Inline a fast version of video_distance to avoid the function call
-    # overhead inside the inner loop. Same semantics — see video_distance().
-    my_frames = video_hash.split('|')
-    n_my = len(my_frames)
+    # ---- numpy fast path ----
+    if _PHASE2_IDS is not None and _PHASE2_BYTES is not None and _PHASE2_POPCOUNT is not None:
+        import numpy as np
+        try:
+            hex_clean = (video_hash or '').replace('|', '')
+            q_bytes = np.frombuffer(bytes.fromhex(hex_clean), dtype=np.uint8)  # (64,)
+        except (ValueError, TypeError, AttributeError):
+            return (video_id, [])
 
+        xor = _PHASE2_BYTES ^ q_bytes                   # (N, 64) uint8
+        distances = _PHASE2_POPCOUNT[xor].sum(axis=1)   # (N,) int
+
+        mask = (distances <= threshold_distance) & (_PHASE2_IDS != video_id)
+        match_ids = _PHASE2_IDS[mask]
+        match_dists = distances[mask]
+
+        sims: List[Tuple[int, int, int]] = []
+        for other_id, dist in zip(match_ids.tolist(), match_dists.tolist()):
+            id_a, id_b = (video_id, other_id) if video_id < other_id else (other_id, video_id)
+            sims.append((id_a, id_b, int(dist)))
+        return (video_id, sims)
+
+    # ---- pure-Python fallback (numpy unavailable) ----
+    if _PHASE2_ALL_VIDEOS is None:
+        return (video_id, [])
+
+    my_frames = (video_hash or '').split('|')
+    n_my = len(my_frames)
+    sims = []
     for other_id, other_hash in _PHASE2_ALL_VIDEOS:
         if other_id == video_id:
             continue
-
-        other_frames = other_hash.split('|')
+        other_frames = (other_hash or '').split('|')
         if len(other_frames) != n_my:
-            continue  # incomparable: different frame counts
-
+            continue
         total = 0
         ok = True
         for fa, fb in zip(my_frames, other_frames):
@@ -358,13 +398,9 @@ def _compute_video_similarities_single(args) -> Tuple[int, List[Tuple[int, int, 
             except (ValueError, TypeError):
                 ok = False
                 break
-        if not ok:
-            continue
-
-        if total <= threshold_distance:
+        if ok and total <= threshold_distance:
             id_a, id_b = (video_id, other_id) if video_id < other_id else (other_id, video_id)
             sims.append((id_a, id_b, total))
-
     return (video_id, sims)
 
 
