@@ -34,8 +34,7 @@
       <!-- Action Section: phase buttons + inline deep-path-delete -->
       <div class="action-section">
         <div class="action-buttons">
-          <el-tooltip content="Run Phase 1 → Phase 2 → Phase 2.5 → Phase 3 in sequence" placement="top">
-            <el-button
+          <el-button
               type="success"
               size="large"
               :disabled="!settings.folder_paths || settings.folder_paths.length === 0
@@ -45,7 +44,6 @@
               @click="runFullPipeline"
               data-testid="run-full-pipeline-btn"
             >⚡ Run All</el-button>
-          </el-tooltip>
 
           <!-- Phase 1 -->
           <el-button
@@ -79,15 +77,13 @@
           >⏹ Stop</el-button>
 
           <!-- Phase 2.5 -->
-          <el-tooltip :content="phase25TooltipContent" placement="top">
-            <el-button
+          <el-button
               :type="phase25NeedsAttention ? 'danger' : 'primary'"
               size="large"
               :disabled="isFullPipelineRunning || isPhase25Running"
               :loading="isPhase25Running"
               @click="runPhase25(true)"
             >{{ isPhase25Running ? 'Phase 2.5 Running…' : '🧮 Materialize Groups' }}</el-button>
-          </el-tooltip>
           <el-button
             v-if="isPhase25Running"
             type="warning"
@@ -111,11 +107,7 @@
           >⏹ Stop</el-button>
 
           <!-- Compare all folders -->
-          <el-tooltip
-            content="Run Compare Folder for every folder that has files in any duplicate group (skips 4+ folder clusters)"
-            placement="top"
-          >
-            <el-button
+          <el-button
               type="primary"
               plain
               size="large"
@@ -125,23 +117,17 @@
                         || isPhase25Running || isPhase3Running || isFullPipelineRunning"
               @click="runCompareAllFolders(false)"
             >🔍 Compare All Folders</el-button>
-          </el-tooltip>
         </div>
 
         <!-- Deep Path Delete inline widget -->
         <div class="deep-delete-inline">
-          <el-tooltip
-            content="Enter a folder path — every DUPLICATE file under it is moved to the delete target (mirrors folder structure, keeps companions)"
-            placement="top"
-          >
-            <el-input
+          <el-input
               v-model="deepPathDelete"
               placeholder="🎯 Deep Path Delete — enter or click on a video's Deep Delete"
               class="deep-delete-input"
               size="default"
               clearable
             />
-          </el-tooltip>
           <el-button
             type="danger"
             :loading="isDeleting"
@@ -362,43 +348,27 @@
                   >
                     {{ hasAllSelectedInGroup(group) ? '❎ Deselect All' : '☑️ Select All' }}
                   </el-button>
-                  <el-tooltip
-                    content="Reset and re-run compare over the folders containing this group's videos"
-                    placement="top"
-                  >
-                    <el-button
+                  <el-button
                       size="small"
                       type="primary"
                       plain
                       :loading="isComparingFolder"
                       @click="compareFolderForGroup(group)"
                     >🔍 Compare Folder</el-button>
-                  </el-tooltip>
                 </div>
                 <div class="group-actions-right">
                   <el-button
                     size="small"
                     @click="addGroupToWhitelist(group, groupIndex)"
                   >✅ Add to Whitelist</el-button>
-                  <el-tooltip
-                    :content="group.length !== 2
-                      ? 'Replace only works on groups with exactly 2 videos'
-                      : (getSelectedCountInGroup(group) === 1
-                          ? 'Keep selected video (copied to the other one\'s folder + basename with selected extension); originals backed up'
-                          : 'Replace requires exactly 1 selected video')"
-                    placement="top"
-                  >
-                    <span>
-                      <el-button
-                        size="small"
-                        type="warning"
-                        plain
-                        :loading="isReplacing"
-                        :disabled="group.length !== 2 || getSelectedCountInGroup(group) !== 1"
-                        @click="replaceInGroup(group, groupIndex)"
-                      >🔄 Replace</el-button>
-                    </span>
-                  </el-tooltip>
+                  <el-button
+                      size="small"
+                      type="warning"
+                      plain
+                      :loading="isReplacing"
+                      :disabled="group.length !== 2 || getSelectedCountInGroup(group) !== 1"
+                      @click="replaceInGroup(group, groupIndex)"
+                    >🔄 Replace</el-button>
                   <el-button
                     size="small"
                     type="danger"

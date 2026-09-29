@@ -26,7 +26,6 @@
             :loading="isFullPipelineRunning"
             @click="runFullPipeline"
             data-testid="run-full-pipeline-btn"
-            title="Run Phase 1 → Phase 2 → Phase 2.5 → Compare All Folders in sequence"
           >
             ⚡ Run All
           </el-button>
@@ -68,37 +67,27 @@
           >
             ⏹️ Stop
           </el-button>
-          <el-tooltip
+          <el-button
             v-if="!isPhase2Running"
-            content="Reset all computed images to pending and re-run Phase 2 with the current threshold. Use this when you changed the similarity threshold or added new folders without re-running Phase 2."
-            placement="top"
+            type="warning"
+            size="large"
+            :disabled="isPhase2Running"
+            @click="forceRerunPhase2"
           >
-            <el-button
-              type="warning"
-              size="large"
-              :disabled="isPhase2Running"
-              @click="forceRerunPhase2"
-            >
-              🔄 Force Re-run
-            </el-button>
-          </el-tooltip>
+            🔄 Force Re-run
+          </el-button>
 
           <!-- Phase 2.5: Materialize Groups (manual trigger between Phase 2 and Phase 3) -->
-          <el-tooltip
-            :content="phase25TooltipContent"
-            placement="top"
+          <el-button
+            :type="phase25NeedsAttention ? 'warning' : 'primary'"
+            size="large"
+            :disabled="isPhase25Running"
+            :loading="isPhase25Running"
+            @click="runPhase25"
+            data-testid="phase25-materialize-btn"
           >
-            <el-button
-              :type="phase25NeedsAttention ? 'warning' : 'primary'"
-              size="large"
-              :disabled="isPhase25Running"
-              :loading="isPhase25Running"
-              @click="runPhase25"
-              data-testid="phase25-materialize-btn"
-            >
-              {{ isPhase25Running ? 'Phase 2.5 Running...' : '🧮 Materialize Groups' }}
-            </el-button>
-          </el-tooltip>
+            {{ isPhase25Running ? 'Phase 2.5 Running...' : '🧮 Materialize Groups' }}
+          </el-button>
           <el-button
             v-if="isPhase25Running"
             type="warning"
@@ -133,23 +122,29 @@
             :loading="isCompareAllRunning"
             @click="runCompareAllFolders"
             data-testid="compare-all-folders-btn"
-            title="Run Compare Folder over EVERY folder touched by any materialized duplicate group. Backfills missed similarities globally."
           >
             🔍 Compare All Folders
+          </el-button>
+          <el-button
+            type="warning"
+            plain
+            size="large"
+            :loading="gapAnalysisLoading"
+            @click="triggerGapAnalysis('global')"
+          >
+            🔎 Gap Analysis
           </el-button>
         </div>
 
         <!-- Deep Path Delete - Compact -->
         <div class="deep-delete-inline">
-          <el-tooltip content="Preserve folder structure when deleting. Example: /a/folder1/sub/file.jpg → /to_del/sub/file.jpg" placement="top">
-            <el-input
-              v-model="deepPathDelete"
-              placeholder="Deep Path Delete"
-              style="width: 560px;"
-              size="default"
-              data-testid="deep-delete-path-input"
-            />
-          </el-tooltip>
+          <el-input
+            v-model="deepPathDelete"
+            placeholder="Deep Path Delete"
+            style="width: 560px;"
+            size="default"
+            data-testid="deep-delete-path-input"
+          />
           <el-button
             type="danger"
             @click="executeDeepPathDelete"
@@ -301,7 +296,6 @@
             :type="sortOrder === 'desc' ? 'primary' : 'default'"
             @click="toggleSortOrder"
             data-testid="phase3-sort-order"
-            :title="sortOrder === 'desc' ? 'Descending (click to switch to ascending)' : 'Ascending (click to switch to descending)'"
           >
             {{ sortOrder === 'desc' ? '↓ Desc' : '↑ Asc' }}
           </el-button>
@@ -339,23 +333,14 @@
                   >
                     {{ hasAllSelectedInGroup(group) ? '❎ Deselect All' : '☑️ Select All' }}
                   </el-button>
-                  <el-tooltip
-                    :content="group.length > 3
-                      ? 'Preview disabled for groups with more than 3 images'
-                      : 'Open a large side-by-side preview of all images in this group'"
-                    placement="top"
+                  <el-button
+                    size="small"
+                    :disabled="group.length > 3"
+                    @click="openGroupPreview(group, groupIndex)"
+                    data-testid="preview-group-btn"
                   >
-                    <span>
-                      <el-button
-                        size="small"
-                        :disabled="group.length > 3"
-                        @click="openGroupPreview(group, groupIndex)"
-                        data-testid="preview-group-btn"
-                      >
-                        🖼️ Preview
-                      </el-button>
-                    </span>
-                  </el-tooltip>
+                    🖼️ Preview
+                  </el-button>
                   <el-button
                     size="small"
                     type="primary"
@@ -363,9 +348,17 @@
                     :loading="isComparingFolder"
                     @click="compareFolderForGroup(group)"
                     data-testid="compare-folder-btn"
-                    title="Reset and re-run Phase 1 → 2 → 2.5 for the folders containing this group's files"
                   >
                     🔍 Compare Folder
+                  </el-button>
+                  <el-button
+                    size="small"
+                    type="warning"
+                    plain
+                    :loading="gapAnalysisLoading"
+                    @click.stop="triggerGapAnalysis('group', undefined, group[0]?.group_id)"
+                  >
+                    🔎 Gap
                   </el-button>
                 </div>
                 <div class="group-actions-right">
@@ -376,27 +369,16 @@
                   >
                     ✅ Add to Whitelist
                   </el-button>
-                  <el-tooltip
-                    :content="group.length !== 2
-                      ? 'Replace only works on groups with exactly 2 images'
-                      : (getSelectedCountInGroup(group) === 1
-                          ? 'Keep selected image (copied to the other one\'s folder + basename, with selected\'s extension); both originals backed up to delete target'
-                          : 'Replace requires exactly 1 selected image')"
-                    placement="top"
+                  <el-button
+                    size="small"
+                    type="warning"
+                    plain
+                    :disabled="group.length !== 2 || getSelectedCountInGroup(group) !== 1"
+                    @click="replaceInGroup(group, groupIndex)"
+                    data-testid="replace-btn"
                   >
-                    <span>
-                      <el-button
-                        size="small"
-                        type="warning"
-                        plain
-                        :disabled="group.length !== 2 || getSelectedCountInGroup(group) !== 1"
-                        @click="replaceInGroup(group, groupIndex)"
-                        data-testid="replace-btn"
-                      >
-                        🔄 Replace
-                      </el-button>
-                    </span>
-                  </el-tooltip>
+                    🔄 Replace
+                  </el-button>
                   <el-button
                     size="small"
                     type="warning"
@@ -482,7 +464,6 @@
                       @click.stop="deepReplacePath(image.file_path)"
                       class="action-button"
                       data-testid="deep-replace-path-btn"
-                      title="Batch Replace for all groups on this page that have a file under this folder (every matched group must have exactly 2 images)"
                     >
                       🔄 Deep Replace
                     </el-button>
@@ -599,6 +580,34 @@
             >
               <span class="file-icon">📄</span>
               <span class="file-path">{{ file }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gap pairs from automatic analysis (when selection_rate >= threshold) -->
+        <div v-if="deepDeletePreview.gapPairs && deepDeletePreview.gapPairs.length > 0" class="file-list-section">
+          <div class="file-list-header" style="color: #e6a23c;">
+            <span>🔎 Possible missed duplicates</span>
+            <span class="file-count">({{ deepDeletePreview.gapPairs.length }} pairs)</span>
+          </div>
+          <p style="font-size:12px;color:#909399;margin:4px 0 8px;">
+            Check pairs to include their undetected images in this delete operation.
+          </p>
+          <div class="file-list-container">
+            <div
+              v-for="pair in deepDeletePreview.gapPairs"
+              :key="pair.gap_id + '-' + pair.candidate_id"
+              class="file-list-item"
+            >
+              <el-checkbox v-model="pair.checked" @click.stop />
+              <span class="file-icon">🖼️</span>
+              <span class="file-path">{{ pair.gap_file }}</span>
+              <span
+                class="folder-file-count"
+                :style="pair.similarity_pct >= 80 ? 'color:#67c23a' : pair.similarity_pct >= 70 ? 'color:#e6a23c' : 'color:#d4ac0d'"
+              >
+                {{ pair.similarity_pct.toFixed(1) }}%
+              </span>
             </div>
           </div>
         </div>
@@ -910,6 +919,15 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- Gap Analysis Dialog -->
+    <GapAnalysisDialog
+      v-model="showGapDialog"
+      :pairs="gapPairs"
+      :context="gapDialogContext"
+      @close="showGapDialog = false"
+      @confirm="(includeInDelete) => submitConfirmGapPairs(includeInDelete)"
+    />
   </div>
 
   <el-backtop :right="24" :bottom="64" :visibility-height="300" />
