@@ -16,9 +16,11 @@ SETTINGS_FILE = os.path.join(SETTINGS_DIR, "settings.json")
 DEFAULT_SETTINGS: Dict[str, Any] = {
     # learning_prompt: optional user preference appended to the fixed
     # learning-point instruction (zh2en only; en2zh has no learning points).
-    "zh2en": {"system_prompt": "", "model": "auto", "learning_prompt": ""},
-    "en2zh": {"system_prompt": "", "model": "auto"},
+    "zh2en": {"system_prompt": "", "model": "auto", "learning_prompt": "", "provider": "copilot"},
+    "en2zh": {"system_prompt": "", "model": "auto", "provider": "copilot"},
     "cleanup_days": 30,   # default retention for one-click cleanup
+    "ollama_base_url": "http://localhost:11434",
+    "ollama_model": "qwen2.5:14b",
 }
 
 
@@ -71,6 +73,11 @@ def _normalize_scene(patch_scene: dict, current_scene: dict) -> dict:
         if not isinstance(v, str):
             raise ValueError("learning_prompt must be a string")
         merged["learning_prompt"] = v
+    if "provider" in patch_scene:
+        v = patch_scene["provider"]
+        if v not in ("copilot", "ollama"):
+            raise ValueError("provider must be 'copilot' or 'ollama'")
+        merged["provider"] = v
     return merged
 
 
@@ -84,6 +91,16 @@ def validate_and_normalize(patch: dict, current: dict) -> dict:
             merged["cleanup_days"] = max(1, min(int(patch["cleanup_days"]), 3650))
         except (TypeError, ValueError):
             raise ValueError("cleanup_days must be an integer")
+    if "ollama_base_url" in patch:
+        v = patch["ollama_base_url"]
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("ollama_base_url must be a non-empty string")
+        merged["ollama_base_url"] = v.strip()
+    if "ollama_model" in patch:
+        v = patch["ollama_model"]
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("ollama_model must be a non-empty string")
+        merged["ollama_model"] = v.strip()
     return merged
 
 

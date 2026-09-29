@@ -6,7 +6,7 @@ log) into faithful, objective Chinese, then persist history.
 
 Returns {chinese, history_id}.
 """
-from . import copilot_client, repository, settings_manager, websocket_service as ws
+from . import repository, settings_manager, websocket_service as ws
 from .entity import TranslationHistory
 
 SCENE = "en2zh"
@@ -19,15 +19,26 @@ def translate(text: str, model: str = None, job_id: str = None, extra_prompt: st
 
     cfg = settings_manager.get_scene_config(SCENE)
     system = cfg.get("system_prompt", "")
+
+    provider = cfg.get("provider", "copilot")
+    if provider == "ollama":
+        from . import ollama_client as ai_client  # noqa: PLC0415
+    else:
+        from . import copilot_client as ai_client  # noqa: PLC0415
+
+    if provider == "ollama":
+        default_model = settings_manager.load_settings().get("ollama_model", "qwen2.5:14b")
+    else:
+        default_model = "auto"
+    model = model or cfg.get("model", default_model) or default_model
+
     # One-off instruction for THIS translation only — appended to the saved
     # system prompt, not replacing it.
     extra_prompt = (extra_prompt or "").strip()
     if extra_prompt:
         system = f"{system}\n\n{extra_prompt}".strip()
-    # Per-request model override wins over the scene's saved default.
-    model = model or cfg.get("model", "auto")
 
-    chinese, usage = copilot_client.ask_with_usage(
+    chinese, usage = ai_client.ask_with_usage(
         text, system=system, model=model,
         on_delta=lambda c: ws.emit_progress(job_id, SCENE, "translating", delta=c),
     )

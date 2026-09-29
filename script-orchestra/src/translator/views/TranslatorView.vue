@@ -4,7 +4,7 @@
       <div class="tr-topbar-inner">
         <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
         <h1>Translator</h1>
-        <span class="tr-sub">Copilot-backed · zh ↔ en</span>
+        <span class="tr-sub">Copilot / Ollama · zh ↔ en</span>
         <div v-if="usageSummary && usageSummary.count" class="tr-usage-header">
           <span class="tr-usage-h-item"><b>{{ usageSummary.total_credits }}</b> credits</span>
           <span class="tr-usage-h-item">{{ usageSummary.count }} calls</span>
@@ -27,7 +27,7 @@
               <div class="tr-model-pick">
                 <span class="tr-model-label">Model</span>
                 <el-select v-model="zhModel" size="small" class="tr-model-select">
-                  <el-option v-for="m in modelOptions" :key="m.id" :label="m.name" :value="m.id" />
+                  <el-option v-for="m in zhModelOptions" :key="m.id" :label="m.name" :value="m.id" />
                 </el-select>
               </div>
               <el-button type="primary" :loading="zhLoading" @click="runZh2En">
@@ -128,7 +128,7 @@
               <div class="tr-model-pick">
                 <span class="tr-model-label">Model</span>
                 <el-select v-model="enModel" size="small" class="tr-model-select">
-                  <el-option v-for="m in modelOptions" :key="m.id" :label="m.name" :value="m.id" />
+                  <el-option v-for="m in enModelOptions" :key="m.id" :label="m.name" :value="m.id" />
                 </el-select>
               </div>
               <el-button type="primary" :loading="enLoading" @click="runEn2Zh">
@@ -180,27 +180,47 @@
         <div class="tr-scene">
           <div class="tr-card">
             <div class="tr-card-title">Scene 1 · ZH → EN</div>
+            <label class="tr-label">Provider</label>
+            <el-radio-group v-model="settings.zh2en.provider" size="small" class="tr-provider-group">
+              <el-radio-button value="copilot">Copilot</el-radio-button>
+              <el-radio-button value="ollama">Ollama (local)</el-radio-button>
+            </el-radio-group>
+            <label class="tr-label">Model</label>
+            <el-select v-model="settings.zh2en.model" class="tr-select">
+              <el-option v-for="m in zhModelOptions" :key="m.id" :label="m.name" :value="m.id" />
+            </el-select>
+
             <label class="tr-label">System prompt (translation style, write your own)</label>
             <el-input v-model="settings.zh2en.system_prompt" type="textarea" :rows="4"
               placeholder="e.g. Translate into concise, friendly Slack-style English…" />
             <label class="tr-label">Learning-point preference (optional)</label>
             <el-input v-model="settings.zh2en.learning_prompt" type="textarea" :rows="3"
               placeholder="Steer what the learning points focus on, e.g. emphasize preposition collocations and business tone. (Appended to the built-in learning-point instruction; does not change the JSON format.)" />
-            <label class="tr-label">Model</label>
-            <el-select v-model="settings.zh2en.model" class="tr-select">
-              <el-option v-for="m in modelOptions" :key="m.id" :label="m.name" :value="m.id" />
-            </el-select>
           </div>
 
           <div class="tr-card">
             <div class="tr-card-title">Scene 2 · EN → ZH</div>
+            <label class="tr-label">Provider</label>
+            <el-radio-group v-model="settings.en2zh.provider" size="small" class="tr-provider-group">
+              <el-radio-button value="copilot">Copilot</el-radio-button>
+              <el-radio-button value="ollama">Ollama (local)</el-radio-button>
+            </el-radio-group>
+            <label class="tr-label">Model</label>
+            <el-select v-model="settings.en2zh.model" class="tr-select">
+              <el-option v-for="m in enModelOptions" :key="m.id" :label="m.name" :value="m.id" />
+            </el-select>
+
             <label class="tr-label">System prompt (translation style, write your own)</label>
             <el-input v-model="settings.en2zh.system_prompt" type="textarea" :rows="4"
               placeholder="e.g. Translate into faithful, objective Chinese…" />
-            <label class="tr-label">Model</label>
-            <el-select v-model="settings.en2zh.model" class="tr-select">
-              <el-option v-for="m in modelOptions" :key="m.id" :label="m.name" :value="m.id" />
-            </el-select>
+          </div>
+
+          <div class="tr-card">
+            <div class="tr-card-title">Ollama</div>
+            <label class="tr-label">Server URL</label>
+            <el-input v-model="settings.ollama_base_url" placeholder="http://localhost:11434" class="tr-url-input" />
+            <label class="tr-label">Default model (used when scene model is set to "auto")</label>
+            <el-input v-model="settings.ollama_model" placeholder="qwen2.5:14b" class="tr-url-input" />
           </div>
 
           <div class="tr-card">
@@ -295,6 +315,8 @@
 .tr-hist-point { font-size: 12px; color: #6e6e73; line-height: 1.6; }
 .tr-label { display: block; font-size: 13px; color: #6e6e73; margin: 10px 0 4px; }
 .tr-select { width: 240px; }
+.tr-provider-group { margin-bottom: 4px; }
+.tr-url-input { max-width: 360px; }
 .tr-cleanup { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: #3a3a3c; }
 .tr-hint { font-size: 12px; color: #86868b; margin: 10px 0 6px; }
 </style>

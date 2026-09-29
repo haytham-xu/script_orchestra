@@ -41,8 +41,9 @@ export async function cleanup(days?: number): Promise<{ deleted: number; days: n
   return await deleteRequest<{ deleted: number; days: number }>(`${B}/history`, params)
 }
 
-export async function getModels(): Promise<ModelInfo[]> {
-  return (await getRequest<{ models: ModelInfo[] }>(`${B}/models`)).models
+export async function getModels(provider?: 'copilot' | 'ollama'): Promise<ModelInfo[]> {
+  const params = provider ? { provider } : {}
+  return (await getRequest<{ models: ModelInfo[] }>(`${B}/models`, params)).models
 }
 
 // Cumulative usage across history, optionally scoped to one scene.

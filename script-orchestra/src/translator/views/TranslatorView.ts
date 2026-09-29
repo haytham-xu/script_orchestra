@@ -49,15 +49,26 @@ export default defineComponent({
 
     // ---- shared: settings + models ----
     const settings = ref<TranslatorSettings>({
-      zh2en: { system_prompt: '', model: 'auto', learning_prompt: '' },
-      en2zh: { system_prompt: '', model: 'auto' },
+      zh2en: { system_prompt: '', model: 'auto', learning_prompt: '', provider: 'copilot' },
+      en2zh: { system_prompt: '', model: 'auto', provider: 'copilot' },
       cleanup_days: 30,
+      ollama_base_url: 'http://localhost:11434',
+      ollama_model: 'qwen2.5:14b',
     })
-    const models = ref<ModelInfo[]>([])
-    // model dropdown always offers "auto" plus whatever the runtime lists.
-    const modelOptions = computed<ModelInfo[]>(() => {
+    const copilotModels = ref<ModelInfo[]>([])
+    const ollamaModels = ref<ModelInfo[]>([])
+
+    // model dropdown shows "auto" + provider-specific models per scene.
+    const zhModelOptions = computed<ModelInfo[]>(() => {
       const base: ModelInfo[] = [{ id: 'auto', name: 'auto' }]
-      const extra = models.value.filter((m) => m.id !== 'auto')
+      const extra = (settings.value.zh2en.provider === 'ollama' ? ollamaModels.value : copilotModels.value)
+        .filter((m) => m.id !== 'auto')
+      return [...base, ...extra]
+    })
+    const enModelOptions = computed<ModelInfo[]>(() => {
+      const base: ModelInfo[] = [{ id: 'auto', name: 'auto' }]
+      const extra = (settings.value.en2zh.provider === 'ollama' ? ollamaModels.value : copilotModels.value)
+        .filter((m) => m.id !== 'auto')
       return [...base, ...extra]
     })
 
@@ -65,7 +76,8 @@ export default defineComponent({
       try { settings.value = await api.getSettings() } catch { /* toast handled upstream */ }
     }
     async function loadModels() {
-      try { models.value = await api.getModels() } catch { models.value = [] }
+      try { copilotModels.value = await api.getModels('copilot') } catch { copilotModels.value = [] }
+      try { ollamaModels.value = await api.getModels('ollama') } catch { ollamaModels.value = [] }
     }
 
     // ---- cumulative usage summary (Settings tab) ----
@@ -228,7 +240,7 @@ export default defineComponent({
 
     return {
       goBack,
-      activeTab, settings, modelOptions, savingSettings, saveSettings,
+      activeTab, settings, zhModelOptions, enModelOptions, savingSettings, saveSettings,
       cleanupDays, cleaning, runCleanup,
       usageSummary, fmtUsage, renderMarkdown,
       zhStreaming, zhPhase, enStreaming,

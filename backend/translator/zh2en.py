@@ -18,9 +18,10 @@ Flow:
 Returns {english, back_translation, learning_points[], history_id}.
 """
 import json
+import concurrent.futures
 from typing import List
 
-from . import copilot_client, repository, settings_manager, websocket_service as ws
+from . import repository, settings_manager, websocket_service as ws
 from .entity import TranslationHistory, LearningPoint
 
 SCENE = "zh2en"
@@ -104,6 +105,12 @@ def translate(text: str, model: str = None, job_id: str = None, extra_prompt: st
 
     cfg = settings_manager.get_scene_config(SCENE)
     system = cfg.get("system_prompt", "")
+
+    provider = cfg.get("provider", "copilot")
+    if provider == "ollama":
+        from . import ollama_client as ai_client  # noqa: PLC0415
+    else:
+        from . import copilot_client as ai_client  # noqa: PLC0415
     # A one-off instruction for THIS translation only — appended to (not
     # replacing) the saved system prompt. Affects the main translation's style;
     # back-translation and learning-point extraction keep their fixed prompts.
@@ -111,49 +118,56 @@ def translate(text: str, model: str = None, job_id: str = None, extra_prompt: st
     if extra_prompt:
         system = f"{system}\n\n{extra_prompt}".strip()
     # Per-request model override wins over the scene's saved default.
-    model = model or cfg.get("model", "auto")
+    # For Ollama, fall back to the global ollama_model setting when no model specified.
+    if provider == "ollama":
+        default_model = settings_manager.load_settings().get("ollama_model", "qwen2.5:14b")
+    else:
+        default_model = "auto"
+    model = model or cfg.get("model", default_model) or default_model
 
-    # This scene makes up to 3 Copilot calls (main translation, back-translation,
-    # learning points). The row's usage is their SUM — it reflects what this one
-    # user-facing translation actually cost.
-    usage = copilot_client._empty_usage()
+    usage = ai_client._empty_usage()
 
     # 1) Slack-style English translation — streamed live via on_delta.
-    english, u1 = copilot_client.ask_with_usage(
+    english, u1 = ai_client.ask_with_usage(
         text, system=system, model=model,
         on_delta=lambda c: ws.emit_progress(job_id, SCENE, "translating", delta=c),
     )
-    usage = copilot_client.add_usage(usage, u1)
+    usage = ai_client.add_usage(usage, u1)
 
-    # 2) Back-translation to Chinese for verification (phase hint only, no stream).
+    # 2+3) Back-translation and learning-point extraction are independent of
+    # each other (back needs english; learning points need original text only).
+    # Run them in parallel to cut wall-clock time roughly in half.
     ws.emit_progress(job_id, SCENE, "back_translating")
+
     back_prompt = (
         "Translate the following English text back into natural Chinese. "
         "Respond with only the Chinese translation, no extra commentary.\n\n"
         f"{english}"
     )
-    back_translation = ""
-    try:
-        back_translation, u2 = copilot_client.ask_with_usage(back_prompt, model=model)
-        usage = copilot_client.add_usage(usage, u2)
-    except Exception:
-        # Back-translation is a convenience; don't fail the whole request.
-        back_translation = ""
+    pref = (cfg.get("learning_prompt") or "").strip()
+    lp_instruction = f"{_LP_INSTRUCTION}\n\nUser preference for these learning points: {pref}" if pref else _LP_INSTRUCTION
+    lp_prompt = f"{lp_instruction}\n\nUSER'S ORIGINAL TEXT:\n{text}"
 
-    # 3) English learning points from the user's original text (phase hint only).
-    ws.emit_progress(job_id, SCENE, "learning_points")
-    learning_points: List[dict] = []
-    try:
-        # Optional user preference (from settings) appended to the fixed
-        # instruction — steers WHAT to focus on, not the JSON format.
-        pref = (cfg.get("learning_prompt") or "").strip()
-        lp_instruction = f"{_LP_INSTRUCTION}\n\nUser preference for these learning points: {pref}" if pref else _LP_INSTRUCTION
-        lp_prompt = f"{lp_instruction}\n\nUSER'S ORIGINAL TEXT:\n{text}"
-        raw, u3 = copilot_client.ask_with_usage(lp_prompt, model=model)
-        usage = copilot_client.add_usage(usage, u3)
-        learning_points = _parse_learning_points(raw)
-    except Exception:
-        learning_points = []
+    def _do_back():
+        try:
+            return ai_client.ask_with_usage(back_prompt, model=model)
+        except Exception:
+            return "", ai_client._empty_usage()
+
+    def _do_lp():
+        try:
+            return ai_client.ask_with_usage(lp_prompt, model=model)
+        except Exception:
+            return "", ai_client._empty_usage()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        f_back = pool.submit(_do_back)
+        f_lp = pool.submit(_do_lp)
+        back_translation, u2 = f_back.result()
+        lp_raw, u3 = f_lp.result()
+
+    usage = ai_client.add_usage(ai_client.add_usage(usage, u2), u3)
+    learning_points: List[dict] = _parse_learning_points(lp_raw)
 
     # 4) Persist history + learning points.
     hist = repository.insert_history(TranslationHistory.new_instance(

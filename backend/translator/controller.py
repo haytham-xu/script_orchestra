@@ -7,19 +7,20 @@ failures surface as 502 with a readable hint.
 from flask_restx import Namespace, Resource
 from flask import request
 
-from . import zh2en, en2zh, repository, settings_manager, copilot_client
+from . import zh2en, en2zh, repository, settings_manager, copilot_client, ollama_client
 from .copilot_client import CopilotAuthError, CopilotUnavailableError
+from .ollama_client import OllamaUnavailableError
 
 ns = Namespace("")
 
 
 def _copilot_error_response(e: Exception):
-    """Map a copilot_client error onto (body, status)."""
+    """Map a copilot_client or ollama_client error onto (body, status)."""
     if isinstance(e, CopilotAuthError):
         return {"error": str(e), "kind": "auth"}, 502
-    if isinstance(e, CopilotUnavailableError):
+    if isinstance(e, (CopilotUnavailableError, OllamaUnavailableError)):
         return {"error": str(e), "kind": "unavailable"}, 502
-    return {"error": f"Copilot call failed: {e}", "kind": "error"}, 502
+    return {"error": f"Translation call failed: {e}", "kind": "error"}, 502
 
 
 @ns.route("/zh2en")
@@ -92,7 +93,10 @@ class HistoryResource(Resource):
 @ns.route("/models")
 class ModelsResource(Resource):
     def get(self):
-        """List models the Copilot runtime exposes. [] on soft failure."""
+        """List models for a given provider. ?provider=copilot|ollama; defaults to copilot."""
+        provider = (request.args.get("provider") or "copilot").strip()
+        if provider == "ollama":
+            return {"models": ollama_client.list_models()}, 200
         return {"models": copilot_client.list_models()}, 200
 
 
