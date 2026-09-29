@@ -13,6 +13,7 @@ export interface CategoryButtonCard {
 export interface ButtonConfigJSON {
   left: CategoryButtonCard
   right: CategoryButtonCard
+  epic?: CategoryButtonCard
 }
 
 // -----------
@@ -49,6 +50,18 @@ export interface FileList {
 
 // -----------
 
+export interface ScanItem {
+  name: string
+  folderPath: string
+  count: number
+}
+
+export interface ScanResult {
+  items: ScanItem[]
+}
+
+// -----------
+
 export interface MangaClassifierSettings {
   rootPath: string
   targetPath: string
@@ -56,6 +69,7 @@ export interface MangaClassifierSettings {
   imageExts: string[]
   videoExts: string[]
   categoty: ButtonConfigJSON
+  epicCategory: CategoryButtonCard
   imageWidthPx: number
   scrollPageRatio: number
   pinSidebars: boolean

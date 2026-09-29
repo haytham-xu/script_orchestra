@@ -1,5 +1,30 @@
 <template>
   <div v-loading.fullscreen.lock="classifyBusy" element-loading-text="Processing…" element-loading-background="rgba(255,255,255,0.4)">
+    <!-- Epic floating panel -->
+    <transition name="mc-epic-slide">
+      <div
+        v-if="epicPanelOpen && !isEmpty && currentFolderName !== 'EOL' && categoryButtonCardJSON?.epic"
+        class="mc-epic-panel">
+        <div class="mc-epic-main-btns">
+          <div
+            v-for="btn in categoryButtonCardJSON.epic.mainButtons"
+            :key="btn.label"
+            class="mc-epic-main-btn"
+            @click="moveFolder(currentFolderName, btn.folderPath)">
+            {{ btn.label }}
+          </div>
+        </div>
+        <div class="mc-epic-sub-btns">
+          <div
+            v-for="btn in categoryButtonCardJSON.epic.subButtons"
+            :key="btn.label"
+            class="mc-epic-sub-btn"
+            @click="moveFolder(currentFolderName, btn.folderPath)">
+            {{ btn.label }}
+          </div>
+        </div>
+      </div>
+    </transition>
     <el-container>
       <el-header>
         <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
@@ -28,6 +53,16 @@
           <span class="mc-progress-total">{{ totalCount }}</span>
         </div>
         <div class="mc-header-actions">
+          <el-button
+            class="mc-action-btn"
+            circle
+            text
+            :disabled="isEmpty || currentFolderName === 'EOL'"
+            :class="{ 'mc-epic-btn-active': epicPanelOpen }"
+            title="Epic category"
+            @click="toggleEpicPanel">
+            <el-icon><StarFilled /></el-icon>
+          </el-button>
           <el-button
             class="mc-action-btn"
             circle
@@ -311,6 +346,80 @@
   padding: 16px;
   color: #999;
   font-size: 14px;
+}
+/* ── Epic panel ──────────────────────────────── */
+.mc-epic-btn-active {
+  color: #e6a23c !important;
+}
+.mc-epic-panel {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+}
+.mc-epic-main-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  width: 150px;
+}
+.mc-epic-main-btn {
+  background: rgb(126, 192, 80);
+  color: #fff;
+  text-align: center;
+  padding: 10px;
+  border-radius: 6px;
+  width: 90%;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+}
+.mc-epic-main-btn:hover { filter: brightness(0.92); }
+.mc-epic-sub-btns {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  width: 150px;
+}
+.mc-epic-sub-btn {
+  background: rgb(91, 156, 248);
+  color: #fff;
+  text-align: center;
+  padding: 10px;
+  border-radius: 6px;
+  height: 15px;
+  width: 80%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+}
+.mc-epic-sub-btn:hover { filter: brightness(0.92); }
+.mc-epic-slide-enter-active,
+.mc-epic-slide-leave-active {
+  transition: opacity 0.18s, transform 0.18s;
+}
+.mc-epic-slide-enter-from,
+.mc-epic-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px);
 }
 .mc-pagination-bar {
   display: flex;

@@ -248,6 +248,99 @@
         </div>
       </section>
 
+      <!-- Epic category -->
+      <section class="mc-card">
+        <div class="mc-card-header">
+          <h2>Epic category</h2>
+          <p class="mc-hint">Buttons shown in the collapsible epic panel in the main view header.</p>
+        </div>
+        <div class="mc-card-body">
+
+          <!-- Scan helper -->
+          <div class="mc-scan-panel">
+            <div class="mc-scan-header">Scan subfolders</div>
+            <div class="mc-scan-hint">
+              Enter the epic base path. The tool will list its immediate subfolders and show how many
+              folders the manga-viewer index has for each sub-category. Click Add to insert them as buttons.
+            </div>
+            <div class="mc-scan-row">
+              <el-input
+                v-model="scanPath"
+                placeholder="/absolute/path/to/epic"
+                spellcheck="false"
+                class="mc-scan-input"
+                @keydown.enter.prevent="runScan" />
+              <el-button
+                :icon="Search"
+                :loading="scanLoading"
+                @click="runScan">
+                Scan
+              </el-button>
+            </div>
+            <div v-if="scanItems.length" class="mc-scan-results">
+              <div
+                v-for="item in scanItems"
+                :key="item.folderPath"
+                class="mc-scan-item">
+                <div class="mc-scan-item-info">
+                  <span class="mc-scan-item-name">{{ item.name }}</span>
+                  <span class="mc-scan-item-path">{{ item.folderPath }}</span>
+                  <span class="mc-scan-item-count">{{ item.count }} folders</span>
+                </div>
+                <div class="mc-scan-item-actions">
+                  <el-button size="small" type="primary" plain @click="addScanItemAsButton(item, 'mainButtons')">Main</el-button>
+                  <el-button size="small" type="info" plain @click="addScanItemAsButton(item, 'subButtons')">Sub</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mc-group">
+            <div class="mc-group-header">
+              <span>Main</span>
+              <el-button :icon="Plus" size="small" @click="addEpicButton('mainButtons')" text>Add</el-button>
+            </div>
+            <div v-if="state.epicCategory.mainButtons.length === 0" class="mc-empty">No buttons yet</div>
+            <div
+              v-for="(btn, i) in state.epicCategory.mainButtons"
+              :key="'em' + i"
+              class="mc-btn-item">
+              <div class="mc-btn-row">
+                <el-input v-model="btn.label" placeholder="Label" size="small" />
+                <el-input v-model="btn.folderPath" placeholder="Folder path" size="small" />
+                <el-button :icon="Delete" size="small" @click="removeEpicButton('mainButtons', i)" text />
+              </div>
+              <div class="mc-btn-preview">
+                <span v-if="resolveTargetPath(btn.folderPath)">→ {{ resolveTargetPath(btn.folderPath) }}</span>
+                <span v-else class="mc-btn-preview-empty">set a target path above</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="mc-group">
+            <div class="mc-group-header">
+              <span>Sub</span>
+              <el-button :icon="Plus" size="small" @click="addEpicButton('subButtons')" text>Add</el-button>
+            </div>
+            <div v-if="state.epicCategory.subButtons.length === 0" class="mc-empty">No buttons yet</div>
+            <div
+              v-for="(btn, i) in state.epicCategory.subButtons"
+              :key="'es' + i"
+              class="mc-btn-item">
+              <div class="mc-btn-row">
+                <el-input v-model="btn.label" placeholder="Label" size="small" />
+                <el-input v-model="btn.folderPath" placeholder="Folder path" size="small" />
+                <el-button :icon="Delete" size="small" @click="removeEpicButton('subButtons', i)" text />
+              </div>
+              <div class="mc-btn-preview">
+                <span v-if="resolveTargetPath(btn.folderPath)">→ {{ resolveTargetPath(btn.folderPath) }}</span>
+                <span v-else class="mc-btn-preview-empty">set a target path above</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div class="mc-footer">
         <el-button link @click="resetToDefaults">Reset to defaults</el-button>
       </div>
@@ -459,5 +552,83 @@
     grid-template-columns: 1fr;
     align-items: stretch;
   }
+}
+
+/* ── Scan subfolders helper ───────────────────── */
+.mc-scan-panel {
+  background: #f5f5f7;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.mc-scan-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #86868b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mc-scan-hint {
+  font-size: 12px;
+  color: #86868b;
+  line-height: 1.5;
+}
+.mc-scan-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mc-scan-input {
+  flex: 1;
+}
+.mc-scan-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mc-scan-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.mc-scan-item-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.mc-scan-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+  flex-shrink: 0;
+}
+.mc-scan-item-path {
+  font-size: 11px;
+  color: #86868b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-scan-item-count {
+  font-size: 12px;
+  color: #0071e3;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.mc-scan-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 </style>

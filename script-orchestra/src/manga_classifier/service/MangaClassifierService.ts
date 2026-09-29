@@ -1,8 +1,8 @@
 
 
 import {getRequest, postRequest} from '@/basic/RequestService'
-import {MANGA_CLASSIFIER_ENDPOINT_CONFIG, MANGA_CLASSIFIER_ENDPOINT_FOLDER} from '@/basic/Constants.ts'
-import type {ButtonConfigJSON, FolderObjectList, FileList} from '@/manga_classifier/service/Model'
+import {MANGA_CLASSIFIER_ENDPOINT_CONFIG, MANGA_CLASSIFIER_ENDPOINT_FOLDER, MANGA_CLASSIFIER_ENDPOINT_SCAN} from '@/basic/Constants.ts'
+import type {ButtonConfigJSON, FolderObjectList, FileList, ScanResult} from '@/manga_classifier/service/Model'
 
 export async function getButtonConfigJSON(): Promise<ButtonConfigJSON> {
     const responseData = await getRequest<ButtonConfigJSON>(MANGA_CLASSIFIER_ENDPOINT_CONFIG)
@@ -48,5 +48,10 @@ export async function getUndoableSources(): Promise<string[]> {
 export async function postOpenFolder(folderName: string) {
     const payload = { "folderName": folderName }
     const responseData = await postRequest(MANGA_CLASSIFIER_ENDPOINT_FOLDER + "/open", {}, payload)
+    return responseData
+}
+
+export async function postScanSubfolders(path: string): Promise<ScanResult> {
+    const responseData = await postRequest<ScanResult>(MANGA_CLASSIFIER_ENDPOINT_SCAN, {}, { path })
     return responseData
 }

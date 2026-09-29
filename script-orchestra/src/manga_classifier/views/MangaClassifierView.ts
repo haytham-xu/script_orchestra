@@ -8,7 +8,7 @@ import {FolderStatus} from '@/manga_classifier/service/Model'
 import {getSettings} from '@/manga_classifier/service/SettingsService'
 import CategoryButtonCardComponment from "@/manga_classifier/components/CategoryButtonCardComponment.vue"
 import { ElNotification } from 'element-plus'
-import { Setting, RefreshLeft, FolderOpened } from '@element-plus/icons-vue'
+import { Setting, RefreshLeft, FolderOpened, StarFilled } from '@element-plus/icons-vue'
 
 // Classification result notifications go bottom-right (out of the reading
 // area) with a shorter dwell so they don't crowd the eye.
@@ -24,7 +24,7 @@ function notify(type: 'success' | 'error' | 'info' | 'warning', message: string)
 
 export default defineComponent({
   name: 'ParentView',
-  components: { CategoryButtonCardComponment, Setting, RefreshLeft, FolderOpened },
+  components: { CategoryButtonCardComponment, Setting, RefreshLeft, FolderOpened, StarFilled },
   setup() {
     const router = useRouter()
     function goBack() { router.push('/') }
@@ -110,6 +110,9 @@ export default defineComponent({
 
     const isLoadingFiles = ref(false)
 
+    const epicPanelOpen = ref(false)
+    function toggleEpicPanel() { epicPanelOpen.value = !epicPanelOpen.value }
+
     // Debounced file loader — cancels any in-flight request when the folder
     // changes again within the debounce window, and only actually calls
     // getFileList after the user has settled on a folder for LOAD_DEBOUNCE_MS.
@@ -164,13 +167,13 @@ export default defineComponent({
       }
       const total = folderObjectList.value.folderList.length;
       if (!total) return;
-      // Clamp to valid range.
       const clamped = Math.max(1, Math.min(oneBasedIndex, total));
       const zeroBased = clamped - 1;
       if (zeroBased === currentIndex.value && currentFolderObject.value?.folderName !== 'EOL') return;
       currentIndex.value = zeroBased;
       currentFolderObject.value = folderObjectList.value.folderList[zeroBased];
       currentFolderName.value = currentFolderObject.value.folderName;
+      epicPanelOpen.value = false;
       scheduleLoadFiles(currentFolderName.value);
       window.scrollTo(0, 0);
     }
@@ -263,6 +266,7 @@ export default defineComponent({
         notify('warning',"folderObjectList is not ready, please wait.");
         return;
       }
+      epicPanelOpen.value = false;
       if(currentIndex.value < maxFolderindex) {
         currentIndex.value += 1;
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
@@ -284,6 +288,7 @@ export default defineComponent({
         notify('warning',"folderObjectList is not ready, please wait.");
         return;
       }
+      epicPanelOpen.value = false;
       if(currentIndex.value > 0) {
         currentIndex.value -= 1;
         currentFolderObject.value = folderObjectList.value.folderList[currentIndex.value];
@@ -452,6 +457,8 @@ export default defineComponent({
       titleFontSize,
       pinSidebars,
       openCurrentFolder,
+      epicPanelOpen,
+      toggleEpicPanel,
       pagedFileList,
       showFilePagination,
       totalFilePages,

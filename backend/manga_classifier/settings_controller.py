@@ -35,6 +35,9 @@ def _validate_and_normalize(patch: dict, current: dict) -> dict:
     if "categoty" in patch:
         merged["categoty"] = settings_manager.validate_button_config(patch["categoty"])
 
+    if "epicCategory" in patch:
+        merged["epicCategory"] = settings_manager.validate_button_card(patch["epicCategory"])
+
     if "imageWidthPx" in patch:
         try:
             width = int(patch["imageWidthPx"])

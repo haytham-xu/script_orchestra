@@ -22,6 +22,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "left":  {"name": "Left",  "mainButtons": [], "subButtons": []},
         "right": {"name": "Right", "mainButtons": [], "subButtons": []},
     },
+    "epicCategory": {
+        "name": "Epic",
+        "mainButtons": [],
+        "subButtons": [],
+    },
     # Reading UI preferences.
     "imageWidthPx": 520,      # fixed display width of the reader column
     "scrollPageRatio": 0.85,  # fraction of viewport scrolled by ArrowUp/Down
@@ -76,6 +81,33 @@ def normalize_ext_list(values: Any) -> List[str]:
         if s not in out:
             out.append(s)
     return out
+
+
+def validate_button_card(card: Any) -> dict:
+    """Validate and normalise a single CategoryButtonCard dict."""
+    if not isinstance(card, dict):
+        raise ValueError("button card must be an object")
+    name = card.get("name", "")
+    if not isinstance(name, str):
+        raise ValueError("button card name must be a string")
+    result: dict = {"name": name}
+    for group in ("mainButtons", "subButtons"):
+        raw = card.get(group, [])
+        if not isinstance(raw, list):
+            raise ValueError(f"{group} must be a list")
+        buttons = []
+        for i, btn in enumerate(raw):
+            if not isinstance(btn, dict):
+                raise ValueError(f"{group}[{i}] must be an object")
+            label = btn.get("label", "")
+            folder = btn.get("folderPath", "")
+            if not isinstance(label, str) or not isinstance(folder, str):
+                raise ValueError(f"{group}[{i}] label/folderPath must be strings")
+            if not label.strip():
+                raise ValueError(f"{group}[{i}].label is required")
+            buttons.append({"label": label, "folderPath": folder})
+        result[group] = buttons
+    return result
 
 
 def validate_button_config(cfg: Any) -> Dict[str, Any]:

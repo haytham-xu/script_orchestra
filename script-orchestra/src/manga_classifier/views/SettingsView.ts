@@ -6,11 +6,14 @@ import {
   Plus,
   Delete,
   Refresh,
+  Search,
 } from '@element-plus/icons-vue'
 import { getSettings, updateSettings } from '@/manga_classifier/service/SettingsService'
+import { postScanSubfolders } from '@/manga_classifier/service/MangaClassifierService'
 import type {
   MangaClassifierSettings,
   CategoryButton,
+  ScanItem,
 } from '@/manga_classifier/service/Model'
 
 const DEFAULT_SETTINGS: MangaClassifierSettings = {
@@ -23,6 +26,7 @@ const DEFAULT_SETTINGS: MangaClassifierSettings = {
     left:  { name: 'Left',  mainButtons: [], subButtons: [] },
     right: { name: 'Right', mainButtons: [], subButtons: [] },
   },
+  epicCategory: { name: 'Epic', mainButtons: [], subButtons: [] },
   imageWidthPx: 520,
   scrollPageRatio: 0.85,
   pinSidebars: false,
@@ -35,7 +39,7 @@ function cloneSettings(s: MangaClassifierSettings): MangaClassifierSettings {
 
 export default defineComponent({
   name: 'MangaClassifierSettingsView',
-  components: { ArrowLeft, Plus, Delete, Refresh },
+  components: { ArrowLeft, Plus, Delete, Refresh, Search },
   setup() {
     const router = useRouter()
     const state = reactive<MangaClassifierSettings>(cloneSettings(DEFAULT_SETTINGS))
@@ -116,6 +120,43 @@ export default defineComponent({
       state.categoty[side][group].splice(idx, 1)
     }
 
+    function addEpicButton(group: 'mainButtons' | 'subButtons') {
+      state.epicCategory[group].push({ label: '', folderPath: '' })
+    }
+
+    function removeEpicButton(group: 'mainButtons' | 'subButtons', idx: number) {
+      state.epicCategory[group].splice(idx, 1)
+    }
+
+    // ── Scan subfolders ───────────────────────────────────────────────────
+    const scanPath = ref('')
+    const scanLoading = ref(false)
+    const scanItems = ref<ScanItem[]>([])
+
+    async function runScan() {
+      const p = scanPath.value.trim()
+      if (!p) { ElMessage.warning('Please enter a path to scan'); return }
+      scanLoading.value = true
+      scanItems.value = []
+      try {
+        const result = await postScanSubfolders(p)
+        scanItems.value = result.items
+        if (!result.items.length) ElMessage.info('No subfolders found in that path')
+      } catch (e: any) {
+        const msg = e?.response?.data?.error || e.message || 'Scan failed'
+        ElMessage.error(msg)
+      } finally {
+        scanLoading.value = false
+      }
+    }
+
+    function addScanItemAsButton(item: ScanItem, group: 'mainButtons' | 'subButtons') {
+      const already = state.epicCategory[group].some(b => b.folderPath === item.folderPath)
+      if (already) { ElMessage.info(`${item.name} is already in ${group}`); return }
+      state.epicCategory[group].push({ label: item.name, folderPath: item.folderPath })
+      ElMessage.success(`Added "${item.name}" to epic ${group}`)
+    }
+
     function goBack() {
       router.push('/manga-classifier')
     }
@@ -153,6 +194,13 @@ export default defineComponent({
       removeExt,
       addButton,
       removeButton,
+      addEpicButton,
+      removeEpicButton,
+      scanPath,
+      scanLoading,
+      scanItems,
+      runScan,
+      addScanItemAsButton,
       goBack,
       resolveTargetPath,
       // typed helpers for template
