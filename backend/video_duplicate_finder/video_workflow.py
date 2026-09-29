@@ -217,10 +217,10 @@ class VideoDuplicateFinderWorkflow:
                 time.sleep(scan_delay)
 
             status = db_status.get(fp)
-            if status == 'computed':
+            if status in ('computed', 'pending'):
                 skipped_count += 1
             else:
-                # status is None (new) or 'pending' (left over from prior partial run)
+                # status is None (file not in DB yet — needs hashing)
                 files_to_compute.append(fp)
 
             checked_count += 1
@@ -531,7 +531,7 @@ class VideoDuplicateFinderWorkflow:
         # Step 1: snapshot pending work
         # ----------------------------------------------------------------
         cursor.execute("SELECT id, video_hash FROM video_duplicate_finder_video_hashes WHERE status = 'pending'")
-        pending = cursor.fetchall()
+        pending = [(int(r[0]), str(r[1] or '')) for r in cursor.fetchall()]
         if not pending:
             elapsed = time.time() - start_time
             print(f"[Phase 2] No pending videos; nothing to do (elapsed {elapsed:.2f}s)")
@@ -548,7 +548,7 @@ class VideoDuplicateFinderWorkflow:
         # Step 2: snapshot full comparison set
         # ----------------------------------------------------------------
         cursor.execute("SELECT id, video_hash FROM video_duplicate_finder_video_hashes")
-        all_videos = cursor.fetchall()
+        all_videos = [(int(r[0]), str(r[1] or '')) for r in cursor.fetchall()]
         n_pending = len(pending)
         n_total = len(all_videos)
         print(f"[Phase 2] Snapshot: pending={n_pending}, total={n_total}")
@@ -563,6 +563,9 @@ class VideoDuplicateFinderWorkflow:
         similarities_count = 0
         processed_count = 0
         stop_requested = False
+
+        if progress_callback and n_pending > 0:
+            progress_callback(0, n_pending, f"Starting pairwise compare ({n_pending} pending)")
 
         # SCHEMA threshold constant (see method docstring)
         SCHEMA_THRESHOLD = 80

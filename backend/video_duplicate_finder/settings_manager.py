@@ -84,7 +84,7 @@ DEFAULT_SETTINGS: Dict = {
     'phase2': {
         'worker_handler_size': 1,
         'db_commit_batch_size': 100,
-        'progress_update_interval': 100,
+        'progress_update_interval': 5,
         'ipc_chunk_size': 10,
         'compare_delay': 0.0,
     },
@@ -243,7 +243,7 @@ class SettingsManager:
         return int(self.get_phase2_settings().get('db_commit_batch_size', 100) or 100)
 
     def get_phase2_progress_update_interval(self) -> int:
-        return int(self.get_phase2_settings().get('progress_update_interval', 100) or 100)
+        return int(self.get_phase2_settings().get('progress_update_interval', 5) or 5)
 
     def get_phase2_ipc_chunk_size(self) -> int:
         return int(self.get_phase2_settings().get('ipc_chunk_size', 10) or 10)

@@ -12,6 +12,6 @@ def get_db_path() -> str:
 def get_conn() -> sqlite3.Connection:
     path = get_db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
