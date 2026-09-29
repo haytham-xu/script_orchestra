@@ -52,6 +52,13 @@ def _validate_and_normalize(patch: dict, current: dict) -> dict:
     if "pinSidebars" in patch:
         merged["pinSidebars"] = bool(patch["pinSidebars"])
 
+    if "filePageSize" in patch:
+        try:
+            size = int(patch["filePageSize"])
+        except (TypeError, ValueError):
+            raise ValueError("filePageSize must be an integer")
+        merged["filePageSize"] = max(10, min(size, 1000))
+
     return merged
 
 

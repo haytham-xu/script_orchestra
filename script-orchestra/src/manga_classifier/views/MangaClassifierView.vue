@@ -1,5 +1,5 @@
 <template>
-  <div v-loading.fullscreen.lock="classifyBusy" element-loading-text="处理中…" element-loading-background="rgba(255,255,255,0.4)">
+  <div v-loading.fullscreen.lock="classifyBusy" element-loading-text="Processing…" element-loading-background="rgba(255,255,255,0.4)">
     <el-container>
       <el-header>
         <el-button @click="goBack" circle size="small"><el-icon><ArrowLeft /></el-icon></el-button>
@@ -82,7 +82,14 @@
           <div class="mc-loading-hint">Loading files…</div>
         </div>
         <div v-else class="mc-reader">
-          <div v-for="(file, index) in currentFileList?.files" :key="index" class="media-item">
+          <!-- Top pagination -->
+          <div v-if="showFilePagination" class="mc-pagination-bar">
+            <el-button size="small" :disabled="fileCurrentPage === 1" @click="goToFilePage(fileCurrentPage - 1)">Prev</el-button>
+            <span class="mc-page-info">{{ fileCurrentPage }} / {{ totalFilePages }}</span>
+            <el-button size="small" :disabled="fileCurrentPage === totalFilePages" @click="goToFilePage(fileCurrentPage + 1)">Next</el-button>
+          </div>
+
+          <div v-for="(file, index) in pagedFileList" :key="index" class="media-item">
             <img
               v-if="file.fileType === 'image'"
               :src="file.fileUrl"
@@ -97,6 +104,14 @@
               preload="none">
               <!-- muted> -->
             </video>
+          </div>
+
+          <!-- Bottom pagination -->
+          <div v-if="showFilePagination" class="mc-pagination-bar mc-pagination-bar-bottom">
+            <el-button size="small" :disabled="fileCurrentPage === 1" @click="goToFilePage(fileCurrentPage - 1)">Prev</el-button>
+            <span class="mc-page-info">{{ fileCurrentPage }} / {{ totalFilePages }}</span>
+            <el-button size="small" :disabled="fileCurrentPage === totalFilePages" @click="goToFilePage(fileCurrentPage + 1)">Next</el-button>
+            <el-button size="small" type="info" plain @click="scrollToTop">Back to Top</el-button>
           </div>
         </div>
       </el-main>
@@ -290,6 +305,26 @@
   width: var(--mc-img-width, 520px);
   max-width: 100%;
   margin: 0 auto;
+}
+.mc-load-more-hint {
+  text-align: center;
+  padding: 16px;
+  color: #999;
+  font-size: 14px;
+}
+.mc-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+.mc-pagination-bar-bottom {
+  padding-top: 16px;
+}
+.mc-page-info {
+  font-size: 14px;
+  color: #606266;
 }
 img {
   display: block;

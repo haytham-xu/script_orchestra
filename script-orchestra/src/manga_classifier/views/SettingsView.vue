@@ -125,6 +125,15 @@
             <label class="mc-label">Pin sidebars</label>
             <el-switch v-model="state.pinSidebars" />
           </div>
+          <div class="mc-row">
+            <label class="mc-label">Images per page</label>
+            <el-input-number
+              v-model="state.filePageSize"
+              :min="10"
+              :max="1000"
+              :step="50"
+              controls-position="right" />
+          </div>
         </div>
       </section>
 

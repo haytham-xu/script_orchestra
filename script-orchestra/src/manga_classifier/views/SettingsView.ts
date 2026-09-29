@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS: MangaClassifierSettings = {
   imageWidthPx: 520,
   scrollPageRatio: 0.85,
   pinSidebars: false,
+  filePageSize: 300,
 }
 
 function cloneSettings(s: MangaClassifierSettings): MangaClassifierSettings {

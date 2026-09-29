@@ -59,4 +59,5 @@ export interface MangaClassifierSettings {
   imageWidthPx: number
   scrollPageRatio: number
   pinSidebars: boolean
+  filePageSize: number
 }

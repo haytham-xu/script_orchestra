@@ -33,6 +33,21 @@ export default defineComponent({
     const categoryButtonCardJSON = ref<ButtonConfigJSON | null>(null);
     const currentFileList = ref<FileList| null>(null);
     const folderObjectList = ref<FolderObjectList | null>(null);
+
+    const filePageSize = ref(300)
+    const fileCurrentPage = ref(1)
+    const totalFilePages = computed(() =>
+      Math.ceil((currentFileList.value?.files.length ?? 0) / filePageSize.value)
+    )
+    const showFilePagination = computed(() =>
+      (currentFileList.value?.files.length ?? 0) > filePageSize.value
+    )
+    const pagedFileList = computed(() => {
+      const files = currentFileList.value?.files ?? []
+      if (!showFilePagination.value) return files
+      const start = (fileCurrentPage.value - 1) * filePageSize.value
+      return files.slice(start, start + filePageSize.value)
+    })
     const currentFolderObject = ref<FolderObject | null>(null);
     const currentIndex = ref<number>(0);
     let maxFolderindex = 0;
@@ -116,6 +131,7 @@ export default defineComponent({
       // Clear the currently-displayed files immediately so the user doesn't
       // see stale content while paging through.
       currentFileList.value = null
+      fileCurrentPage.value = 1
       if (!folderName || folderName === 'EOL') {
         isLoadingFiles.value = false
         return
@@ -191,6 +207,7 @@ export default defineComponent({
         if (typeof s.imageWidthPx === 'number') imageWidthPx.value = s.imageWidthPx
         if (typeof s.scrollPageRatio === 'number') scrollPageRatio.value = s.scrollPageRatio
         if (typeof s.pinSidebars === 'boolean') pinSidebars.value = s.pinSidebars
+        if (typeof s.filePageSize === 'number') filePageSize.value = s.filePageSize
       } catch (e) {
         console.error('Failed to load reading settings:', e)
       }
@@ -214,6 +231,15 @@ export default defineComponent({
         const msg = e?.response?.data?.error || e.message || 'Failed to open folder'
         notify('error',msg)
       }
+    }
+
+    function goToFilePage(page: number) {
+      fileCurrentPage.value = page
+      window.scrollTo(0, 0)
+    }
+
+    function scrollToTop() {
+      window.scrollTo(0, 0)
     }
 
     async function processRootFolder() {
@@ -426,6 +452,12 @@ export default defineComponent({
       titleFontSize,
       pinSidebars,
       openCurrentFolder,
+      pagedFileList,
+      showFilePagination,
+      totalFilePages,
+      fileCurrentPage,
+      goToFilePage,
+      scrollToTop,
     };
   },
 });

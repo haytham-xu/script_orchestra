@@ -26,6 +26,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "imageWidthPx": 520,      # fixed display width of the reader column
     "scrollPageRatio": 0.85,  # fraction of viewport scrolled by ArrowUp/Down
     "pinSidebars": False,     # keep category sidebars always visible
+    "filePageSize": 300,      # images shown per page in the file list
 }
 
 
