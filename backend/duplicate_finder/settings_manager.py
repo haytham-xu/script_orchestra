@@ -30,6 +30,8 @@ DEFAULT_SETTINGS = {
         'ipc_chunk_size': 10,               # IPC optimization: batch N tasks
         'compare_delay': 0.0                # Delay between comparisons (seconds)
     },
+    'gap_analysis_selection_threshold': 80,  # % of folder images selected before auto-trigger in deep delete
+    'gap_analysis_lower_similarity': 60,     # lower similarity bound for gap search (%)
     # Keep old 'performance' for backward compatibility (will be migrated)
     'performance': {
         'scan_delay': 0.0,

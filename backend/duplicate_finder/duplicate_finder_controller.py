@@ -2557,6 +2557,67 @@ class Phase3StopResource(Resource):
         return {"message": "Phase 3 stop signal sent"}
 
 
+def _find_gap_pairs(gap_image_ids, candidate_image_ids, lower_threshold_pct, conn):
+    """
+    Compare gap images against candidate images using Hamming distance on phash.
+
+    gap_image_ids      – image IDs that are NOT in any duplicate group
+    candidate_image_ids – image IDs that ARE in duplicate groups (the "known" side)
+    lower_threshold_pct – minimum similarity % to report (e.g. 60)
+
+    Returns a list of dicts sorted by similarity desc:
+      {gap_id, gap_file, candidate_id, candidate_file, similarity_pct, distance}
+    Up to top-3 candidates per gap image.
+    """
+    if not gap_image_ids or not candidate_image_ids:
+        return []
+
+    cursor = conn.cursor()
+    BATCH = 900
+
+    def _load_hashes(ids):
+        result = {}
+        for i in range(0, len(ids), BATCH):
+            chunk = list(ids[i:i + BATCH])
+            ph = ','.join('?' * len(chunk))
+            cursor.execute(
+                f'SELECT id, file_path, phash FROM duplicate_finder_image_hashes WHERE id IN ({ph})',
+                chunk
+            )
+            for row in cursor.fetchall():
+                if row[2]:  # phash must be present
+                    result[row[0]] = {'file': row[1], 'phash': row[2]}
+        return result
+
+    gap_data = _load_hashes(list(gap_image_ids))
+    cand_data = _load_hashes(list(candidate_image_ids))
+
+    if not gap_data or not cand_data:
+        return []
+
+    max_hamming = int(256 * (100 - lower_threshold_pct) / 100)
+    pairs = []
+
+    for gid, ginfo in gap_data.items():
+        best = []
+        g_int = int(ginfo['phash'], 16)
+        for cid, cinfo in cand_data.items():
+            if cid == gid:
+                continue
+            hamming = bin(g_int ^ int(cinfo['phash'], 16)).count('1')
+            if hamming <= max_hamming:
+                sim = round((256 - hamming) / 256 * 100, 1)
+                best.append({'gap_id': gid, 'gap_file': ginfo['file'],
+                             'candidate_id': cid, 'candidate_file': cinfo['file'],
+                             'similarity_pct': sim, 'distance': hamming})
+        best.sort(key=lambda x: x['similarity_pct'], reverse=True)
+        pairs.extend(best[:3])
+
+    # Sort overall by similarity desc
+    pairs.sort(key=lambda x: x['similarity_pct'], reverse=True)
+    return pairs
+
+
 def _find_whole_dir_moves(matched_files, deep_path, all_db_files_abs):
     """
     Find subdirectories under deep_path where every DB-tracked image file is in
@@ -2719,10 +2780,65 @@ class BatchDeleteByPathResource(Resource):
                     {"dir": d, "file_count": len(files)}
                     for d, files in dir_moves
                 ]
+
+                # Gap analysis: surface images that are likely duplicates but weren't detected
+                _BATCH = 900
+                total_count = len(all_db_files_abs)
+                selection_rate = round(len(matched_files) / total_count * 100, 1) if total_count else 0
+                gap_threshold_pct = settings_manager.get_settings().get('gap_analysis_selection_threshold', 80)
+                lower_similarity = settings_manager.get_settings().get('gap_analysis_lower_similarity', 60)
+
+                gap_pairs = []
+                if total_count > 0 and selection_rate >= gap_threshold_pct:
+                    # IDs of matched files (already identified as duplicates)
+                    matched_ids = []
+                    for i in range(0, len(matched_files), _BATCH):
+                        chunk = list(matched_files[i:i + _BATCH])
+                        ph = ','.join('?' * len(chunk))
+                        cursor.execute(
+                            f'SELECT id FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})', chunk
+                        )
+                        matched_ids.extend(r[0] for r in cursor.fetchall())
+
+                    # IDs of ALL images under deep_path
+                    cursor.execute(
+                        'SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ? OR file_path LIKE ?',
+                        (deep_path, f'{deep_path}{os.sep}%')
+                    )
+                    all_path_ids = {r[0] for r in cursor.fetchall()}
+                    gap_ids = all_path_ids - set(matched_ids)
+
+                    # Candidates: images in the same groups as matched files, but NOT under deep_path
+                    candidate_ids = set()
+                    for i in range(0, len(matched_ids), _BATCH):
+                        chunk = list(matched_ids[i:i + _BATCH])
+                        ph = ','.join('?' * len(chunk))
+                        cursor.execute(
+                            f'''SELECT DISTINCT dg2.image_id
+                                FROM duplicate_finder_duplicate_groups dg1
+                                JOIN duplicate_finder_duplicate_groups dg2
+                                  ON dg1.group_id = dg2.group_id
+                                WHERE dg1.image_id IN ({ph})''',
+                            chunk
+                        )
+                        for r in cursor.fetchall():
+                            if r[0] not in all_path_ids:
+                                candidate_ids.add(r[0])
+
+                    if gap_ids and candidate_ids:
+                        gap_pairs = _find_gap_pairs(
+                            list(gap_ids), list(candidate_ids), lower_similarity, conn
+                        )
+                    print(f'[Batch Delete] Gap analysis: rate={selection_rate}%, '
+                          f'{len(gap_ids)} gaps, {len(candidate_ids)} candidates, '
+                          f'{len(gap_pairs)} pairs found')
+
                 return {
                     "matched_files": len(matched_files),
                     "file_list": files_individual,
                     "folder_moves": folder_moves,
+                    "selection_rate": selection_rate,
+                    "gap_pairs": gap_pairs,
                     "preview": True
                 }
             else:
@@ -2734,6 +2850,16 @@ class BatchDeleteByPathResource(Resource):
 
                 # Get folder_paths (scan folders) - use them directly as root
                 folder_paths = settings_manager.get_settings().get('folder_paths', [])
+
+                # Merge user-confirmed gap files into matched_files so they're moved and cleaned too
+                extra_files = data.get('extra_files', [])
+                if extra_files:
+                    print(f"[Batch Delete] Adding {len(extra_files)} gap-confirmed extra files")
+                    matched_set = set(matched_files)
+                    for f in extra_files:
+                        if f not in matched_set:
+                            matched_files.append(f)
+                            all_db_files_abs.add(os.path.abspath(f))
 
                 # === Step 5: pre-capture state for incremental group_stats repair ===
                 try:
@@ -2916,6 +3042,223 @@ class BatchDeleteByPathResource(Resource):
             import traceback
             traceback.print_exc()
             return {"error": error_msg}, 500
+
+
+
+# ========== Gap Analysis Endpoints ==========
+
+@ns.route("/gap-analysis")
+class GapAnalysisResource(Resource):
+    def post(self):
+        """
+        Find images that are likely duplicates but weren't detected by the regular algorithm.
+
+        mode "deep_path": gaps under the given path vs. partners of already-identified duplicates there.
+        mode "group": gaps in the same folders as a specific group vs. that group's images.
+        mode "global": gaps in all high-selection-rate folders vs. their partner folders.
+        """
+        try:
+            data = request.json or {}
+            mode = data.get('mode', 'deep_path')
+            lower_similarity = data.get('lower_similarity') or \
+                settings_manager.get_settings().get('gap_analysis_lower_similarity', 60)
+            gap_threshold = settings_manager.get_settings().get('gap_analysis_selection_threshold', 80)
+
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cursor = conn.cursor()
+            BATCH = 900
+
+            def _ids_in_groups(image_ids):
+                in_group = set()
+                for i in range(0, len(image_ids), BATCH):
+                    chunk = list(image_ids[i:i + BATCH])
+                    ph = ','.join('?' * len(chunk))
+                    cursor.execute(
+                        f'SELECT DISTINCT image_id FROM duplicate_finder_duplicate_groups WHERE image_id IN ({ph})',
+                        chunk
+                    )
+                    in_group.update(r[0] for r in cursor.fetchall())
+                return in_group
+
+            def _partner_image_ids(matched_ids, exclude_ids):
+                """Return image_ids that share a group with any matched_id, excluding exclude_ids."""
+                partners = set()
+                for i in range(0, len(matched_ids), BATCH):
+                    chunk = list(matched_ids[i:i + BATCH])
+                    ph = ','.join('?' * len(chunk))
+                    cursor.execute(
+                        f'''SELECT DISTINCT dg2.image_id
+                            FROM duplicate_finder_duplicate_groups dg1
+                            JOIN duplicate_finder_duplicate_groups dg2 ON dg1.group_id = dg2.group_id
+                            WHERE dg1.image_id IN ({ph})''',
+                        chunk
+                    )
+                    partners.update(r[0] for r in cursor.fetchall())
+                return partners - set(exclude_ids)
+
+            if mode == 'deep_path':
+                deep_path = data.get('deep_path', '')
+                if not deep_path:
+                    return {'error': 'deep_path required for mode=deep_path'}, 400
+
+                cursor.execute(
+                    'SELECT id, file_path FROM duplicate_finder_image_hashes WHERE file_path = ? OR file_path LIKE ?',
+                    (deep_path, f'{deep_path}{os.sep}%')
+                )
+                rows = cursor.fetchall()
+                all_ids = {r[0] for r in rows}
+                if not all_ids:
+                    return {'pairs': [], 'gap_count': 0, 'selection_rate': 0}
+
+                in_group = _ids_in_groups(list(all_ids))
+                gap_ids = all_ids - in_group
+                selection_rate = round(len(in_group) / len(all_ids) * 100, 1) if all_ids else 0
+
+                candidate_ids = _partner_image_ids(list(in_group), all_ids)
+                print(f'[Gap Analysis] deep_path mode: {len(gap_ids)} gaps, '
+                      f'{len(candidate_ids)} candidates, selection_rate={selection_rate}%')
+
+            elif mode == 'group':
+                group_id = data.get('group_id')
+                if not group_id:
+                    return {'error': 'group_id required for mode=group'}, 400
+
+                cursor.execute(
+                    'SELECT ih.id, ih.dir_path FROM duplicate_finder_duplicate_groups dg '
+                    'JOIN duplicate_finder_image_hashes ih ON dg.image_id = ih.id WHERE dg.group_id = ?',
+                    (group_id,)
+                )
+                group_rows = cursor.fetchall()
+                if not group_rows:
+                    return {'pairs': [], 'gap_count': 0, 'selection_rate': 0}
+
+                group_image_ids = {r[0] for r in group_rows}
+                dir_paths = list({r[1] for r in group_rows if r[1]})
+                if not dir_paths:
+                    return {'pairs': [], 'gap_count': 0, 'selection_rate': 0}
+
+                # All images in the same dirs
+                all_ids = set()
+                for dp in dir_paths:
+                    cursor.execute(
+                        'SELECT id FROM duplicate_finder_image_hashes WHERE dir_path = ?', (dp,)
+                    )
+                    all_ids.update(r[0] for r in cursor.fetchall())
+
+                in_group_all = _ids_in_groups(list(all_ids))
+                gap_ids = all_ids - in_group_all
+                candidate_ids = group_image_ids  # compare against the group's own images
+                selection_rate = round(len(in_group_all) / len(all_ids) * 100, 1) if all_ids else 0
+                print(f'[Gap Analysis] group mode: group_id={group_id}, {len(gap_ids)} gaps, '
+                      f'{len(candidate_ids)} candidates')
+
+            elif mode == 'global':
+                # Find high-selection-rate folders
+                cursor.execute(
+                    '''SELECT ih.dir_path,
+                              COUNT(DISTINCT dg.image_id) as in_group,
+                              COUNT(DISTINCT ih.id) as total
+                       FROM duplicate_finder_image_hashes ih
+                       LEFT JOIN duplicate_finder_duplicate_groups dg ON ih.id = dg.image_id
+                       GROUP BY ih.dir_path'''
+                )
+                folder_stats = cursor.fetchall()
+                threshold_frac = gap_threshold / 100.0
+                high_match_dirs = {r[0] for r in folder_stats
+                                   if r[2] > 0 and r[1] / r[2] >= threshold_frac}
+                if not high_match_dirs:
+                    return {'pairs': [], 'gap_count': 0, 'selection_rate': 0}
+
+                # All images in high-match dirs
+                all_ids = set()
+                for dp in high_match_dirs:
+                    cursor.execute(
+                        'SELECT id FROM duplicate_finder_image_hashes WHERE dir_path = ?', (dp,)
+                    )
+                    all_ids.update(r[0] for r in cursor.fetchall())
+
+                in_group = _ids_in_groups(list(all_ids))
+                gap_ids = all_ids - in_group
+
+                # Partner dirs = dirs appearing alongside high_match_dirs in groups
+                hm_list = list(high_match_dirs)
+                hm_ids = set()
+                for dp in hm_list:
+                    cursor.execute(
+                        'SELECT id FROM duplicate_finder_image_hashes WHERE dir_path = ?', (dp,)
+                    )
+                    hm_ids.update(r[0] for r in cursor.fetchall())
+
+                candidate_ids = _partner_image_ids(list(hm_ids), all_ids)
+                selection_rate = round(len(in_group) / len(all_ids) * 100, 1) if all_ids else 0
+                print(f'[Gap Analysis] global mode: {len(high_match_dirs)} high-match dirs, '
+                      f'{len(gap_ids)} gaps, {len(candidate_ids)} candidates')
+            else:
+                return {'error': f'Unknown mode: {mode}'}, 400
+
+            if not gap_ids:
+                return {'pairs': [], 'gap_count': 0, 'selection_rate': selection_rate}
+
+            pairs = _find_gap_pairs(list(gap_ids), list(candidate_ids), lower_similarity, conn)
+            return {
+                'pairs': pairs,
+                'gap_count': len(gap_ids),
+                'selection_rate': selection_rate,
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {'error': str(e)}, 500
+
+
+@ns.route("/gap-analysis/confirm")
+class GapAnalysisConfirmResource(Resource):
+    def post(self):
+        """
+        Write user-confirmed gap pairs to phash_similarities so they appear in the next Phase 2.5 run.
+
+        Request: {"pairs": [{"image_id_a": 1, "image_id_b": 2, "distance": 38}]}
+        """
+        try:
+            data = request.json or {}
+            pairs = data.get('pairs', [])
+            if not pairs:
+                return {'added': 0}
+
+            threshold = settings_manager.get_settings().get('similarity_threshold', 80)
+            workflow = get_workflow()
+            conn = workflow._get_connection()
+            cursor = conn.cursor()
+
+            added = 0
+            for p in pairs:
+                id_a = p.get('image_id_a')
+                id_b = p.get('image_id_b')
+                distance = p.get('distance')
+                if id_a is None or id_b is None or distance is None:
+                    continue
+                lo, hi = (id_a, id_b) if id_a < id_b else (id_b, id_a)
+                cursor.execute(
+                    'INSERT OR IGNORE INTO duplicate_finder_phash_similarities '
+                    '(image_id_a, image_id_b, threshold, distance) VALUES (?, ?, ?, ?)',
+                    (lo, hi, threshold, distance)
+                )
+                if cursor.rowcount:
+                    added += 1
+
+            conn.commit()
+            print(f'[Gap Analysis] Confirmed {added} pairs written to phash_similarities')
+            return {
+                'added': added,
+                'message': f'{added} pairs saved. Re-run Phase 2.5 to update duplicate groups.'
+            }
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {'error': str(e)}, 500
 
 
 # ========== Cypress Test Support Endpoints ==========

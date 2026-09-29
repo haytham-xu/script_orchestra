@@ -45,8 +45,20 @@ export interface Settings {
   auto_selection_rules?: any
   phase1?: Phase1Settings
   phase2?: Phase2Settings
-  performance?: PerformanceSettings  // Keep for backward compatibility
-  page_size?: number  // Pagination: groups per page (20-500, default 100)
+  performance?: PerformanceSettings
+  page_size?: number
+  gap_analysis_selection_threshold?: number
+  gap_analysis_lower_similarity?: number
+}
+
+export interface GapPair {
+  gap_id: number
+  gap_file: string
+  candidate_id: number
+  candidate_file: string
+  similarity_pct: number
+  distance: number
+  checked: boolean
 }
 
 export interface Phase1Settings {

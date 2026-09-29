@@ -25,7 +25,7 @@
             <el-button
               type="primary"
               plain
-              @click="showSettingsDrawer = true"
+              @click="goToSettings"
             >⚙️ Settings</el-button>
           </div>
         </div>
@@ -535,143 +535,6 @@
     </el-card>
 
     <!-- ================================================================== -->
-    <!-- Settings drawer -->
-    <!-- ================================================================== -->
-    <el-drawer
-      v-model="showSettingsDrawer"
-      title="⚙️ Settings"
-      direction="rtl"
-      size="600px"
-    >
-      <el-form label-width="200px" size="default">
-        <el-divider content-position="left">📁 Folders</el-divider>
-
-        <el-form-item label="Delete target path">
-          <el-input v-model="settings.delete_target_path" placeholder="/path/to/trash" />
-        </el-form-item>
-
-        <el-form-item label="Scan folders">
-          <div v-for="(_, idx) in (settings.folder_paths || [])" :key="`fp-${idx}`" class="path-row">
-            <el-input
-              v-model="settings.folder_paths![idx]"
-              placeholder="/path/to/videos"
-              size="default"
-              style="flex: 1"
-            />
-            <el-button type="danger" plain size="default" @click="removeFolderPath(idx)">✕</el-button>
-          </div>
-          <el-button plain size="default" @click="addFolderPath">+ Add folder</el-button>
-        </el-form-item>
-
-        <el-form-item label="Exclude folders">
-          <div v-for="(_, idx) in (settings.exclude_folder_paths || [])" :key="`ex-${idx}`" class="path-row">
-            <el-input
-              v-model="settings.exclude_folder_paths![idx]"
-              placeholder="/path/to/exclude"
-              size="default"
-              style="flex: 1"
-            />
-            <el-button type="danger" plain size="default" @click="removeExcludeFolderPath(idx)">✕</el-button>
-          </div>
-          <el-button plain size="default" @click="addExcludeFolderPath">+ Add exclude</el-button>
-        </el-form-item>
-
-        <el-divider content-position="left">🎯 Auto-Selection Rules</el-divider>
-
-        <el-form-item label="Mark lower resolution">
-          <el-switch v-model="settings.auto_selection_rules!.auto_mark_lower_resolution" />
-        </el-form-item>
-        <el-form-item label="Mark lower bitrate">
-          <el-switch v-model="settings.auto_selection_rules!.auto_mark_lower_bitrate" />
-        </el-form-item>
-        <el-form-item label="Mark smaller filesize">
-          <el-switch v-model="settings.auto_selection_rules!.auto_mark_smaller_filesize" />
-        </el-form-item>
-        <el-form-item label="Mark older codec">
-          <el-switch v-model="settings.auto_selection_rules!.auto_mark_older_codec" />
-        </el-form-item>
-        <el-form-item label="Mark numbered copies">
-          <el-switch v-model="settings.auto_selection_rules!.auto_mark_numbered_copies" />
-        </el-form-item>
-
-        <el-form-item label="Prefer folders">
-          <div
-            v-for="(_, idx) in (settings.auto_selection_rules!.prefer_folders || [])"
-            :key="`pf-${idx}`"
-            class="path-row"
-          >
-            <el-input
-              v-model="settings.auto_selection_rules!.prefer_folders![idx]"
-              placeholder="/path/to/prefer"
-              size="default"
-              style="flex: 1"
-            />
-            <el-button type="danger" plain size="default" @click="removePreferFolder(idx)">✕</el-button>
-          </div>
-          <el-button plain size="default" @click="addPreferFolder">+ Add folder</el-button>
-        </el-form-item>
-
-        <el-divider content-position="left">🎞️ Companion Extensions</el-divider>
-
-        <el-form-item label="Sidecar file extensions">
-          <div
-            v-for="(_, idx) in (settings.companion_extensions || [])"
-            :key="`ce-${idx}`"
-            class="path-row"
-          >
-            <el-input
-              v-model="settings.companion_extensions![idx]"
-              placeholder=".srt"
-              size="default"
-              style="flex: 1"
-            />
-            <el-button type="danger" plain size="default" @click="removeCompanionExtension(idx)">✕</el-button>
-          </div>
-          <el-button plain size="default" @click="addCompanionExtension">+ Add ext</el-button>
-        </el-form-item>
-
-        <el-divider content-position="left">⚡ Performance</el-divider>
-
-        <el-form-item label="Max CPU cores">
-          <el-input-number
-            v-model="settings.max_cpu_cores"
-            :min="1"
-            :max="settings.system_cpu_count || 16"
-          />
-          <span class="hint">of {{ settings.system_cpu_count || '?' }}</span>
-        </el-form-item>
-        <el-form-item label="N frames per video">
-          <el-input-number v-model="settings.n_frames" :min="1" :max="32" />
-        </el-form-item>
-        <el-form-item label="Thumbnail position (%)">
-          <el-input-number v-model="settings.thumbnail_position_percent" :min="0" :max="100" :step="5" />
-        </el-form-item>
-        <el-form-item label="Page size">
-          <el-input-number v-model="settings.page_size" :min="20" :max="500" :step="10" />
-        </el-form-item>
-
-        <el-divider />
-
-        <el-form-item label="Advanced paths">
-          <el-input v-model="settings.video_db_path"       placeholder="video_hash_cache.db path (blank = default)" style="margin-bottom: 8px" />
-          <el-input v-model="settings.thumbnail_cache_dir"  placeholder="Thumbnails dir (blank = default)" style="margin-bottom: 8px" />
-          <el-input v-model="settings.ffmpeg_path"         placeholder="ffmpeg path (blank = imageio_ffmpeg bundled)" disabled />
-        </el-form-item>
-
-        <el-divider />
-
-        <div class="form-actions">
-          <el-button type="primary" size="large" :loading="isSaving" @click="saveAllSettings">
-            💾 Save Settings
-          </el-button>
-          <el-button plain size="large" :loading="isCleaningDb" :disabled="isCleaningDb" @click="cleanupDatabase">
-            🧹 Cleanup DB (missing files)
-          </el-button>
-        </div>
-      </el-form>
-    </el-drawer>
-
-    <!-- ================================================================== -->
     <!-- Whitelist drawer -->
     <!-- ================================================================== -->
     <el-drawer
@@ -874,25 +737,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleCheck } from '@element-plus/icons-vue'
 import { useVideoDuplicateFinderView } from './VideoDuplicateFinderView'
 
 const router = useRouter()
 function goBack() { router.push('/') }
-
-// Settings drawer visibility is local to the .vue (not stateful across app)
-const showSettingsDrawer = ref(false)
+function goToSettings() { router.push('/video-duplicate-finder/settings') }
 
 const {
   // state
   threshold,
   scanResult, hasResults, paginatedGroups,
   isPhase1Running, isPhase2Running, isPhase25Running, isPhase3Running,
-  isFullPipelineRunning, isDeleting, isVerifying, isSaving,
+  isFullPipelineRunning, isDeleting, isVerifying,
   isBulkWhitelisting, isLoadingWhitelist, isLoadingPage,
-  isCleaningDb,
   phaseProgress,
   phase1Summary, phase2Summary, phase25Summary,
   phase25Meta, phase25NeedsAttention, phase25TooltipContent,
@@ -939,11 +798,6 @@ const {
   openVideoPreview, closeVideoPreview,
   getThumbnailUrl,
   openFolder,
-  saveAllSettings,
-  addFolderPath, removeFolderPath,
-  addExcludeFolderPath, removeExcludeFolderPath,
-  addPreferFolder, removePreferFolder,
-  addCompanionExtension, removeCompanionExtension,
 } = useVideoDuplicateFinderView()
 </script>
 

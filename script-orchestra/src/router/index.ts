@@ -10,7 +10,9 @@ import PCGroupView from '@/photo_classifier/views/PCGroupView.vue'
 import PCBatchSelectView from '@/photo_classifier/views/PCBatchSelectView.vue'
 import PCGroupBatchView from '@/photo_classifier/views/PCGroupBatchView.vue'
 import DuplicateFinderView from '@/duplicate_finder/views/DuplicateFinderView.vue'
+import DuplicateFinderSettingsView from '@/duplicate_finder/views/SettingsView.vue'
 import VideoDuplicateFinderView from '@/video-duplicate-finder/views/VideoDuplicateFinderView.vue'
+import VideoDuplicateFinderSettingsView from '@/video-duplicate-finder/views/SettingsView.vue'
 import MangaViewerView from '@/manga_viwer/views/MangaViewerView.vue'
 import MangaViewerRandomView from '@/manga_viwer/views/RandomView.vue'
 import MangaViewerSettingsView from '@/manga_viwer/views/SettingsView.vue'
@@ -94,7 +96,9 @@ const router = createRouter({
     { path: '/pdf-converter', name: 'pdf-converter', component: PdfConverterView },
     { path: '/unzip', name: 'unzip', component: UnzipView },
     { path: '/duplicate-finder', name: 'duplicate-finder', component: DuplicateFinderView },
+    { path: '/duplicate-finder/settings', name: 'duplicate-finder-settings', component: DuplicateFinderSettingsView },
     { path: '/video-duplicate-finder', name: 'video-duplicate-finder', component: VideoDuplicateFinderView },
+    { path: '/video-duplicate-finder/settings', name: 'video-duplicate-finder-settings', component: VideoDuplicateFinderSettingsView },
     { path: '/clipboard-share', name: 'clipboard-share', component: ClipboardShareView },
     { path: '/caffeinate', name: 'caffeinate', component: CaffeinateView },
 

@@ -3,6 +3,7 @@
  */
 import { getRequest, postRequest } from '@/basic/RequestService'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
+import type { GapPair } from './Model'
 
 export interface ScanRequest {
   paths: string[]
@@ -68,6 +69,8 @@ export interface Settings {
     progress_update_interval: number
   }
   page_size?: number
+  gap_analysis_selection_threshold?: number
+  gap_analysis_lower_similarity?: number
 }
 
 export class DuplicateFinderService {
@@ -99,19 +102,52 @@ export class DuplicateFinderService {
    */
   static async batchDeleteByPath(
     deepPath: string,
-    previewOnly: boolean = true
+    previewOnly: boolean = true,
+    extraFiles?: string[]
   ): Promise<{
     matched_files?: number
     file_list?: string[]
+    folder_moves?: { dir: string; file_count: number }[]
+    selection_rate?: number
+    gap_pairs?: Omit<GapPair, 'checked'>[]
     deleted?: number
     failed?: number
     preview: boolean
   }> {
     const response = await postRequest(`${this.BASE_URL}/batch-delete-by-path`, {}, {
       deep_path: deepPath,
-      preview_only: previewOnly
+      preview_only: previewOnly,
+      ...(extraFiles && extraFiles.length > 0 ? { extra_files: extraFiles } : {})
     })
     return response
+  }
+
+  /**
+   * Run gap analysis to find missed duplicate pairs
+   */
+  static async gapAnalysis(
+    mode: 'global' | 'deep_path' | 'group',
+    params: { deepPath?: string; groupId?: number; lowerSimilarity?: number } = {}
+  ): Promise<{
+    pairs: Omit<GapPair, 'checked'>[]
+    gap_count: number
+    selection_rate: number
+  }> {
+    return postRequest(`${this.BASE_URL}/gap-analysis`, {}, {
+      mode,
+      deep_path: params.deepPath,
+      group_id: params.groupId,
+      lower_similarity: params.lowerSimilarity
+    })
+  }
+
+  /**
+   * Confirm gap pairs as duplicates — writes to phash_similarities
+   */
+  static async confirmGapPairs(
+    pairs: { image_id_a: number; image_id_b: number; distance: number }[]
+  ): Promise<{ added: number; message: string }> {
+    return postRequest(`${this.BASE_URL}/gap-analysis/confirm`, {}, { pairs })
   }
 
   /**

@@ -10,7 +10,7 @@
               <span class="subtitle">Find and remove duplicate images using perceptual hashing</span>
             </div>
           </div>
-          <el-button @click="showWhitelistDrawer = true">⚙️ Settings</el-button>
+          <el-button @click="goToSettings">⚙️ Settings</el-button>
         </div>
       </template>
 
@@ -513,461 +513,6 @@
       </el-empty>
     </el-card>
 
-    <!-- Settings Drawer -->
-    <el-drawer
-      v-model="showWhitelistDrawer"
-      title="Settings"
-      :size="600"
-    >
-      <div class="whitelist-content">
-        <!-- Folder Configuration -->
-        <div class="settings-section-drawer">
-          <h3>📁 Scan Folders</h3>
-          <div style="margin-bottom: 12px;">
-            <el-button size="small" @click="addFolderPath">+ Add Folder</el-button>
-          </div>
-
-          <div v-if="settings.folder_paths && settings.folder_paths.length > 0" class="folder-list-drawer">
-            <div v-for="(path, index) in settings.folder_paths" :key="index" class="folder-item-drawer">
-              <div class="folder-inputs-drawer">
-                <el-input
-                  v-model="settings.folder_paths[index]"
-                  placeholder="Folder Path"
-                  size="small"
-                />
-              </div>
-              <el-button
-                @click="removeFolderPath(index)"
-                type="danger"
-                size="small"
-                :icon="'Delete'"
-              >
-                Remove
-              </el-button>
-            </div>
-          </div>
-          <div v-else class="no-folders-drawer">
-            <p>No folder paths configured.</p>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- Exclude Folders -->
-        <div class="settings-section-drawer">
-          <h3>🚫 Exclude Folders</h3>
-          <div style="margin-bottom: 12px;">
-            <el-button size="small" @click="addExcludeFolderPath">+ Add Exclude Folder</el-button>
-          </div>
-
-          <div v-if="settings.exclude_folder_paths && settings.exclude_folder_paths.length > 0" class="folder-list-drawer">
-            <div v-for="(path, index) in settings.exclude_folder_paths" :key="index" class="exclude-item-drawer">
-              <el-input
-                v-model="settings.exclude_folder_paths[index]"
-                placeholder="/path/to/exclude/folder"
-                size="small"
-                style="flex: 1"
-              />
-              <el-button
-                @click="removeExcludeFolderPath(index)"
-                type="danger"
-                size="small"
-                :icon="'Delete'"
-              >
-                Remove
-              </el-button>
-            </div>
-          </div>
-          <div v-else class="no-folders-drawer">
-            <p>No exclude folders configured.</p>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- Advanced Settings -->
-        <div class="settings-section-drawer">
-          <h3>Advanced Settings</h3>
-
-          <div class="setting-item">
-            <label>Delete Target Path</label>
-            <el-input v-model="settings.delete_target_path" placeholder="/path/to/delete/folder" />
-            <p class="settings-hint">Where deleted files will be moved to</p>
-          </div>
-
-          <el-divider />
-
-          <div class="setting-item">
-            <label>Similarity Threshold: {{ threshold }}%</label>
-            <el-slider
-              v-model="threshold"
-              :min="60"
-              :max="100"
-              show-stops
-            />
-            <p class="settings-hint">Higher = more strict (only very similar images). Range: 60%-100%</p>
-          </div>
-
-          <div class="setting-item">
-            <label>PHash Database Path</label>
-            <el-input v-model="settings.phash_db_path" placeholder="/path/to/phash_cache.db" />
-            <p class="settings-hint">Path to the perceptual hash cache database</p>
-          </div>
-
-          <div class="setting-item">
-            <label>Max CPU Cores: {{ settings.max_cpu_cores || 1 }} / {{ settings.system_cpu_count || '?' }}</label>
-            <el-slider
-              v-model="settings.max_cpu_cores"
-              :min="1"
-              :max="settings.system_cpu_count || 12"
-              :step="1"
-              :marks="getCpuMarks()"
-              show-stops
-            />
-            <p class="settings-hint">
-              Number of CPU cores to use for hash computation. Lower values reduce system load.
-              Default: 1
-            </p>
-          </div>
-
-          <div class="setting-item">
-            <label>Page Size: {{ settings.page_size || 100 }} groups/page</label>
-            <el-input-number
-              v-model="settings.page_size"
-              :min="20"
-              :max="500"
-              :step="10"
-              controls-position="right"
-              style="width: 100%"
-            />
-            <p class="settings-hint">
-              Number of duplicate groups to display per page. Range: 20-500, Default: 100
-            </p>
-          </div>
-
-          <el-divider />
-
-          <h4 style="margin: 16px 0 12px 0; font-size: 14px; color: #606266;">Performance Settings</h4>
-          <p class="settings-hint" style="margin-bottom: 16px;">
-            Configure performance parameters for each phase. Add delays to reduce CPU/disk load or test with slower execution.
-          </p>
-
-          <!-- Phase 1 Settings -->
-          <div class="phase-settings-group">
-            <h5>Phase 1: Scan & Compute Hash</h5>
-            <div class="performance-inputs-row">
-              <div class="performance-input-item">
-                <label>Worker Handler Size</label>
-                <el-tooltip content="Number of files each worker processes at once. Recommended: 1 (best progress granularity)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.worker_handler_size"
-                    :min="1"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 1</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>DB Commit Batch</label>
-                <el-tooltip content="Accumulate N results before committing to database. Recommended: 100 (normal), 1000 (large scale)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.db_commit_batch_size"
-                    :min="1"
-                    :max="10000"
-                    :step="10"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 100</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>Progress Update Interval</label>
-                <el-tooltip content="Send progress update every N files. Recommended: 100 (normal), 1000 (large scale)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.progress_update_interval"
-                    :min="1"
-                    :max="10000"
-                    :step="10"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 100</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>IPC Chunk Size</label>
-                <el-tooltip content="Batch tasks for IPC optimization. Recommended: 10 (fixed, rarely needs tuning)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.ipc_chunk_size"
-                    :min="1"
-                    :max="1000"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 10</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>Scan Delay (s)</label>
-                <el-tooltip content="Delay between file scans. For testing only." placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.scan_delay"
-                    :min="0"
-                    :max="5"
-                    :step="0.1"
-                    :precision="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">0s (no delay)</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>Compute Delay (s)</label>
-                <el-tooltip content="Delay between hash computations. For testing only." placement="top">
-                  <el-input-number
-                    v-model="settings.phase1.compute_delay"
-                    :min="0"
-                    :max="5"
-                    :step="0.1"
-                    :precision="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">0s (no delay)</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Phase 2 Settings -->
-          <div class="phase-settings-group">
-            <h5>Phase 2: Compare Similarities</h5>
-            <div class="performance-inputs-row">
-              <div class="performance-input-item">
-                <label>Worker Handler Size</label>
-                <el-tooltip content="Number of files each worker processes at once. Recommended: 1 (best progress granularity)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase2.worker_handler_size"
-                    :min="1"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 1</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>DB Commit Batch</label>
-                <el-tooltip content="Accumulate N results before committing to database. Recommended: 100 (normal), 1000 (large scale)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase2.db_commit_batch_size"
-                    :min="1"
-                    :max="10000"
-                    :step="10"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 100</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>Progress Update Interval</label>
-                <el-tooltip content="Send progress update every N files. Recommended: 100 (normal), 1000 (large scale)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase2.progress_update_interval"
-                    :min="1"
-                    :max="10000"
-                    :step="10"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 100</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>IPC Chunk Size</label>
-                <el-tooltip content="Batch tasks for IPC optimization. Recommended: 10 (fixed, rarely needs tuning)" placement="top">
-                  <el-input-number
-                    v-model="settings.phase2.ipc_chunk_size"
-                    :min="1"
-                    :max="1000"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">Recommended: 10</p>
-              </div>
-
-              <div class="performance-input-item">
-                <label>Compare Delay (s)</label>
-                <el-tooltip content="Delay between similarity comparisons. For testing only." placement="top">
-                  <el-input-number
-                    v-model="settings.phase2.compare_delay"
-                    :min="0"
-                    :max="5"
-                    :step="0.1"
-                    :precision="1"
-                    size="small"
-                    controls-position="right"
-                  />
-                </el-tooltip>
-                <p class="settings-hint-small">0s (no delay)</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <!-- Auto-Selection Rules -->
-        <div class="settings-section-drawer">
-          <h3>Auto-Selection Rules</h3>
-          <p class="settings-hint-text">
-            Automatically mark files for deletion based on common patterns
-          </p>
-
-          <div class="rule-item">
-            <el-checkbox v-model="settings.auto_selection_rules.auto_mark_numbered_copies">
-              Auto-mark numbered copies
-            </el-checkbox>
-            <p class="rule-description">
-              Automatically select files like <code>photo(1).jpg</code>, <code>photo(2).jpg</code> for deletion, keeping only <code>photo.jpg</code>
-            </p>
-          </div>
-
-          <div class="rule-item">
-            <el-checkbox v-model="settings.auto_selection_rules.auto_mark_copy_suffix">
-              Auto-mark "copy" suffix
-            </el-checkbox>
-            <p class="rule-description">
-              Automatically select files like <code>photo_copy.jpg</code>, <code>photo-copy.jpg</code>, <code>photo copy.jpg</code> for deletion
-            </p>
-          </div>
-
-          <div class="rule-item">
-            <label>Prefer specific folders</label>
-            <p class="rule-description">
-              Files in these folders will be kept, others marked for deletion
-            </p>
-            <div v-if="settings.auto_selection_rules.prefer_folders && settings.auto_selection_rules.prefer_folders.length > 0" class="prefer-folders-list">
-              <div v-for="(folder, index) in settings.auto_selection_rules.prefer_folders" :key="index" class="prefer-folder-item">
-                <el-input
-                  v-model="settings.auto_selection_rules.prefer_folders[index]"
-                  placeholder="/path/to/preferred/folder"
-                />
-                <el-button
-                  @click="removePreferFolder(index)"
-                  type="danger"
-                  size="small"
-                >
-                  Remove
-                </el-button>
-              </div>
-            </div>
-            <el-button size="small" @click="addPreferFolder" style="margin-top: 8px">
-              + Add Preferred Folder
-            </el-button>
-          </div>
-        </div>
-
-        <!-- Unified Save Button -->
-        <div style="padding: 20px; border-top: 1px solid #dcdfe6; margin-top: 20px; background: #fafafa;">
-          <el-button
-            type="primary"
-            size="large"
-            @click="saveAllSettings"
-            :loading="isSaving"
-            style="width: 100%;"
-          >
-            💾 Save All Settings
-          </el-button>
-          <p style="margin-top: 12px; font-size: 12px; color: #909399; text-align: center;">
-            ⬆️ Settings above require Save to apply
-          </p>
-        </div>
-
-        <el-divider />
-
-        <!-- Whitelist Management -->
-        <div class="settings-section-drawer">
-          <h3>Whitelist Management</h3>
-          <p class="whitelist-hint">
-            Whitelisted groups will be excluded from future duplicate scans.
-            <br>
-            <strong>⚡ Changes take effect immediately (no Save needed)</strong>
-          </p>
-
-          <el-button
-            type="primary"
-            @click="loadWhitelistGroups"
-            :loading="isLoadingWhitelist"
-            style="margin-bottom: 16px"
-            data-testid="refresh-whitelist-btn"
-          >
-            🔄 Refresh List
-          </el-button>
-
-          <div v-if="whitelistGroups.length > 0" class="whitelist-groups-list">
-            <div
-              v-for="(group, index) in whitelistGroups"
-              :key="group.group_id"
-              class="whitelist-group-card"
-            >
-              <div class="whitelist-group-header">
-                <span class="whitelist-group-title">
-                  Group {{ group.group_id }} ({{ group.members.length }} images)
-                </span>
-                <span class="whitelist-group-time">
-                  {{ formatTimestamp(group.added_time) }}
-                </span>
-                <el-button
-                  type="danger"
-                  size="small"
-                  @click="removeWhitelistGroup(group.group_id, index)"
-                  data-testid="remove-whitelist-btn"
-                >
-                  Remove
-                </el-button>
-              </div>
-
-              <div class="whitelist-group-members">
-                <div
-                  v-for="member in group.members"
-                  :key="member.image_id"
-                  class="whitelist-member-thumbnail"
-                >
-                  <img
-                    :src="getImageUrl(member.file_path)"
-                    :alt="member.filename"
-                    class="whitelist-thumbnail-img"
-                  />
-                  <p class="whitelist-member-filename">{{ member.filename }}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-          <el-empty v-else description="No whitelisted groups" />
-        </div>
-
-      </div>
-    </el-drawer>
-
     <!-- Deep Path Delete Confirmation Dialog -->
     <el-dialog
       v-model="showDeepDeleteDialog"
@@ -1374,9 +919,11 @@
 import { useRouter } from 'vue-router'
 import { CircleCheck } from '@element-plus/icons-vue'
 import { useDuplicateFinderView } from './DuplicateFinderView'
+import GapAnalysisDialog from './GapAnalysisDialog.vue'
 
 const router = useRouter()
 function goBack() { router.push('/') }
+function goToSettings() { router.push('/duplicate-finder/settings') }
 
 const {
   // Data
@@ -1392,9 +939,6 @@ const {
   selectedForDelete,
   hasResults,
   settings,
-  showWhitelistDrawer,
-  whitelistGroups,
-  isLoadingWhitelist,
   // Pagination
   currentPage,
   pageSize,
@@ -1469,7 +1013,6 @@ const {
   getImageUrl,
   getRelativePath,
   formatFileSize,
-  getCpuMarks,
   getActualGroupIndex,
   handlePageChange,
   handlePageSizeChange,
@@ -1478,24 +1021,19 @@ const {
   SORT_OPTIONS,
   handleSortChange,
   toggleSortOrder,
-  saveFolderSettings,
-  saveAdvancedSettings,
-  saveAllSettings,
-  addFolderPath,
-  removeFolderPath,
-  addExcludeFolderPath,
-  removeExcludeFolderPath,
   executeDeepPathDelete,
   confirmDeepDelete,
   cancelDeepDelete,
   setDeepDeletePath,
+  // Gap Analysis
+  showGapDialog,
+  gapPairs,
+  gapAnalysisLoading,
+  gapDialogContext,
+  triggerGapAnalysis,
+  submitConfirmGapPairs,
   addGroupToWhitelist,
-  loadWhitelistGroups,
-  removeWhitelistGroup,
-  formatTimestamp,
   verifyAndCleanup,
-  addPreferFolder,
-  removePreferFolder,
   splitGroup,
 } = useDuplicateFinderView()
 </script>

@@ -4,6 +4,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { DuplicateFinderService, type ImageInfo, type ScanResult, type Settings } from '../service/DuplicateFinderService'
+import type { GapPair } from '../service/Model'
 import io, { Socket } from 'socket.io-client'
 import { v4 as uuidv4 } from 'uuid'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
@@ -33,11 +34,15 @@ export function useDuplicateFinderView() {
     matchedCount: number
     fileList: string[]
     folderMoves: { dir: string; file_count: number }[]
+    selectionRate: number
+    gapPairs: GapPair[]
   }>({
     deepPath: '',
     matchedCount: 0,
     fileList: [],
-    folderMoves: []
+    folderMoves: [],
+    selectionRate: 0,
+    gapPairs: []
   })
 
   const settings = ref<Settings>({
@@ -2239,7 +2244,9 @@ export function useDuplicateFinderView() {
         deepPath: deepPathDelete.value,
         matchedCount: previewResult.matched_files,
         fileList: previewResult.file_list || [],
-        folderMoves: previewResult.folder_moves || []
+        folderMoves: previewResult.folder_moves || [],
+        selectionRate: previewResult.selection_rate ?? 0,
+        gapPairs: (previewResult.gap_pairs || []).map(p => ({ ...p, checked: true }))
       }
       showDeepDeleteDialog.value = true
       console.log('[DEBUG] Dialog should be visible now, showDeepDeleteDialog.value:', showDeepDeleteDialog.value)
@@ -2275,9 +2282,15 @@ export function useDuplicateFinderView() {
     })
 
     try {
+      // Include user-confirmed gap files in the delete operation
+      const checkedGapFiles = deepDeletePreview.value.gapPairs
+        .filter(p => p.checked)
+        .map(p => p.gap_file)
+
       const deleteResult = await DuplicateFinderService.batchDeleteByPath(
         deepDeletePreview.value.deepPath,
-        false
+        false,
+        checkedGapFiles.length > 0 ? checkedGapFiles : undefined
       )
 
       if (deleteResult.deleted) {
@@ -2309,6 +2322,61 @@ export function useDuplicateFinderView() {
   function cancelDeepDelete() {
     showDeepDeleteDialog.value = false
     isDeleting.value = false
+  }
+
+  // ========== Gap Analysis ==========
+  const showGapDialog = ref(false)
+  const gapPairs = ref<GapPair[]>([])
+  const gapAnalysisLoading = ref(false)
+  const gapDialogContext = ref<'global' | 'deep_path' | 'group'>('global')
+
+  async function triggerGapAnalysis(
+    mode: 'global' | 'deep_path' | 'group',
+    deepPath?: string,
+    groupId?: number
+  ) {
+    gapAnalysisLoading.value = true
+    gapDialogContext.value = mode
+    try {
+      const result = await DuplicateFinderService.gapAnalysis(mode, { deepPath, groupId })
+      gapPairs.value = (result.pairs || []).map(p => ({ ...p, checked: true }))
+      showGapDialog.value = true
+      if (gapPairs.value.length === 0) {
+        ElMessage.info('No missed duplicates found.')
+        showGapDialog.value = false
+      }
+    } catch (error: any) {
+      ElMessage.error(error.message || 'Gap analysis failed')
+    } finally {
+      gapAnalysisLoading.value = false
+    }
+  }
+
+  async function submitConfirmGapPairs(includeInDelete: boolean) {
+    const checked = gapPairs.value.filter(p => p.checked)
+    if (checked.length === 0) {
+      ElMessage.warning('No pairs selected')
+      return
+    }
+    try {
+      const result = await DuplicateFinderService.confirmGapPairs(
+        checked.map(p => ({ image_id_a: p.gap_id, image_id_b: p.candidate_id, distance: p.distance }))
+      )
+      ElMessage.success(result.message || `${result.added} pairs saved to DB`)
+
+      if (includeInDelete && gapDialogContext.value === 'deep_path') {
+        // Add checked gap files to the deep delete preview's gap pairs (checked state preserved)
+        for (const pair of checked) {
+          const existing = deepDeletePreview.value.gapPairs.find(p => p.gap_id === pair.gap_id)
+          if (!existing) deepDeletePreview.value.gapPairs.push({ ...pair, checked: true })
+          else existing.checked = true
+        }
+        ElMessage.info('Gap files added to pending deep delete. Confirm the deep delete dialog to proceed.')
+      }
+      showGapDialog.value = false
+    } catch (error: any) {
+      ElMessage.error(error.message || 'Failed to confirm pairs')
+    }
   }
 
   /**
@@ -2675,6 +2743,13 @@ export function useDuplicateFinderView() {
     confirmDeepDelete,
     cancelDeepDelete,
     setDeepDeletePath,
+    // Gap Analysis
+    showGapDialog,
+    gapPairs,
+    gapAnalysisLoading,
+    gapDialogContext,
+    triggerGapAnalysis,
+    submitConfirmGapPairs,
     addGroupToWhitelist,
     loadWhitelistGroups,
     removeWhitelistGroup,
