@@ -2,7 +2,7 @@
  * Duplicate Finder View Logic
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { DuplicateFinderService, type ImageInfo, type ScanResult, type Settings } from '../service/DuplicateFinderService'
 import io, { Socket } from 'socket.io-client'
 import { v4 as uuidv4 } from 'uuid'
@@ -32,10 +32,12 @@ export function useDuplicateFinderView() {
     deepPath: string
     matchedCount: number
     fileList: string[]
+    folderMoves: { dir: string; file_count: number }[]
   }>({
     deepPath: '',
     matchedCount: 0,
-    fileList: []
+    fileList: [],
+    folderMoves: []
   })
 
   const settings = ref<Settings>({
@@ -2236,7 +2238,8 @@ export function useDuplicateFinderView() {
       deepDeletePreview.value = {
         deepPath: deepPathDelete.value,
         matchedCount: previewResult.matched_files,
-        fileList: previewResult.file_list || []
+        fileList: previewResult.file_list || [],
+        folderMoves: previewResult.folder_moves || []
       }
       showDeepDeleteDialog.value = true
       console.log('[DEBUG] Dialog should be visible now, showDeepDeleteDialog.value:', showDeepDeleteDialog.value)
@@ -2257,16 +2260,24 @@ export function useDuplicateFinderView() {
 
   // Confirm and execute deep delete
   async function confirmDeepDelete() {
+    showDeepDeleteDialog.value = false
+    isDeleting.value = true
+
+    const hasFolderMoves = deepDeletePreview.value.folderMoves.length > 0
+    const loadingText = hasFolderMoves
+      ? `Moving ${deepDeletePreview.value.folderMoves.length} folder(s) as unit...`
+      : `Moving ${deepDeletePreview.value.matchedCount} files...`
+
+    const loading = ElLoading.service({
+      lock: true,
+      text: loadingText,
+      background: 'rgba(0, 0, 0, 0.5)',
+    })
+
     try {
-      showDeepDeleteDialog.value = false
-      isDeleting.value = true
-
-      // Execute actual deletion
-      ElMessage.info(`Deleting ${deepDeletePreview.value.matchedCount} files...`)
-
       const deleteResult = await DuplicateFinderService.batchDeleteByPath(
         deepDeletePreview.value.deepPath,
-        false  // actual deletion
+        false
       )
 
       if (deleteResult.deleted) {
@@ -2275,10 +2286,8 @@ export function useDuplicateFinderView() {
           (deleteResult.failed ? ` (${deleteResult.failed} failed)` : '')
         )
 
-        // Clear deep delete path after successful deletion
         deepPathDelete.value = ''
 
-        // Reload current page to refresh the view
         if (currentPage.value > 0) {
           await loadDuplicatesPage(currentPage.value)
         } else {
@@ -2291,6 +2300,7 @@ export function useDuplicateFinderView() {
       console.error('[Duplicate Finder] Failed to execute deep path delete:', error)
       ElMessage.error(error.message || 'Failed to execute deep path delete')
     } finally {
+      loading.close()
       isDeleting.value = false
     }
   }

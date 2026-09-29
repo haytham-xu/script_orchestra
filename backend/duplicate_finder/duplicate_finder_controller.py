@@ -2557,6 +2557,58 @@ class Phase3StopResource(Resource):
         return {"message": "Phase 3 stop signal sent"}
 
 
+def _find_whole_dir_moves(matched_files, deep_path, all_db_files_abs):
+    """
+    Find subdirectories under deep_path where every DB-tracked image file is in
+    matched_files, so the whole directory can be moved at once.
+
+    Uses all_db_files_abs (all images tracked in image_hashes under deep_path) for
+    the completeness check — NOT all disk files — so that non-image files like
+    Thumbs.db / .DS_Store do not block a directory from being moved as a whole.
+
+    Returns (dir_moves, files_individual):
+      dir_moves        – list of (abs_dir_path, frozenset_of_matched_abs_in_dir)
+                         Only topmost movable dirs (children excluded).
+      files_individual – matched_files NOT covered by any dir_move.
+    """
+    if not matched_files:
+        return [], list(matched_files)
+
+    matched_abs = {os.path.abspath(f) for f in matched_files}
+    deep_path_abs = os.path.abspath(deep_path)
+
+    movable = {}  # abs_dir -> frozenset of matched abs file paths in subtree
+    for root, dirs, files in os.walk(deep_path_abs):
+        abs_root = os.path.abspath(root)
+
+        # DB-tracked images in this subtree (ignore non-image disk files)
+        subtree_db = {f for f in all_db_files_abs if f.startswith(abs_root + os.sep)}
+
+        if not subtree_db:
+            print(f"[Whole-Dir] Skip {abs_root}: no DB-tracked files in subtree")
+            continue
+
+        not_matched = subtree_db - matched_abs
+        if not_matched:
+            print(f"[Whole-Dir] Skip {abs_root}: {len(not_matched)} DB file(s) not being removed"
+                  f" (e.g. {next(iter(not_matched))})")
+        else:
+            print(f"[Whole-Dir] Candidate: {abs_root} — all {len(subtree_db)} DB file(s) covered")
+            movable[abs_root] = frozenset(subtree_db)
+
+    # Keep only topmost movable dirs
+    final = {}
+    for d in sorted(movable):
+        if not any(d != p and d.startswith(p + os.sep) for p in final):
+            final[d] = movable[d]
+
+    covered = set().union(*final.values()) if final else set()
+    files_individual = [f for f in matched_files if os.path.abspath(f) not in covered]
+
+    print(f"[Whole-Dir] Result: {len(final)} whole-dir move(s), {len(files_individual)} individual file(s)")
+    return list(final.items()), files_individual
+
+
 @ns.route("/batch-delete-by-path")
 class BatchDeleteByPathResource(Resource):
     def post(self):
@@ -2651,11 +2703,26 @@ class BatchDeleteByPathResource(Resource):
 
             print(f"[Batch Delete] Found {len(matched_files)} files under {deep_path}")
 
+            # Query ALL DB-tracked images under deep_path (not just duplicates).
+            # Used by _find_whole_dir_moves to decide if a subdir can be moved as a whole.
+            cursor.execute(
+                'SELECT file_path FROM duplicate_finder_image_hashes WHERE file_path = ? OR file_path LIKE ?',
+                (deep_path, f"{deep_path}{os.sep}%")
+            )
+            all_db_files_abs = {os.path.abspath(row[0]) for row in cursor.fetchall()}
+            print(f"[Batch Delete] Total DB-tracked files under path: {len(all_db_files_abs)}")
+
             if preview_only:
-                # Preview mode: just return the list
+                # Compute which subdirs would be moved as a whole
+                dir_moves, files_individual = _find_whole_dir_moves(matched_files, deep_path, all_db_files_abs)
+                folder_moves = [
+                    {"dir": d, "file_count": len(files)}
+                    for d, files in dir_moves
+                ]
                 return {
                     "matched_files": len(matched_files),
-                    "file_list": matched_files,
+                    "file_list": files_individual,
+                    "folder_moves": folder_moves,
                     "preview": True
                 }
             else:
@@ -2673,7 +2740,7 @@ class BatchDeleteByPathResource(Resource):
                     ids_to_delete: list = []
                     BATCH = 900
                     for i in range(0, len(matched_files), BATCH):
-                        chunk = [os.path.abspath(f) for f in matched_files[i:i + BATCH]]
+                        chunk = list(matched_files[i:i + BATCH])
                         ph = ','.join('?' * len(chunk))
                         cursor.execute(f"SELECT id FROM duplicate_finder_image_hashes WHERE file_path IN ({ph})", chunk)
                         ids_to_delete.extend(r[0] for r in cursor.fetchall())
@@ -2689,7 +2756,83 @@ class BatchDeleteByPathResource(Resource):
                 print(f"[Batch Delete] Delete target: {delete_target_path}")
                 print(f"[Batch Delete] Scan folders configured: {len(folder_paths)} folders")
 
-                for file_path in matched_files:
+                # Determine which subdirs can be moved as whole units vs individual files
+                dir_moves, files_individual = _find_whole_dir_moves(matched_files, deep_path, all_db_files_abs)
+
+                def _resolve_scan_folder(abs_path):
+                    for folder in folder_paths:
+                        folder_abs = os.path.abspath(folder)
+                        if abs_path.startswith(folder_abs + os.sep) or abs_path == folder_abs:
+                            return folder_abs
+                    return os.path.dirname(abs_path)
+
+                def _safe_relpath(abs_path, base):
+                    try:
+                        return os.path.relpath(abs_path, base)
+                    except ValueError:
+                        return os.path.basename(abs_path)
+
+                # --- Phase A: move whole directories ---
+                for dir_abs, dir_files in dir_moves:
+                    try:
+                        if not os.path.exists(dir_abs):
+                            print(f"[Batch Delete] Dir not found, skipping: {dir_abs}")
+                            failed_count += len(dir_files)
+                            continue
+
+                        scan_folder = _resolve_scan_folder(dir_abs)
+                        relative_dir = _safe_relpath(dir_abs, scan_folder)
+                        target_dir_path = os.path.join(delete_target_path, relative_dir)
+
+                        os.makedirs(os.path.dirname(target_dir_path), exist_ok=True)
+                        shutil.move(dir_abs, target_dir_path)
+                        print(f"[Batch Delete] ✓ Moved dir: {dir_abs} -> {target_dir_path} ({len(dir_files)} DB files)")
+
+                        # Clean DB records using matched_files (verbatim DB paths), not dir_files.
+                        # Phase B uses this same pattern and is known to work; using os.path.abspath
+                        # on a path already in DB format is a no-op, so the SELECT matches correctly.
+                        files_matched_in_dir = [
+                            f for f in matched_files if os.path.abspath(f) in dir_files
+                        ]
+                        print(f"[Batch Delete] Phase A DB cleanup: {len(files_matched_in_dir)} files to remove")
+
+                        cleaned = 0
+                        for file_path in files_matched_in_dir:
+                            try:
+                                # Use file_path verbatim — it came from a DB SELECT so it's
+                                # the exact value stored. os.path.abspath can silently change
+                                # slash style on Windows and break the lookup.
+                                cursor.execute(
+                                    'SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?',
+                                    (file_path,)
+                                )
+                                row = cursor.fetchone()
+                                if row:
+                                    image_id = row[0]
+                                    cursor.execute(
+                                        'DELETE FROM duplicate_finder_phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                                        (image_id, image_id)
+                                    )
+                                    cursor.execute(
+                                        'DELETE FROM duplicate_finder_image_hashes WHERE id = ?',
+                                        (image_id,)
+                                    )
+                                    cleaned += 1
+                                else:
+                                    print(f"[Batch Delete] Warning: no DB record found for verbatim path: {file_path}")
+                            except Exception as db_err:
+                                print(f"[Batch Delete] Warning: DB cleanup failed for {file_path}: {db_err}")
+
+                        conn.commit()
+                        print(f"[Batch Delete] Phase A: {cleaned}/{len(files_matched_in_dir)} records cleaned from DB")
+                        deleted_count += len(files_matched_in_dir)
+
+                    except Exception as e:
+                        print(f"[Batch Delete] ✗ Failed to move dir {dir_abs}: {e}")
+                        failed_count += len(dir_files)
+
+                # --- Phase B: move individual files ---
+                for file_path in files_individual:
                     try:
                         if not os.path.exists(file_path):
                             print(f"[Batch Delete] File not found, skipping: {file_path}")
@@ -2697,66 +2840,33 @@ class BatchDeleteByPathResource(Resource):
                             continue
 
                         abs_file_path = os.path.abspath(file_path)
-
-                        # Find the scan folder that contains this file (use it as root)
-                        scan_folder = None
-                        for folder in folder_paths:
-                            folder_abs = os.path.abspath(folder)
-                            if abs_file_path.startswith(folder_abs + os.sep) or abs_file_path == folder_abs:
-                                scan_folder = folder_abs
-                                break
-
-                        if not scan_folder:
-                            # Fallback: if no scan folder found, use the file's parent directory
-                            scan_folder = os.path.dirname(abs_file_path)
-                            print(f"[Batch Delete] Warning: No scan folder found for {abs_file_path}, using parent directory")
-
-                        # Calculate relative path from scan folder
-                        try:
-                            relative_path = os.path.relpath(abs_file_path, scan_folder)
-                        except ValueError:
-                            # Different drives on Windows, fallback to filename only
-                            relative_path = os.path.basename(abs_file_path)
-                            print(f"[Batch Delete] Warning: Cannot calculate relative path (different drives?), using filename only")
-
-                        # Construct target path
+                        scan_folder = _resolve_scan_folder(abs_file_path)
+                        relative_path = _safe_relpath(abs_file_path, scan_folder)
                         target_file = os.path.join(delete_target_path, relative_path)
-                        target_dir = os.path.dirname(target_file)
 
-                        # Create target directory
-                        os.makedirs(target_dir, exist_ok=True)
-
-                        # Move file
+                        os.makedirs(os.path.dirname(target_file), exist_ok=True)
                         shutil.move(file_path, target_file)
-                        print(f"[Batch Delete] ✓ Moved: {file_path}")
-                        print(f"[Batch Delete]   Scan folder: {scan_folder}")
-                        print(f"[Batch Delete]   Relative: {relative_path}")
-                        print(f"[Batch Delete]   Destination: {target_file}")
+                        print(f"[Batch Delete] ✓ Moved file: {file_path} -> {target_file}")
 
-                        # Delete from database (duplicate_finder_image_hashes and duplicate_finder_phash_similarities)
                         try:
-                            # Find the image ID
-                            cursor.execute('SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?', (abs_file_path,))
+                            cursor.execute(
+                                'SELECT id FROM duplicate_finder_image_hashes WHERE file_path = ?',
+                                (abs_file_path,)
+                            )
                             row = cursor.fetchone()
-
                             if row:
                                 image_id = row[0]
-                                # Delete from duplicate_finder_phash_similarities (where this image is involved)
-                                cursor.execute('DELETE FROM duplicate_finder_phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
-                                             (image_id, image_id))
-                                similarity_count = cursor.rowcount
-
-                                # Delete from duplicate_finder_image_hashes
-                                cursor.execute('DELETE FROM duplicate_finder_image_hashes WHERE id = ?', (image_id,))
+                                cursor.execute(
+                                    'DELETE FROM duplicate_finder_phash_similarities WHERE image_id_a = ? OR image_id_b = ?',
+                                    (image_id, image_id)
+                                )
+                                cursor.execute(
+                                    'DELETE FROM duplicate_finder_image_hashes WHERE id = ?',
+                                    (image_id,)
+                                )
                                 conn.commit()
-
-                                print(f"[Batch Delete]   DB cleaned: removed image record (ID={image_id}) and {similarity_count} similarity records")
-                            else:
-                                print(f"[Batch Delete]   DB: image not found in database")
-
                         except Exception as db_error:
                             print(f"[Batch Delete] Warning: Failed to clean database for {file_path}: {db_error}")
-                            # Don't fail the whole operation if DB cleanup fails
 
                         deleted_count += 1
                     except Exception as e:
@@ -2765,25 +2875,20 @@ class BatchDeleteByPathResource(Resource):
 
                 print(f"[Batch Delete] Complete: {deleted_count} deleted, {failed_count} failed")
 
-                # Clean up empty directories under deep_path
-                if deleted_count > 0:
+                # Clean up empty directories left after individual file moves
+                if files_individual and deleted_count > 0:
                     print(f"[Batch Delete] Cleaning up empty directories...")
                     try:
                         empty_dirs_removed = 0
-                        # Walk through the deep_path directory tree from bottom to top
                         for root, dirs, files in os.walk(deep_path, topdown=False):
-                            # Check if directory is empty (no files and no subdirectories)
                             try:
                                 if not os.listdir(root):
                                     os.rmdir(root)
                                     empty_dirs_removed += 1
                                     print(f"[Batch Delete]   Removed empty directory: {root}")
                             except OSError as e:
-                                # Directory might not be empty or no permission
                                 print(f"[Batch Delete]   Could not remove directory {root}: {e}")
                                 continue
-
-                        # Try to remove the deep_path itself if it's now empty
                         try:
                             if os.path.exists(deep_path) and not os.listdir(deep_path):
                                 os.rmdir(deep_path)
@@ -2791,15 +2896,9 @@ class BatchDeleteByPathResource(Resource):
                                 print(f"[Batch Delete]   Removed empty root directory: {deep_path}")
                         except OSError as e:
                             print(f"[Batch Delete]   Could not remove root directory {deep_path}: {e}")
-
-                        if empty_dirs_removed > 0:
-                            print(f"[Batch Delete] Cleaned up {empty_dirs_removed} empty directories")
-                        else:
-                            print(f"[Batch Delete] No empty directories to clean up")
-
+                        print(f"[Batch Delete] Cleaned up {empty_dirs_removed} empty directories")
                     except Exception as cleanup_error:
                         print(f"[Batch Delete] Warning: Failed to clean up empty directories: {cleanup_error}")
-                        # Don't fail the operation if cleanup fails
 
                 return {
                     "deleted": deleted_count,

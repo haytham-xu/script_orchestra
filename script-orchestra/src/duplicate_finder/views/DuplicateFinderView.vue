@@ -971,7 +971,9 @@
     <!-- Deep Path Delete Confirmation Dialog -->
     <el-dialog
       v-model="showDeepDeleteDialog"
-      title="Confirm Global Deep Path Delete"
+      :title="deepDeletePreview.folderMoves && deepDeletePreview.folderMoves.length > 0
+        ? `Confirm Global Deep Path Delete — ${deepDeletePreview.folderMoves.length} folder(s) will be moved as a unit`
+        : 'Confirm Global Deep Path Delete'"
       width="700px"
       :close-on-click-modal="false"
     >
@@ -991,6 +993,25 @@
           </div>
         </el-alert>
 
+        <!-- Folder-move banner -->
+        <el-alert
+          v-if="deepDeletePreview.folderMoves && deepDeletePreview.folderMoves.length > 0"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 16px;"
+        >
+          <template #title>
+            <div style="font-size: 14px; font-weight: 600;">
+              📁 Folder-level move detected
+            </div>
+          </template>
+          <div style="font-size: 13px; margin-top: 6px;">
+            {{ deepDeletePreview.folderMoves.length }} folder(s) contain only duplicate images and will be
+            <strong>moved as a whole unit</strong> instead of file-by-file.
+            {{ deepDeletePreview.folderMoves.reduce((s, f) => s + f.file_count, 0) }} files covered this way.
+          </div>
+        </el-alert>
+
         <div class="deep-delete-info">
           <div class="info-label">Found Files:</div>
           <div class="info-value">{{ deepDeletePreview.matchedCount }} duplicate files</div>
@@ -1001,9 +1022,28 @@
           <div class="info-value path-value" data-testid="deep-delete-path-display">{{ deepDeletePreview.deepPath }}</div>
         </div>
 
-        <div class="file-list-section">
+        <!-- Folder-level moves section -->
+        <div v-if="deepDeletePreview.folderMoves && deepDeletePreview.folderMoves.length > 0" class="file-list-section">
           <div class="file-list-header">
-            <span>File List:</span>
+            <span>Folders moved entirely:</span>
+            <span class="file-count">({{ deepDeletePreview.folderMoves.length }} folders)</span>
+          </div>
+          <div class="file-list-container">
+            <div
+              v-for="(fm, index) in deepDeletePreview.folderMoves"
+              :key="index"
+              class="file-list-item folder-move-item"
+            >
+              <span class="file-icon">📁</span>
+              <span class="file-path">{{ fm.dir }}</span>
+              <span class="folder-file-count">({{ fm.file_count }} files)</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="deepDeleteFileListRelative.length > 0" class="file-list-section">
+          <div class="file-list-header">
+            <span>Individual files:</span>
             <span class="file-count">({{ deepDeleteFileListRelative.length }} files)</span>
           </div>
           <div class="file-list-container">
@@ -1027,7 +1067,10 @@
             @click="confirmDeepDelete"
             :loading="isDeleting"
           >
-            Delete {{ deepDeletePreview.matchedCount }} Files
+            Move {{ deepDeletePreview.matchedCount }} Files
+            <template v-if="deepDeletePreview.folderMoves && deepDeletePreview.folderMoves.length > 0">
+              ({{ deepDeletePreview.folderMoves.length }} folder{{ deepDeletePreview.folderMoves.length > 1 ? 's' : '' }} + {{ deepDeleteFileListRelative.length }} individual)
+            </template>
           </el-button>
         </div>
       </template>
@@ -1323,6 +1366,8 @@
       </template>
     </el-dialog>
   </div>
+
+  <el-backtop :right="24" :bottom="64" :visibility-height="300" />
 </template>
 
 <script setup lang="ts">
@@ -2628,6 +2673,18 @@ const {
   color: #606266;
   word-break: break-all;
   line-height: 1.5;
+  flex: 1;
+}
+
+.folder-move-item {
+  background: #f0f9ff;
+}
+
+.folder-file-count {
+  font-size: 11px;
+  color: #909399;
+  margin-left: 6px;
+  flex-shrink: 0;
 }
 
 .dialog-footer {
