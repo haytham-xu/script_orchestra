@@ -27,6 +27,7 @@ from ..crypto import (
     AesGcmEncryptStream,
     encode_middle_path,
 )
+from ._fsutil import atomic_write_json
 
 
 CLOUD_INDEX_FILENAME = "cloud_index.json"
@@ -155,8 +156,8 @@ class IndexService:
     @staticmethod
     def save_local_index(repo_root: str, index: Dict[str, IndexEntry]) -> None:
         path = os.path.join(repo_root, ".fgit", "local_index.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2, ensure_ascii=False)
+        atomic_write_json(path, index, indent=2)
+        IndexService._write_stats_sidecar(path, index)
 
     # ---- cloud_index.json read/write (local mirror) ------------------
 
@@ -171,8 +172,57 @@ class IndexService:
     @staticmethod
     def save_cloud_index(repo_root: str, index: Dict[str, IndexEntry]) -> None:
         path = os.path.join(repo_root, ".fgit", "cloud_index.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2, ensure_ascii=False)
+        atomic_write_json(path, index, indent=2)
+        IndexService._write_stats_sidecar(path, index)
+
+    # ---- tiny stats sidecar (avoids loading 100MB+ indexes for Settings) --
+
+    @staticmethod
+    def _compute_stats(index: Dict[str, IndexEntry]) -> dict:
+        total_size = 0
+        folders: set = set()
+        file_count = 0
+        for entry in index.values():
+            mp = entry.get("middle_path", "")
+            if "/" in mp:
+                folders.add(mp.rsplit("/", 1)[0])
+            total_size += entry.get("size", 0)
+            file_count += 1
+        return {
+            "file_count": file_count,
+            "folder_count": len(folders),
+            "total_count": file_count + len(folders),
+            "total_size": total_size,
+        }
+
+    @staticmethod
+    def _write_stats_sidecar(index_path: str, index: Dict[str, IndexEntry]) -> None:
+        try:
+            atomic_write_json(index_path + ".stats.json", IndexService._compute_stats(index))
+        except Exception:
+            pass  # stats cache is best-effort; Settings falls back to full compute
+
+    @staticmethod
+    def load_index_stats(repo_root: str, which: str) -> dict:
+        """Return {file_count, folder_count, total_count, total_size} for
+        ``which`` in {"local", "cloud"}. Reads the tiny sidecar; if absent,
+        computes from the full index once and self-heals the sidecar."""
+        base = "local_index.json" if which == "local" else "cloud_index.json"
+        index_path = os.path.join(repo_root, ".fgit", base)
+        sidecar = index_path + ".stats.json"
+        if os.path.exists(sidecar):
+            try:
+                with open(sidecar, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        if not os.path.exists(index_path):
+            return {"file_count": 0, "folder_count": 0, "total_count": 0, "total_size": 0}
+        with open(index_path, "r", encoding="utf-8") as f:
+            index = json.load(f)
+        stats = IndexService._compute_stats(index)
+        IndexService._write_stats_sidecar(index_path, index)
+        return stats
 
     @staticmethod
     def touch_cloud_index_synced_at(repo_root: str) -> None:

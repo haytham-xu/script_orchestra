@@ -7,7 +7,7 @@
  *   Diff, Rebuild Local Index, Rebuild Cloud Index,
  *   Cleanup, Resume (visible only when lock=true)
  */
-import { computed, onMounted, onUnmounted, ref, type Ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -16,7 +16,8 @@ import {
   type DiffEntry,
   type FileTreeEntry,
   type FileLogRecord,
-  type QueueItem,
+  type QueueCurrentItem,
+  type QueueErrorItem,
   type QueueStatus,
   type RepoConfig,
   type Repository,
@@ -51,6 +52,17 @@ export function useFileGitRepoDetail() {
   const progressHasError = computed(() => progressItems.value.some(i => i.status === 'error'))
   const progressActiveCount = computed(() => progressItems.value.filter(i => i.status === 'active').length)
 
+  // Manual upload inline progress bar + ETA
+  const prepareProgress = ref<{
+    current: number; total: number; pct: number; currentFile: string; eta: string | null
+  } | null>(null)
+  const _prepareStartMs = ref(0)
+
+  // Post-manual-upload confirm result
+  const confirmResult = ref<{
+    ok: boolean; confirmed: number; missing: string[]; message: string
+  } | null>(null)
+
   // Diff panel state
   const diffAdded = ref<DiffEntry[]>([])
   const diffModified = ref<DiffEntry[]>([])
@@ -64,8 +76,14 @@ export function useFileGitRepoDetail() {
   const editRemotePath = ref('')
   const editHookDays = ref<number | null>(null)
 
-  // Manual upload state
-  const manualSubpath = ref('')
+  // Manual upload state — persisted to localStorage per repo so subpath
+  // survives page refresh.
+  const _subpathKey = () => `fg:manual-subpath:${repoId.value}`
+  const manualSubpath = ref(localStorage.getItem(`fg:manual-subpath:${repoId.value}`) ?? '')
+  watch(manualSubpath, (v) => {
+    if (v.trim()) localStorage.setItem(_subpathKey(), v)
+    else localStorage.removeItem(_subpathKey())
+  })
 
   // File tree (lazy, one level at a time)
   const fileTreeKey = ref(0)   // bump to force el-tree remount on refresh
@@ -96,9 +114,16 @@ export function useFileGitRepoDetail() {
   }
 
   // Queue panel
-  const queueItems = ref<QueueItem[]>([])
+  const queueCurrent = ref<QueueCurrentItem | null>(null)
+  const queueErrors = ref<QueueErrorItem[]>([])
+  const bytesDone = ref(0)
+  const bytesTotal = ref(0)
+  const uploadPhase = ref('uploading')
   const queueStats = ref({ total: 0, done: 0, in_progress: 0, error: 0, todo: 0 })
-  let queuePollTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ETA tracking — reset on each new push/pull/resume
+  const etaSessionStart = ref<number | null>(null)   // ms timestamp
+  const etaSessionDone = ref<number>(0)              // done count when session started
 
   // Baidu root prefix (from global settings) — used to preview the final
   // remote path the repo maps to on the cloud.
@@ -119,9 +144,11 @@ export function useFileGitRepoDetail() {
 
   const syncTreeRef = ref<any>(null)
   const syncChildren = ref<SyncFilterChild[]>([])
+  const syncLoading = ref(false)
 
   async function loadSyncChildren(node: any, resolve: (data: any[]) => void) {
     const parentPath = node.level === 0 ? '' : node.data.path
+    if (node.level === 0) syncLoading.value = true
     try {
       let children: SyncFilterChild[]
       if (node.level === 0) {
@@ -147,6 +174,8 @@ export function useFileGitRepoDetail() {
     } catch (e: any) {
       ElMessage.error(e.response?.data?.error || e.message || 'Failed to load sync tree')
       resolve([])
+    } finally {
+      if (node.level === 0) syncLoading.value = false
     }
   }
 
@@ -224,14 +253,92 @@ export function useFileGitRepoDetail() {
   const canPushPull = computed(() => !isBusy.value && !isLocked.value)
   const canResume = computed(() =>
     !isBusy.value && isLocked.value &&
-    (lockActionType.value === 'push' || lockActionType.value === 'pull')
+    (lockActionType.value === 'push' || lockActionType.value === 'pull' || lockActionType.value === 'apply_filter')
   )
+  const canPause = computed(() =>
+    isLocked.value && !queue.value?.paused &&
+    (lockActionType.value === 'push' || lockActionType.value === 'pull' || lockActionType.value === 'apply_filter')
+  )
+  const canStop = computed(() =>
+    isLocked.value &&
+    (lockActionType.value === 'push' || lockActionType.value === 'pull' || lockActionType.value === 'apply_filter')
+  )
+  const isPaused = computed(() => queue.value?.paused === true)
+  const isRateLimited = computed(() => !!queue.value?.rate_limited_until)
+  const rateLimitedUntil = computed(() => queue.value?.rate_limited_until ?? null)
+
+  // ETA: items/sec over the current session → remaining seconds
+  const etaSeconds = computed((): number | null => {
+    if (!etaSessionStart.value) return null
+    const elapsedMs = Date.now() - etaSessionStart.value
+    if (elapsedMs < 3000) return null  // need at least 3s of data
+    const doneInSession = queueStats.value.done - etaSessionDone.value
+    if (doneInSession <= 0) return null
+    const rate = doneInSession / (elapsedMs / 1000)  // items per second
+    const remaining = queueStats.value.todo + queueStats.value.in_progress
+    return remaining / rate
+  })
+  const manualUploadRemotePath = computed(() => {
+    const base = finalRemotePath.value
+    if (!base) return ''
+    const sub = manualSubpath.value.trim().replace(/^\/+/, '').replace(/\/+$/, '')
+    return sub ? `${base}/${sub}` : base
+  })
+
+  // For encrypted repos: encoded cloud path for the entered subpath
+  const _manualEncodedSubpath = ref('')
+  let _encodeTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    () => manualSubpath.value.trim(),
+    (trimmed) => {
+      if (!trimmed || config.value?.mode !== 'ENCRYPTED') {
+        _manualEncodedSubpath.value = ''
+        return
+      }
+      if (_encodeTimer) clearTimeout(_encodeTimer)
+      _encodeTimer = setTimeout(async () => {
+        try {
+          const res = await FileGitService.encodePath(repoId.value, trimmed)
+          if (res.success) _manualEncodedSubpath.value = res.encoded ?? ''
+        } catch { /* non-fatal */ }
+      }, 300)
+    },
+    { immediate: true },
+  )
+
+  // Local disk path for the entered subpath
+  const manualUploadLocalPath = computed(() => {
+    const root = (config.value?.local_path ?? repo.value?.local_path ?? '').replace(/[/\\]+$/, '')
+    if (!root) return ''
+    const sub = manualSubpath.value.trim().replace(/^[/\\]+/, '').replace(/[/\\]+$/, '')
+    return sub ? `${root}/${sub}` : root
+  })
+
+  // Cloud path — for encrypted repos shows the encoded path, otherwise plain
+  const manualUploadCloudPath = computed(() => {
+    const base = finalRemotePath.value
+    if (!base) return ''
+    if (config.value?.mode === 'ENCRYPTED') {
+      return _manualEncodedSubpath.value ? `${base}/${_manualEncodedSubpath.value}` : base
+    }
+    const sub = manualSubpath.value.trim().replace(/^\/+/, '').replace(/\/+$/, '')
+    return sub ? `${base}/${sub}` : base
+  })
+
   const canManualUploadPrepare = computed(() =>
     !isBusy.value && !isLocked.value
   )
   const canPostManualUpload = computed(() =>
     !isBusy.value && isLocked.value && lockActionType.value === 'manual_upload'
   )
+  // Human-readable reason why Confirm is disabled (empty = enabled or no hint needed)
+  const postManualUploadHint = computed(() => {
+    if (canPostManualUpload.value) return ''
+    if (isBusy.value) return ''
+    if (!isLocked.value) return 'Run Prepare first'
+    if (lockActionType.value !== 'manual_upload') return `Locked by ${lockActionType.value}`
+    return ''
+  })
   const canPreManualDownload = computed(() =>
     !isBusy.value && !isLocked.value
   )
@@ -241,7 +348,9 @@ export function useFileGitRepoDetail() {
   // Read-only actions can run in most states
   const canDiff = computed(() => !isBusy.value)
   const canRebuildLocal = computed(() => !isBusy.value)
-  const canRebuildCloud = computed(() => !isBusy.value && !isLocked.value)
+  const canRebuildCloud = computed(() =>
+    !isBusy.value && (!isLocked.value || lockActionType.value === 'manual_upload')
+  )
   const canCleanup = computed(() => !isBusy.value)
 
   // ------------------------------------------------------------------
@@ -357,9 +466,21 @@ export function useFileGitRepoDetail() {
   const push = () => _pushWithDryRun()
   const pull = () => _pullWithDryRun()
 
+  function _fmtEta(sec: number): string {
+    if (sec < 60) return `${Math.round(sec)}s`
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
+    return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+  }
+
   function startProgressTracking(operation: string) {
     progressItems.value = []
+    prepareProgress.value = null
+    _prepareStartMs.value = 0
     fileGitWS.connect()
+    // Clear any stale listeners before registering new ones — prevents duplicate
+    // streams when startProgressTracking is called more than once (e.g. onMounted
+    // then again on button click).
+    fileGitWS.off(repoId.value)
     fileGitWS.onProgress(repoId.value, (evt) => {
       progressVisible.value = true
       if (evt.phase === 'queue') {
@@ -385,6 +506,27 @@ export function useFileGitRepoDetail() {
           progressItems.value.push({ path: label, action: operation, status: 'active', detail: evt.message })
         }
       }
+      // Update inline progress bar for manual_upload — only accept events that
+      // move forward (same total + higher current, or a different total = new run).
+      if (evt.current > 0 && evt.total > 0) {
+        const prev = prepareProgress.value
+        const sameRun = prev && prev.total === evt.total
+        if (!sameRun || evt.current >= prev.current) {
+          const now = Date.now()
+          if (!sameRun) _prepareStartMs.value = now
+          if (_prepareStartMs.value === 0) _prepareStartMs.value = now
+          const elapsed = (now - _prepareStartMs.value) / 1000
+          const rate = elapsed > 0 ? evt.current / elapsed : 0
+          const etaSec = rate > 0 ? (evt.total - evt.current) / rate : null
+          prepareProgress.value = {
+            current: evt.current,
+            total: evt.total,
+            pct: evt.percentage,
+            currentFile: evt.message.replace(/^ENCRYPT /, ''),
+            eta: etaSec !== null ? _fmtEta(etaSec) : null,
+          }
+        }
+      }
     })
     fileGitWS.onStatus(repoId.value, (evt) => {
       // Only update visual state — runAction's finally handles isBusy and data reload
@@ -397,6 +539,9 @@ export function useFileGitRepoDetail() {
   function _finishProgressTracking() {
     fileGitWS.off(repoId.value)
     progressItems.value.forEach(i => { if (i.status === 'active') i.status = 'done' })
+    if (prepareProgress.value) {
+      prepareProgress.value = { ...prepareProgress.value, current: prepareProgress.value.total, pct: 100, eta: null }
+    }
   }
 
   async function _pushWithDryRun() {
@@ -455,14 +600,76 @@ export function useFileGitRepoDetail() {
 
   const resume = () => runAction('Resume', () => FileGitService.resume(repoId.value))
 
-  const manualUpload = () => runAction(
-    'Manual Upload',
-    () => FileGitService.manualUpload(repoId.value, manualSubpath.value.trim()),
-  )
-  const postManualUpload = () => runAction(
-    'Post Manual Upload',
-    () => FileGitService.postManualUpload(repoId.value),
-  )
+  async function pause() {
+    try {
+      const res = await FileGitService.pause(repoId.value)
+      ElMessage.info(res.message || 'Pause signal sent')
+      await loadStatus()
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Pause failed')
+    }
+  }
+
+  async function unpause() {
+    try {
+      const res = await FileGitService.unpause(repoId.value)
+      ElMessage.success(res.message || 'Unpaused')
+      await loadStatus()
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Unpause failed')
+    }
+  }
+
+  async function stop() {
+    const isPausedNow = queue.value?.paused === true
+    const isRateLimitedNow = Boolean(queue.value?.rate_limited_until)
+    let confirmMsg: string
+    if (isRateLimitedNow) {
+      confirmMsg = 'Stop will cancel the rate-limited action. The sync state will be finalized automatically when the Baidu rate limit clears. Remaining items will be re-detected on the next push/pull.'
+    } else if (isPausedNow) {
+      confirmMsg = 'Stop will finalize what has been synced so far and release the lock.'
+    } else {
+      confirmMsg = 'Stop will finalize what has been synced so far and release the lock. Remaining items will be processed on the next push/pull.'
+    }
+    try {
+      await ElMessageBox.confirm(confirmMsg, 'Stop sync?', {
+        confirmButtonText: 'Stop', cancelButtonText: 'Cancel', type: 'warning',
+      })
+    } catch {
+      return
+    }
+    try {
+      const res = await FileGitService.stop(repoId.value)
+      ElMessage.info(res.message || 'Stop signal sent')
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Stop failed')
+    }
+    await loadStatus()
+  }
+
+  const manualUpload = () => {
+    startProgressTracking('manual_upload')
+    return runAction(
+      'Manual Upload',
+      () => FileGitService.manualUpload(repoId.value, manualSubpath.value.trim()),
+      _finishProgressTracking,
+    )
+  }
+  const postManualUpload = () => {
+    confirmResult.value = null
+    return runAction(
+      'Post Manual Upload',
+      () => FileGitService.postManualUpload(repoId.value),
+      (res: any) => {
+        confirmResult.value = {
+          ok: true,
+          confirmed: res.confirmed ?? 0,
+          missing: res.missing ?? [],
+          message: res.message || '',
+        }
+      },
+    )
+  }
   const preManualDownload = () => runAction(
     'Pre Manual Download',
     () => FileGitService.preManualDownload(repoId.value),
@@ -505,27 +712,21 @@ export function useFileGitRepoDetail() {
 
   async function rebuildCloudIndex() {
     if (isBusy.value) return
-    // Estimate first
-    isBusy.value = true
+    // Show confirm dialog immediately — no cloud pre-flight needed.
+    const remotePath = config.value?.remote_path ?? repo.value?.name ?? '(remote)'
     try {
-      const est = await FileGitService.estimateRebuildCloudIndex(repoId.value)
-      if (!est.success) {
-        ElMessage.error(est.error || 'Failed to estimate')
-        return
-      }
-      const count = est.approximate_file_count ?? 0
-      const remoteRoot = est.remote_root ?? '?'
       await ElMessageBox.confirm(
-        `This will list all files under "${remoteRoot}" (~${count} entries) and rebuild cloud_index.json. It hits the cloud API ${count} times. Continue?`,
+        `This will traverse all files under "${remotePath}" and rebuild cloud_index.json from scratch. Continue?`,
         'Rebuild Cloud Index',
         { confirmButtonText: 'Rebuild', cancelButtonText: 'Cancel', type: 'warning' },
       )
     } catch {
-      isBusy.value = false
       return // user cancelled
     }
 
-    // Confirmed — run
+    // Confirmed — run with progress tracking
+    isBusy.value = true
+    startProgressTracking('rebuild_cloud_index')
     try {
       const res = await FileGitService.rebuildCloudIndex(repoId.value)
       if (res.success) {
@@ -536,6 +737,7 @@ export function useFileGitRepoDetail() {
     } catch (e: any) {
       ElMessage.error(e.response?.data?.error || e.message || 'Rebuild failed')
     } finally {
+      _finishProgressTracking()
       isBusy.value = false
       await loadStatus()
     }
@@ -585,38 +787,44 @@ export function useFileGitRepoDetail() {
     try {
       const res = await FileGitService.getQueue(repoId.value)
       if (res.success) {
-        queueItems.value = res.items
-        queueStats.value = {
-          total: res.total,
-          done: res.done,
-          in_progress: res.in_progress,
-          error: res.error,
-          todo: res.todo,
-        }
-        // Auto-poll while items are active
-        if (res.lock && (res.in_progress > 0 || res.todo > 0)) {
-          queuePollTimer = setTimeout(loadQueue, 2000)
-        } else {
-          queuePollTimer = null
-        }
+        applyQueueUpdate(res)
       }
     } catch {
       // Non-fatal
     }
   }
 
-  function stopQueuePoll() {
-    if (queuePollTimer !== null) {
-      clearTimeout(queuePollTimer)
-      queuePollTimer = null
+  function applyQueueUpdate(res: import('../service/FileGitService').QueueResponse) {
+    if (!res.success) return
+    const prevDone = queueStats.value.done
+    queueCurrent.value = res.current ?? null
+    queueErrors.value = res.error_items ?? []
+    bytesDone.value = res.bytes_done ?? 0
+    bytesTotal.value = res.bytes_total ?? 0
+    uploadPhase.value = res.upload_phase ?? 'uploading'
+    queueStats.value = {
+      total: res.total,
+      done: res.done,
+      in_progress: res.in_progress,
+      error: res.error,
+      todo: res.todo,
+    }
+    if (res.lock && res.todo > 0) {
+      if (etaSessionStart.value === null && res.done > prevDone) {
+        etaSessionStart.value = Date.now()
+        etaSessionDone.value = prevDone
+      }
+    } else {
+      etaSessionStart.value = null
+      etaSessionDone.value = 0
     }
   }
+
+  function stopQueuePoll() { /* no-op: replaced by WebSocket */ }
 
   function goBack() {
     router.push('/file-git')
   }
-
-  // ------------------------------------------------------------------
 
   onMounted(() => {
     loadAll().then(() => {
@@ -625,9 +833,10 @@ export function useFileGitRepoDetail() {
       }
     })
     loadQueue()
+    fileGitWS.onQueue(repoId.value, applyQueueUpdate)
     loadFileLogFolders()
   })
-  onUnmounted(() => { stopQueuePoll(); fileGitWS.off(repoId.value) })
+  onUnmounted(() => { fileGitWS.off(repoId.value) })
 
   return {
     repoId,
@@ -640,6 +849,7 @@ export function useFileGitRepoDetail() {
     syncTreeRef,
     syncTreeKey,
     syncChildren,
+    syncLoading,
     loadSyncChildren,
     setSyncNodeMode,
     isLoading,
@@ -653,10 +863,19 @@ export function useFileGitRepoDetail() {
     progressVisible,
     progressHasError,
     progressActiveCount,
+    prepareProgress,
+    confirmResult,
     canPushPull,
     canResume,
+    canPause,
+    canStop,
+    isPaused,
+    isRateLimited,
+    rateLimitedUntil,
+    etaSeconds,
     canManualUploadPrepare,
     canPostManualUpload,
+    postManualUploadHint,
     canPreManualDownload,
     canPostManualDownload,
     canDiff,
@@ -673,6 +892,9 @@ export function useFileGitRepoDetail() {
     editRemotePath,
     editHookDays,
     manualSubpath,
+    manualUploadRemotePath,
+    manualUploadLocalPath,
+    manualUploadCloudPath,
     loadAll,
     loadStatus,
     loadConfig,
@@ -680,6 +902,9 @@ export function useFileGitRepoDetail() {
     push,
     pull,
     resume,
+    pause,
+    unpause,
+    stop,
     manualUpload,
     postManualUpload,
     preManualDownload,
@@ -695,7 +920,11 @@ export function useFileGitRepoDetail() {
     filesLoading,
     loadFileTreeChildren,
     refreshFileTree,
-    queueItems,
+    queueCurrent,
+    queueErrors,
+    bytesDone,
+    bytesTotal,
+    uploadPhase,
     queueStats,
     loadQueue,
     fileLogFolders,

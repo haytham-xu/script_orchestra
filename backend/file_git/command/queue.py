@@ -74,10 +74,28 @@ def command_queue(repo_id: str, progress: Optional[ProgressFn] = None) -> QueueR
             new_local = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
             IndexService.save_local_index(ctx.repo_root, new_local)
 
-        # Release only if the queue is now empty; otherwise leave locked
-        # so the user can resume again.
+        elif action_type == "apply_filter":
+            # Rebuild local + cloud indices and upload cloud_index
+            from .apply_filter import _rebuild_cloud_index_after_apply
+            from ..service import sync_filter_service as SyncFilterService
+            final_local = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
+            IndexService.save_local_index(ctx.repo_root, final_local)
+            old_cloud = IndexService.load_cloud_index(ctx.repo_root)
+            filt = SyncFilterService.load(ctx.repo_root)
+            new_cloud = _rebuild_cloud_index_after_apply(ctx, final_local, old_cloud, filt)
+            IndexService.save_cloud_index(ctx.repo_root, new_cloud)
+            if progress:
+                progress("cloud_index", 0, 0, "uploading cloud_index")
+            _upload_cloud_index(ctx, new_cloud)
+
+        # Release only if the queue is now empty OR the user explicitly stopped the
+        # action.  A "stopped" drain is a clean intentional termination — remaining
+        # TODO items are discarded (the next push/pull will re-detect them via diff).
         final_state = QueueService.load(ctx.repo_root)
-        if not final_state.queue:
+        ctrl = QueueService.read_control(ctx.repo_root)
+        was_stopped = ctrl.get("stopped", False)
+
+        if not final_state.queue or was_stopped:
             QueueService.release(ctx.repo_root)
             RepositoryManager.update_status(ctx.repo_id, "ready")
             RepositoryManager.update_last_updated(ctx.repo_id)
@@ -90,7 +108,7 @@ def command_queue(repo_id: str, progress: Optional[ProgressFn] = None) -> QueueR
             )
 
         return QueueResult(
-            ok=counters.errors == 0 and not final_state.queue,
+            ok=was_stopped or (counters.errors == 0 and not final_state.queue),
             counters=counters,
             message=summary,
             action_folder=action_folder,
@@ -130,6 +148,7 @@ def _cloud_index_after_resume(
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:
     payload = IndexService.serialize_cloud_index_for_upload(cloud_index, key=ctx.key)
     ctx.storage.upload(io.BytesIO(payload), ctx.cloud_index_remote_path(), len(payload))
+    IndexService.touch_cloud_index_synced_at(ctx.repo_root)
 
 
 def _summarize(action_type: str, counters: ConsumeCounters, resumed: bool) -> str:

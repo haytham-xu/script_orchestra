@@ -139,10 +139,7 @@ def command_apply_filter(
                     mode, status, False, True, ActionType.DOWNLOAD.value,
                 )
             else:
-                LoggerService.log_file_state(
-                    ctx.repo_root, action_folder, mp,
-                    mode, status, in_local, in_cloud, "skip", "ok", "no action needed",
-                )
+                pass  # no action needed — intentionally not logged to keep file_log small
 
         QueueService.save(ctx.repo_root, state)
 
@@ -259,8 +256,10 @@ def _rebuild_cloud_index_after_apply(
         mp = entry.get("middle_path", "")
         mode = SyncFilterService.get_mode(filt, mp)
         if mode == "synced":
-            if k in unfinished_keys and k in old_cloud_index:
-                new_cloud[k] = old_cloud_index[k]
+            if k in unfinished_keys:
+                if k in old_cloud_index:
+                    new_cloud[k] = old_cloud_index[k]
+                # else: queued for upload but not yet processed — not on cloud — skip
             else:
                 new_cloud[k] = entry
 

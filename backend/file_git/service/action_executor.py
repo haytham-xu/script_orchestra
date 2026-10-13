@@ -29,9 +29,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..cloud.base import CloudStorage
+from ..cloud import RateLimitError
 from ..crypto import AesGcmDecryptStream, AesGcmEncryptStream
 from .queue_service import ActionType, QueueItem
 from .trash_service import TrashService
+from . import upload_progress
 
 
 BUFFER_DIRNAME = "buffer"
@@ -93,6 +95,8 @@ class ActionExecutor:
             if action == ActionType.REMOTE_TRASH.value:
                 return self._remote_trash(item)
             return ActionOutcome(False, f"unknown action: {action!r}")
+        except RateLimitError:
+            raise  # propagate to consume_queue for special handling
         except Exception as exc:
             return ActionOutcome(False, f"{type(exc).__name__}: {exc}")
 
@@ -108,9 +112,17 @@ class ActionExecutor:
         buffer_full = self._buffer_path(encoded_path)
 
         # Step 1: prepare payload in buffer (encrypt on demand).
-        # If already present (crash-resume), skip re-encrypt.
+        # If already present and valid (crash-resume), skip re-encrypt.
+        # A partially-written buffer (< 33 bytes) is corrupt and must be discarded.
+        _AES_GCM_MIN = 33  # 4 body_len + 12 nonce + ≥1 ciphertext + 16 GCM tag
         if self.mode == "ENCRYPTED":
-            if not os.path.isfile(buffer_full):
+            buf_valid = (
+                os.path.isfile(buffer_full)
+                and os.path.getsize(buffer_full) >= _AES_GCM_MIN
+            )
+            if not buf_valid:
+                if os.path.isfile(buffer_full):
+                    os.remove(buffer_full)
                 os.makedirs(os.path.dirname(buffer_full), exist_ok=True)
                 with open(local_full, "rb") as src, open(buffer_full, "wb") as dst:
                     enc = AesGcmEncryptStream(src, self.key)  # type: ignore[arg-type]
@@ -120,10 +132,21 @@ class ActionExecutor:
             # ORIGINAL: upload from local directly (no buffer needed)
             upload_source_path = local_full
 
-        # Step 2: upload
+        # Step 2: upload — track progress via on_chunk_sent (fires after each
+        # chunk is actually transmitted, not when read from disk)
         size = os.path.getsize(upload_source_path)
+        repo_root = self.repo_root
+        def _on_chunk(n: int) -> None:
+            upload_progress.update_bytes(repo_root, n)
+        def _on_prepare_start() -> None:
+            upload_progress.set_phase(repo_root, "preparing")
+        def _on_prepare_done() -> None:
+            upload_progress.set_phase(repo_root, "uploading")
         with open(upload_source_path, "rb") as src:
-            self.storage.upload(src, self._remote_full(encoded_path), size)
+            self.storage.upload(src, self._remote_full(encoded_path), size,
+                                on_chunk_sent=_on_chunk,
+                                on_prepare_start=_on_prepare_start,
+                                on_prepare_done=_on_prepare_done)
 
         # Step 3: clear buffer entry (ENCRYPTED only)
         if self.mode == "ENCRYPTED" and os.path.isfile(buffer_full):
@@ -178,6 +201,7 @@ class ActionExecutor:
 
     def _remote_trash(self, item: QueueItem) -> ActionOutcome:
         """Move file to .fgit/_trash/<YYYYMMDD>/ on the remote instead of deleting."""
+        import tempfile
         from datetime import date
         encoded_path = item["encoded_path"]
         today = date.today().strftime("%Y%m%d")
@@ -185,15 +209,22 @@ class ActionExecutor:
         trash_path = f".fgit/_trash/{today}/{filename}"
         remote_src = self._remote_full(encoded_path)
         remote_dst = f"{self.remote_root}/{trash_path}"
-        # Download then re-upload to simulate a move (most cloud APIs lack native move)
-        buf = __import__("io").BytesIO()
+        # Use a temp file so we never hold the whole file in RAM.
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix="fgit_trash_")
         try:
-            self.storage.download(remote_src, buf)
-        except FileNotFoundError:
-            # File already absent from remote — target state achieved (idempotent).
-            return ActionOutcome(True, "remote file already absent (idempotent)")
-        payload = buf.getvalue()
-        self.storage.upload(__import__("io").BytesIO(payload), remote_dst, len(payload))
+            with os.fdopen(tmp_fd, "wb") as tmp_f:
+                try:
+                    self.storage.download(remote_src, tmp_f)
+                except FileNotFoundError:
+                    return ActionOutcome(True, "remote file already absent (idempotent)")
+            size = os.path.getsize(tmp_path)
+            with open(tmp_path, "rb") as src:
+                self.storage.upload(src, remote_dst, size)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
         self.storage.delete(remote_src)
         return ActionOutcome(True, f"cloud-trashed → {trash_path}")
 

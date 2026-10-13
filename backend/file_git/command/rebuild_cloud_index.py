@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import List
 
 from ..service import IndexService
+from ..websocket_service import emit_progress
 from .context import RepoContext, build_context
 
 
@@ -77,18 +78,18 @@ def command_rebuild_cloud_index(repo_id: str) -> RebuildCloudIndexResult:
     old_index = IndexService.load_cloud_index(ctx.repo_root)
     reverse = {v["encoded_path"]: v["middle_path"] for v in old_index.values()}
 
+    # Use existing cloud_index size as estimated total for progress display.
+    estimated_total = max(len(old_index), 1)
     new_index: dict = {}
     unknown: List[str] = []
+    norm_root = ctx.storage.to_listing_key(ctx.remote_root).rstrip("/")
 
+    # Collect ALL entries before touching disk; if list_files raises (e.g. Baidu
+    # rate-limit exhausted mid-traversal) the old cloud_index is left intact.
+    count = 0
     for meta in ctx.storage.list_files(ctx.remote_root):
         remote_path = meta["remote_path"]
-        # Strip remote_root prefix + optional leading / (normalize both sides
-        # to avoid mismatches when storage returns paths with a leading "/" but
-        # ctx.remote_root was stored without one).
-        # Use to_listing_key so root_prefix-stripping backends (Baidu) are
-        # handled the same way as the listing output.
         norm_path = remote_path.lstrip("/")
-        norm_root = ctx.storage.to_listing_key(ctx.remote_root).rstrip("/")
         relative = norm_path[len(norm_root):].lstrip("/") if norm_root and norm_path.startswith(norm_root) else norm_path
         if not relative or relative.startswith(".fgit/"):
             continue
@@ -100,9 +101,6 @@ def command_rebuild_cloud_index(repo_id: str) -> RebuildCloudIndexResult:
             if middle_path is None:
                 middle_path = f"UNKNOWN_{hashlib.md5(relative.encode()).hexdigest()[:8]}"
                 unknown.append(relative)
-            # Use the plaintext size from old_index if available; the cloud
-            # stores ciphertext so meta["size"] would be the encrypted size,
-            # not the plaintext size we compare against local_index.
             old_entry = old_index.get(hashlib.md5(middle_path.encode("utf-8")).hexdigest())
             size = old_entry["size"] if old_entry else meta["size"]
         else:
@@ -115,8 +113,13 @@ def command_rebuild_cloud_index(repo_id: str) -> RebuildCloudIndexResult:
             "encoded_path": encoded_path,
             "size": size,
         }
+        count += 1
+        emit_progress(
+            ctx.repo_id, "rebuild_cloud_index", "scan",
+            count, estimated_total, f"SCAN {middle_path}",
+        )
 
-    # Save + upload
+    # Only overwrite once traversal completed without error.
     IndexService.save_cloud_index(ctx.repo_root, new_index)
     _upload_cloud_index(ctx, new_index)
 

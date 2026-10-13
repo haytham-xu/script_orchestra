@@ -6,7 +6,7 @@ All I/O is stream-based so encryption can pipe read→encrypt→upload
 without producing intermediate on-disk copies.
 """
 from abc import ABC, abstractmethod
-from typing import BinaryIO, Iterator, TypedDict
+from typing import BinaryIO, Callable, Iterator, Optional, TypedDict
 
 
 class FileMeta(TypedDict):
@@ -18,12 +18,26 @@ class CloudStorage(ABC):
     """Contract for a remote file store."""
 
     @abstractmethod
-    def upload(self, source: BinaryIO, remote_path: str, size: int) -> None:
+    def upload(
+        self,
+        source: BinaryIO,
+        remote_path: str,
+        size: int,
+        on_chunk_sent: Optional[Callable[[int], None]] = None,
+        on_prepare_start: Optional[Callable[[], None]] = None,
+        on_prepare_done: Optional[Callable[[], None]] = None,
+    ) -> None:
         """Upload a stream to ``remote_path``.
 
         ``size`` is the total length in bytes so the backend can allocate
         upload sessions or send correct headers. ``source`` is read to EOF.
         Overwrites any existing file at ``remote_path``.
+
+        ``on_chunk_sent(n)`` is called after each chunk is successfully
+        transmitted, where ``n`` is the byte count of that chunk.
+        ``on_prepare_start()`` / ``on_prepare_done()`` bracket any pre-upload
+        preparation phase (e.g. Baidu's per-chunk MD5 pass); backends with no
+        such phase may invoke them back-to-back or ignore them.
         """
 
     @abstractmethod

@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client'
 import { BACKEND_BASE_URL } from '@/basic/Constants'
+import type { QueueResponse } from './FileGitService'
 
 export interface ProgressEvent {
   repo_id: string
@@ -49,9 +50,14 @@ class FileGitWebSocketService {
     this.socket?.on(`repo:${repoId}:status`, cb)
   }
 
+  onQueue(repoId: string, cb: (e: QueueResponse) => void): void {
+    this.socket?.on(`repo:${repoId}:queue`, cb)
+  }
+
   off(repoId: string): void {
     this.socket?.off(`repo:${repoId}:progress`)
     this.socket?.off(`repo:${repoId}:status`)
+    this.socket?.off(`repo:${repoId}:queue`)
   }
 
   isConnected(): boolean {

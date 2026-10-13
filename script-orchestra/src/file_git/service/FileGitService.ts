@@ -49,8 +49,10 @@ export interface QueueStatus {
   lock: boolean
   action_folder: string | null
   action_type: string | null
-  pending_count: number             // items in current queue.json
-  pending_upload_count: number      // entries in pending_upload.json
+  pending_count: number
+  pending_upload_count: number
+  paused: boolean
+  rate_limited_until: number | null
 }
 
 export interface RepoStatusResponse {
@@ -182,14 +184,16 @@ export interface FileTreeResponse {
   error?: string
 }
 
-export interface QueueItem {
-  key: string
+export interface QueueCurrentItem {
   path: string
   action: string
-  status: 'TODO' | 'IN_PROGRESS' | 'DONE' | 'ERROR'
   size: number
-  retry_count: number
-  last_error?: string | null
+}
+
+export interface QueueErrorItem {
+  path: string
+  action: string
+  error: string
 }
 
 export interface QueueResponse {
@@ -197,12 +201,18 @@ export interface QueueResponse {
   lock: boolean
   action_type: string | null
   action_folder: string | null
-  items: QueueItem[]
+  paused: boolean
+  rate_limited_until: number | null
   total: number
   done: number
   in_progress: number
   error: number
   todo: number
+  current: QueueCurrentItem | null
+  bytes_done: number
+  bytes_total: number
+  upload_phase: string
+  error_items: QueueErrorItem[]
 }
 
 export interface CleanupDryRunResponse {
@@ -222,6 +232,20 @@ export interface CleanupResponse {
 }
 
 // ---- settings -------------------------------------------------------
+
+export interface RepoIndexStats {
+  file_count: number
+  folder_count: number
+  total_count: number
+  total_size: number
+}
+
+export interface RepoStatsResponse {
+  success: boolean
+  local: RepoIndexStats
+  cloud: RepoIndexStats
+  error?: string
+}
 
 export interface GlobalSettings {
   baidu_cloud?: Record<string, string>
@@ -397,6 +421,26 @@ export class FileGitService {
     return data
   }
 
+  static async pause(repoId: string): Promise<Envelope> {
+    const { data } = await axios.post(repoUrl(repoId, '/pause'))
+    return data
+  }
+
+  static async unpause(repoId: string): Promise<Envelope> {
+    const { data } = await axios.delete(repoUrl(repoId, '/pause'))
+    return data
+  }
+
+  static async stop(repoId: string): Promise<Envelope> {
+    const { data } = await axios.post(repoUrl(repoId, '/stop'))
+    return data
+  }
+
+  static async getStats(repoId: string): Promise<RepoStatsResponse> {
+    const { data } = await axios.get(repoUrl(repoId, '/stats'))
+    return data
+  }
+
   // ---- manual upload / download -------------------------------------
 
   static async manualUpload(
@@ -447,6 +491,14 @@ export class FileGitService {
 
   static async rebuildCloudIndex(repoId: string): Promise<RebuildCloudIndexResponse> {
     const { data } = await axios.post(repoUrl(repoId, '/rebuild-cloud-index'))
+    return data
+  }
+
+  static async encodePath(
+    repoId: string,
+    path: string,
+  ): Promise<{ success: boolean; encoded?: string; error?: string }> {
+    const { data } = await axios.get(repoUrl(repoId, `/encode-path?path=${encodeURIComponent(path)}`))
     return data
   }
 

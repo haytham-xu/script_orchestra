@@ -8,7 +8,7 @@ normalized so tests behave the same on POSIX and Windows.
 """
 import os
 import shutil
-from typing import BinaryIO, Iterator
+from typing import BinaryIO, Callable, Iterator, Optional
 
 from .base import CloudStorage, FileMeta
 
@@ -31,12 +31,33 @@ class MockCloudStorage(CloudStorage):
 
     # ---- CloudStorage impl --------------------------------------------
 
-    def upload(self, source: BinaryIO, remote_path: str, size: int) -> None:
+    def upload(
+        self,
+        source: BinaryIO,
+        remote_path: str,
+        size: int,
+        on_chunk_sent: Optional[Callable[[int], None]] = None,
+        on_prepare_start: Optional[Callable[[], None]] = None,
+        on_prepare_done: Optional[Callable[[], None]] = None,
+    ) -> None:
         del size  # unused; kept for interface parity
+        # Mock has no real "prepare" phase, but honour the callbacks so the
+        # progress/phase bookkeeping behaves the same as the real backend.
+        if on_prepare_start:
+            on_prepare_start()
+        if on_prepare_done:
+            on_prepare_done()
         target_path = self._to_local(remote_path)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        _CHUNK = 4 * 1024 * 1024
         with open(target_path, 'wb') as out:
-            shutil.copyfileobj(source, out)
+            while True:
+                chunk = source.read(_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
+                if on_chunk_sent:
+                    on_chunk_sent(len(chunk))
 
     def download(self, remote_path: str, target: BinaryIO) -> None:
         src = self._to_local(remote_path)

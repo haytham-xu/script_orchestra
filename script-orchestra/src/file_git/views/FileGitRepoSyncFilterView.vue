@@ -16,7 +16,7 @@
 
     <main class="fg-content">
 
-      <section class="fg-card">
+      <section class="fg-card" v-loading="syncLoading" element-loading-text="Loading…">
         <el-tree
           ref="syncTreeRef"
           :key="syncTreeKey"
@@ -45,6 +45,25 @@
               <el-tag size="small" :type="statusTagType(data.status)" class="fg-sync-status">
                 {{ data.status }}
               </el-tag>
+              <!-- Encrypted cloud path hint — only for ENCRYPTED repos -->
+              <el-tooltip
+                v-if="isEncrypted"
+                placement="top"
+                :hide-after="0"
+                effect="dark">
+                <template #content>
+                  <div class="fg-enc-tooltip">
+                    <div class="fg-enc-tooltip-label">Cloud path (encoded)</div>
+                    <div class="fg-enc-tooltip-path">{{ encodeCache[data.path] ?? 'Loading…' }}</div>
+                  </div>
+                </template>
+                <el-icon
+                  class="fg-sync-enc-icon"
+                  @mouseenter.stop="fetchEncoded(data.path)"
+                  @click.stop>
+                  <InfoFilled />
+                </el-icon>
+              </el-tooltip>
             </span>
           </template>
         </el-tree>
@@ -56,10 +75,12 @@
 </template>
 
 <script lang="ts" setup>
+import { reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
-import { ArrowLeft, Check } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, InfoFilled } from '@element-plus/icons-vue'
 import type { SyncMode } from '../service/FileGitService'
+import { FileGitService } from '../service/FileGitService'
 import ProgressPopover from '../components/ProgressPopover.vue'
 
 const router = useRouter()
@@ -67,11 +88,31 @@ const route = useRoute()
 
 const view = useFileGitRepoDetail()
 const {
-  repo, isLoading, isBusy,
-  syncTreeRef, syncTreeKey, loadSyncChildren, setSyncNodeMode,
+  repo, isLoading, isBusy, isEncrypted, repoId,
+  finalRemotePath,
+  syncTreeRef, syncTreeKey, syncLoading, loadSyncChildren, setSyncNodeMode,
   applyFilter,
   progressItems, progressVisible, progressActiveCount,
 } = view
+
+// Cache: path → full cloud path (encoded)
+const encodeCache = reactive<Record<string, string>>({})
+
+async function fetchEncoded(path: string) {
+  if (encodeCache[path] !== undefined) return
+  encodeCache[path] = 'Loading…'
+  try {
+    const res = await FileGitService.encodePath(repoId.value, path)
+    if (res.success && res.encoded) {
+      const base = finalRemotePath.value
+      encodeCache[path] = base ? `${base}/${res.encoded}` : res.encoded
+    } else {
+      encodeCache[path] = '(error)'
+    }
+  } catch {
+    encodeCache[path] = '(error)'
+  }
+}
 
 function goToDetail() {
   router.push(`/file-git/${route.params.id}`)
@@ -150,4 +191,24 @@ function modeLabel(mode: SyncMode) {
 .fg-sync-select { width: 130px; flex-shrink: 0; }
 .fg-sync-status { flex-shrink: 0; }
 .fg-sync-inherited { opacity: 0.55; }
+.fg-sync-enc-icon {
+  font-size: 13px;
+  color: #c0c4cc;
+  cursor: default;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.fg-sync-enc-icon:hover { color: #409eff; }
+.fg-enc-tooltip { line-height: 1.5; }
+.fg-enc-tooltip-label {
+  font-size: 11px;
+  opacity: 0.65;
+  margin-bottom: 2px;
+}
+.fg-enc-tooltip-path {
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+  max-width: 480px;
+}
 </style>

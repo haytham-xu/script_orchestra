@@ -132,6 +132,16 @@ def emit_status(repo_id: str, status: str, message: str = ""):
         print(f"[WebSocket] Error emitting status: {e}")
 
 
+def emit_queue_update(repo_id: str, payload: dict) -> None:
+    """Emit the full queue state snapshot to the frontend."""
+    if not SOCKETIO_AVAILABLE or socketio is None:
+        return
+    try:
+        socketio.emit(f'repo:{repo_id}:queue', {"success": True, **payload})
+    except Exception:
+        pass
+
+
 def emit_log(repo_id: str, level: str, message: str):
     """
     Emit log message to connected clients

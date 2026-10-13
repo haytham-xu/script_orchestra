@@ -23,8 +23,11 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, TypedDict
 
+from ._fsutil import atomic_write_json
+
 
 QUEUE_FILENAME = "queue.json"
+CONTROL_FILENAME = "queue_control.json"
 ACTION_DIRNAME = "action"
 
 
@@ -59,6 +62,9 @@ class QueueState:
     action_folder: Optional[str]
     action_type: Optional[str]
     queue: Dict[str, QueueItem]
+    paused: bool = False
+    rate_limited_until: Optional[float] = None
+    done_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +72,9 @@ class QueueState:
             "action_folder": self.action_folder,
             "action_type": self.action_type,
             "queue": self.queue,
+            "paused": self.paused,
+            "rate_limited_until": self.rate_limited_until,
+            "done_count": self.done_count,
         }
 
     @classmethod
@@ -79,6 +88,9 @@ class QueueState:
             action_folder=data.get("action_folder"),
             action_type=data.get("action_type"),
             queue=data.get("queue") or {},
+            paused=data.get("paused", False),
+            rate_limited_until=data.get("rate_limited_until"),
+            done_count=data.get("done_count", 0),
         )
 
 
@@ -96,8 +108,74 @@ class QueueService:
         return os.path.join(repo_root, ".fgit", QUEUE_FILENAME)
 
     @staticmethod
+    def _control_path(repo_root: str) -> str:
+        return os.path.join(repo_root, ".fgit", CONTROL_FILENAME)
+
+    @staticmethod
     def _action_root(repo_root: str) -> str:
         return os.path.join(repo_root, ".fgit", ACTION_DIRNAME)
+
+    # ---- control file (tiny: paused / rate_limited_until) ------------
+    #
+    # The drain loop (consume_queue) owns queue.json in memory for the
+    # duration of an action and only persists it periodically. A separate
+    # request may want to pause it mid-drain. Routing the pause signal
+    # through the big queue.json would force the loop to re-read a
+    # 100MB+ file per item just to check one bool. Instead pause state
+    # lives in this tiny sidecar, which both sides read/write cheaply.
+
+    @staticmethod
+    def read_control(repo_root: str) -> dict:
+        """Read {paused, rate_limited_until, stopped}; defaults when the file is absent."""
+        path = QueueService._control_path(repo_root)
+        if not os.path.exists(path):
+            return {"paused": False, "rate_limited_until": None, "stopped": False}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "paused": bool(data.get("paused", False)),
+                "rate_limited_until": data.get("rate_limited_until"),
+                "stopped": bool(data.get("stopped", False)),
+            }
+        except Exception:
+            return {"paused": False, "rate_limited_until": None, "stopped": False}
+
+    @staticmethod
+    def write_control(repo_root: str, paused: bool,
+                      rate_limited_until: Optional[float]) -> None:
+        atomic_write_json(
+            QueueService._control_path(repo_root),
+            {"paused": paused, "rate_limited_until": rate_limited_until},
+        )
+
+    @staticmethod
+    def stop(repo_root: str) -> None:
+        """Signal the drain loop to stop cleanly after the current item.
+
+        The loop breaks on the next item boundary; push/pull handlers then
+        run their normal index reconciliation and release the lock.
+        """
+        ctrl = QueueService.read_control(repo_root)
+        atomic_write_json(
+            QueueService._control_path(repo_root),
+            {
+                "paused": ctrl["paused"],
+                "rate_limited_until": ctrl["rate_limited_until"],
+                "stopped": True,
+            },
+        )
+
+    @staticmethod
+    def clear_control(repo_root: str) -> None:
+        """Reset pause/rate-limit state (new action or release)."""
+        path = QueueService._control_path(repo_root)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            # best-effort; a stale control file is harmless after acquire resets it
+            QueueService.write_control(repo_root, False, None)
 
     # ---- read/write ---------------------------------------------------
 
@@ -105,15 +183,24 @@ class QueueService:
     def load(repo_root: str) -> QueueState:
         path = QueueService._queue_path(repo_root)
         if not os.path.exists(path):
-            return QueueState.empty()
-        with open(path, "r", encoding="utf-8") as f:
-            return QueueState.from_dict(json.load(f))
+            state = QueueState.empty()
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                state = QueueState.from_dict(json.load(f))
+        # Pause / rate-limit live in the tiny control sidecar and win over
+        # whatever is (or isn't) baked into queue.json. If the sidecar does
+        # not exist yet (e.g. a queue written by an older build, mid-flight
+        # across this upgrade), keep the values already parsed from queue.json
+        # so an in-progress pause is not silently lost.
+        if os.path.exists(QueueService._control_path(repo_root)):
+            ctrl = QueueService.read_control(repo_root)
+            state.paused = ctrl["paused"]
+            state.rate_limited_until = ctrl["rate_limited_until"]
+        return state
 
     @staticmethod
     def save(repo_root: str, state: QueueState) -> None:
-        path = QueueService._queue_path(repo_root)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state.to_dict(), f, indent=2, ensure_ascii=False)
+        atomic_write_json(QueueService._queue_path(repo_root), state.to_dict(), indent=2)
 
     # ---- lock / action lifecycle -------------------------------------
 
@@ -147,6 +234,7 @@ class QueueService:
             action_type=action_type,
             queue={},
         )
+        QueueService.clear_control(repo_root)
         QueueService.save(repo_root, state)
         return state
 
@@ -169,11 +257,25 @@ class QueueService:
             with open(dest, "w", encoding="utf-8") as f:
                 json.dump(state.to_dict(), f, indent=2, ensure_ascii=False)
 
+        QueueService.clear_control(repo_root)
         QueueService.save(repo_root, QueueState.empty())
 
     @staticmethod
     def is_locked(repo_root: str) -> bool:
         return QueueService.load(repo_root).lock
+
+    @staticmethod
+    def pause(repo_root: str) -> None:
+        ctrl = QueueService.read_control(repo_root)
+        QueueService.write_control(repo_root, True, ctrl["rate_limited_until"])
+
+    @staticmethod
+    def unpause(repo_root: str) -> None:
+        QueueService.write_control(repo_root, False, None)
+
+    @staticmethod
+    def set_rate_limited(repo_root: str, until: float) -> None:
+        QueueService.write_control(repo_root, True, until)
 
     @staticmethod
     def _make_action_folder(repo_root: str, action_type: str) -> str:
@@ -226,19 +328,30 @@ class QueueService:
         repo_root: str,
         state: QueueState,
         key: str,
+        *,
+        persist: bool = True,
     ) -> None:
         state.queue[key]["status"] = Status.IN_PROGRESS.value
-        QueueService.save(repo_root, state)
+        if persist:
+            QueueService.save(repo_root, state)
 
     @staticmethod
     def mark_done(
         repo_root: str,
         state: QueueState,
         key: str,
+        *,
+        persist: bool = True,
     ) -> None:
-        """Remove the item from the queue and persist."""
+        """Remove the item from the queue, increment done_count, and persist.
+
+        With ``persist=False`` the mutation stays in-memory; the caller is
+        responsible for a later ``QueueService.save`` (used by the drain loop
+        to avoid rewriting a large queue.json on every item)."""
         state.queue.pop(key, None)
-        QueueService.save(repo_root, state)
+        state.done_count += 1
+        if persist:
+            QueueService.save(repo_root, state)
 
     @staticmethod
     def mark_error(
@@ -246,12 +359,15 @@ class QueueService:
         state: QueueState,
         key: str,
         error: str,
+        *,
+        persist: bool = True,
     ) -> None:
         item = state.queue[key]
         item["status"] = Status.ERROR.value
         item["retry_count"] = item.get("retry_count", 0) + 1
         item["last_error"] = error
-        QueueService.save(repo_root, state)
+        if persist:
+            QueueService.save(repo_root, state)
 
     # ---- action-folder side files ------------------------------------
 
@@ -266,5 +382,48 @@ class QueueService:
         the action folder for audit."""
         dest_dir = QueueService.action_folder_path(repo_root, action_folder)
         os.makedirs(dest_dir, exist_ok=True)
-        with open(os.path.join(dest_dir, filename), "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(os.path.join(dest_dir, filename), data, indent=2)
+
+    @staticmethod
+    def build_payload(repo_root: str, qstate: Optional["QueueState"] = None) -> dict:
+        """Build the queue status dict used by both the REST endpoint and WS emitter."""
+        from . import upload_progress  # local import to avoid top-level cycle
+        if qstate is None:
+            qstate = QueueService.load(repo_root)
+        items = list(qstate.queue.values())
+        done = qstate.done_count
+        total = len(items) + done
+        error_count = sum(1 for i in items if i.get("status") == Status.ERROR.value)
+        todo = sum(1 for i in items if i.get("status") == Status.TODO.value)
+        in_progress_list = [i for i in items if i.get("status") == Status.IN_PROGRESS.value]
+        current_item = in_progress_list[0] if in_progress_list else None
+        current = {
+            "path": current_item.get("middle_path", current_item.get("encoded_path", "")),
+            "action": current_item.get("action", ""),
+            "size": current_item.get("size", 0),
+        } if current_item else None
+        prog = upload_progress.get(repo_root)
+        return {
+            "lock": qstate.lock,
+            "action_type": qstate.action_type,
+            "action_folder": qstate.action_folder,
+            "paused": qstate.paused,
+            "rate_limited_until": qstate.rate_limited_until,
+            "total": total,
+            "done": done,
+            "error": error_count,
+            "todo": todo,
+            "in_progress": len(in_progress_list),
+            "current": current,
+            "bytes_done": prog["bytes_done"] if prog else 0,
+            "bytes_total": prog["bytes_total"] if prog else 0,
+            "upload_phase": prog["phase"] if prog else "uploading",
+            "error_items": [
+                {
+                    "path": i.get("middle_path", ""),
+                    "action": i.get("action", ""),
+                    "error": i.get("last_error", ""),
+                }
+                for i in items if i.get("status") == Status.ERROR.value
+            ][-5:],
+        }

@@ -40,6 +40,8 @@ export const PROXY_FORWARD_ENDPOINT = '/proxy-forward'
 
 export const RELAY_PROXY_ENDPOINT = '/relay-proxy'
 
+export const CLIPBOARD_SHARE_ENDPOINT = '/clipboard-share'
+
 export const DASHBOARD_ENDPOINT = '/dashboard'
 
 export const CLEAN_KEYWORD_ENDPOINT = '/clean-keyword'

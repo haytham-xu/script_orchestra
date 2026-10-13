@@ -26,6 +26,63 @@ from typing import Optional
 from .queue_service import QueueService
 
 
+class BatchLogWriter:
+    """Keeps success.log / error.log / file_log.jsonl handles open for the
+    duration of a long drain, so a 500k-item push does three ``open()`` calls
+    instead of a million. Use via ``LoggerService.open_batch`` in a
+    ``with``/``try-finally`` block. Not thread-safe — the drain loop is the
+    only writer."""
+
+    def __init__(self, log_dir: str) -> None:
+        os.makedirs(log_dir, exist_ok=True)
+        self._success = open(os.path.join(log_dir, "success.log"), "a", encoding="utf-8")
+        self._error = open(os.path.join(log_dir, "error.log"), "a", encoding="utf-8")
+        self._file_log = open(os.path.join(log_dir, "file_log.jsonl"), "a", encoding="utf-8")
+
+    @staticmethod
+    def _tsv(action: str, middle_path: str, detail: str) -> str:
+        return "\t".join([
+            datetime.now().isoformat(timespec="seconds"),
+            action,
+            middle_path,
+            (detail or "").replace("\n", " ").replace("\t", " "),
+        ]) + "\n"
+
+    def success(self, action: str, middle_path: str, detail: str = "") -> None:
+        self._success.write(self._tsv(action, middle_path, detail))
+
+    def error(self, action: str, middle_path: str, detail: str = "") -> None:
+        self._error.write(self._tsv(action, middle_path, detail))
+
+    def file_state(self, path: str, mode: str, status: str, in_local: bool,
+                   in_remote: bool, action: str, result=None, detail: str = "") -> None:
+        record = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "path": path, "mode": mode, "status": status,
+            "in_local": in_local, "in_remote": in_remote,
+            "action": action, "result": result, "detail": detail,
+        }
+        self._file_log.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def flush(self) -> None:
+        self._success.flush()
+        self._error.flush()
+        self._file_log.flush()
+
+    def close(self) -> None:
+        for fh in (self._success, self._error, self._file_log):
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "BatchLogWriter":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 class LoggerService:
     @staticmethod
     def _log_dir(repo_root: str, action_folder: str) -> str:
@@ -54,6 +111,11 @@ class LoggerService:
         path = os.path.join(LoggerService._log_dir(repo_root, action_folder), filename)
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+    @staticmethod
+    def open_batch(repo_root: str, action_folder: str) -> "BatchLogWriter":
+        """Open a batched log writer whose handles stay open across a drain."""
+        return BatchLogWriter(LoggerService._log_dir(repo_root, action_folder))
 
     @staticmethod
     def log_success(
@@ -130,8 +192,8 @@ class LoggerService:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     @staticmethod
-    def read_file_log(repo_root: str, action_folder: str) -> list:
-        """Read all records from file_log.jsonl for a given action folder."""
+    def read_file_log(repo_root: str, action_folder: str, limit: int = 2000) -> list:
+        """Read up to `limit` most-recent records from file_log.jsonl."""
         log_path = os.path.join(
             QueueService.action_folder_path(repo_root, action_folder),
             "log", "file_log.jsonl",
@@ -147,7 +209,7 @@ class LoggerService:
                         records.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
-        return records
+        return records[-limit:]
 
     @staticmethod
     def list_action_folders(repo_root: str) -> list:

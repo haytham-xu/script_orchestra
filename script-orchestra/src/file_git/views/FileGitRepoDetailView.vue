@@ -28,7 +28,7 @@
     </header>
 
     <!-- Lock banner -->
-    <section v-if="isLocked" class="fg-banner">
+    <section v-if="isLocked && !isPaused" class="fg-banner">
       <el-icon><Lock /></el-icon>
       <div class="fg-banner-body">
         <div class="fg-banner-title">
@@ -45,6 +45,21 @@
         </div>
       </div>
       <el-button
+        v-if="canPause"
+        size="small"
+        type="warning"
+        @click="pause"
+        :loading="isBusy">
+        Pause
+      </el-button>
+      <el-button
+        v-if="canStop"
+        size="small"
+        type="danger"
+        @click="stop">
+        Stop
+      </el-button>
+      <el-button
         v-if="canResume"
         size="small"
         type="primary"
@@ -52,6 +67,31 @@
         :loading="isBusy">
         Resume
       </el-button>
+    </section>
+
+    <!-- Paused banner -->
+    <section v-if="isPaused && !isRateLimited" class="fg-banner fg-banner-paused">
+      <el-icon><VideoPause /></el-icon>
+      <div class="fg-banner-body">
+        <div class="fg-banner-title">{{ lockLabel }} paused</div>
+        <div class="fg-banner-sub">Click Resume to continue processing the queue.</div>
+      </div>
+      <el-button size="small" type="success" @click="unpause" :loading="isBusy">Resume</el-button>
+      <el-button v-if="canStop" size="small" type="danger" @click="stop">Stop</el-button>
+    </section>
+
+    <!-- Rate-limited banner -->
+    <section v-if="isRateLimited" class="fg-banner fg-banner-ratelimit">
+      <el-icon><Clock /></el-icon>
+      <div class="fg-banner-body">
+        <div class="fg-banner-title">Baidu API rate limit hit — auto-paused</div>
+        <div class="fg-banner-sub">
+          Will auto-resume {{ rateLimitedUntil ? 'at ' + formatBeijingTime(new Date(rateLimitedUntil * 1000).toISOString()) : 'in ~1 hour' }}.
+          Or click Resume to retry now.
+        </div>
+      </div>
+      <el-button size="small" type="primary" @click="unpause" :loading="isBusy">Resume Now</el-button>
+      <el-button v-if="canStop" size="small" type="danger" @click="stop">Stop</el-button>
     </section>
 
     <main class="fg-content">
@@ -68,37 +108,48 @@
         <div class="fg-files-header">
           <h2>
             Queue
-            <span class="fg-files-count">({{ queueStats.total }})</span>
+            <span class="fg-files-count">{{ queueStats.done }}/{{ queueStats.total }}</span>
           </h2>
           <div class="fg-files-toolbar">
             <el-tag v-if="queueStats.in_progress > 0" type="warning" size="small">{{ queueStats.in_progress }} active</el-tag>
             <el-tag v-if="queueStats.error > 0" type="danger" size="small">{{ queueStats.error }} errors</el-tag>
-            <el-tag v-if="queueStats.done > 0" type="success" size="small">{{ queueStats.done }} done</el-tag>
             <el-button size="small" :icon="Refresh" @click="loadQueue">Refresh</el-button>
           </div>
         </div>
+
+        <!-- Overall progress bar -->
         <el-progress
           v-if="queueStats.total > 0"
           :percentage="Math.round((queueStats.done / queueStats.total) * 100)"
           :status="queueStats.error > 0 ? 'exception' : queueStats.done === queueStats.total ? 'success' : undefined"
-          style="margin-bottom:10px" />
-        <div class="fg-files-list" style="max-height:300px">
-          <div
-            v-for="item in queueItems"
-            :key="item.key"
-            class="fg-file-row">
-            <span class="fg-queue-status" :class="`fg-q-${item.status.toLowerCase()}`">
-              {{ item.status === 'IN_PROGRESS' ? '⟳' : item.status === 'DONE' ? '✓' : item.status === 'ERROR' ? '✗' : '·' }}
-            </span>
-            <span class="fg-file-path mono">{{ item.path }}</span>
-            <span class="fg-queue-action">{{ item.action }}</span>
-            <span class="fg-size">{{ formatSize(item.size) }}</span>
+          :format="() => etaSeconds !== null && etaSeconds > 0 ? `${queueStats.done} / ${queueStats.total} · ETA ${formatEta(etaSeconds)}` : `${queueStats.done} / ${queueStats.total}`"
+          style="margin-bottom:6px" />
+
+        <!-- Current file in progress -->
+        <div v-if="queueCurrent" class="fg-current-file">
+          <div class="fg-current-header">
+            <span class="fg-current-action">{{ queueCurrent.action }}</span>
+            <span class="fg-file-path mono">{{ queueCurrent.path }}</span>
           </div>
-          <div v-if="queueItems.length === 0" class="fg-files-empty">No queued items.</div>
+          <el-progress
+            v-if="bytesTotal > 0 && uploadPhase !== 'preparing'"
+            :percentage="Math.round((bytesDone / bytesTotal) * 100)"
+            :format="() => `${formatSize(bytesDone)} / ${formatSize(bytesTotal)}`"
+            style="margin-top:4px" />
+          <div v-else-if="bytesTotal > 0 && uploadPhase === 'preparing'" class="fg-current-in-progress">computing checksum…</div>
+          <div v-else class="fg-current-in-progress">processing…</div>
         </div>
-        <div v-if="queueItems.some(i => i.last_error)" style="margin-top:8px">
-          <div v-for="item in queueItems.filter(i => i.last_error)" :key="'e_'+item.key" class="fg-queue-error">
-            <span class="mono">{{ item.path }}</span>: {{ item.last_error }}
+        <div v-else-if="queueStats.in_progress > 0" class="fg-current-file fg-current-placeholder">
+          processing…
+        </div>
+
+        <!-- Error list (collapsed to last 5) -->
+        <div v-if="queueErrors.length > 0" class="fg-error-list">
+          <div class="fg-error-header">Errors ({{ queueStats.error }})</div>
+          <div v-for="(err, i) in queueErrors" :key="i" class="fg-error-row">
+            <span class="fg-queue-action">{{ err.action }}</span>
+            <span class="fg-file-path mono">{{ err.path }}</span>
+            <span class="fg-inline-error" :title="err.error">{{ err.error }}</span>
           </div>
         </div>
       </section>
@@ -218,6 +269,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
   ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting, Tools, Filter, QuestionFilled,
+  VideoPause, Clock,
 } from '@element-plus/icons-vue'
 import ProgressPopover from '../components/ProgressPopover.vue'
 
@@ -230,14 +282,14 @@ const view = useFileGitRepoDetail()
 const {
   repo, queue, isLoading, isBusy,
   isLocked, lockActionType, pendingUploadCount, pendingQueueCount,
-  canPushPull, canResume,
+  canPushPull, canResume, canPause, canStop, isPaused, isRateLimited, rateLimitedUntil, etaSeconds,
   repoId,
   cloudIndexSyncedAt,
   loadAll,
-  push, pull, resume,
+  push, pull, resume, pause, unpause, stop,
   openFolder, goBack,
   fileTreeKey, filesLoading, loadFileTreeChildren, refreshFileTree,
-  queueItems, queueStats, loadQueue,
+  queueCurrent, queueErrors, bytesDone, bytesTotal, uploadPhase, queueStats, loadQueue,
   progressItems, progressVisible, progressActiveCount,
 } = view
 
@@ -285,6 +337,17 @@ function formatBeijingTime(iso: string): string {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   })
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.ceil(seconds % 60)}s`
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (seconds < 86400) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  const d = Math.floor(seconds / 86400)
+  const rh = Math.floor((seconds % 86400) / 3600)
+  return rh >= 6 ? `${d}d` : rh > 0 ? `${d}d ${rh}h` : `${d}d`
 }
 
 function formatRelTime(iso: string): string {
@@ -352,6 +415,46 @@ function formatRelTime(iso: string): string {
   color: #7a5a00;
   margin-top: 2px;
 }
+.fg-banner-paused {
+  background: #e8f4fd;
+  border-color: #7ec8e3;
+}
+.fg-banner-paused .fg-banner-title,
+.fg-banner-paused .fg-banner-sub { color: #1a5276; }
+.fg-banner-ratelimit {
+  background: #fdf3e8;
+  border-color: #f0a500;
+}
+.fg-banner-ratelimit .fg-banner-title,
+.fg-banner-ratelimit .fg-banner-sub { color: #7a4500; }
+.fg-eta {
+  font-size: 12px;
+  color: #86868b;
+  margin-bottom: 8px;
+}
+.fg-files-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+.fg-file-row-error {
+  background: #fff5f5;
+  border-radius: 4px;
+}
+.fg-inline-error {
+  font-size: 10px;
+  color: #ff3b30;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+.fg-files-more {
+  font-size: 11px;
+  color: #86868b;
+  text-align: center;
+  padding: 4px 0;
+}
 .fg-content {
   padding: 20px;
   display: flex;
@@ -416,6 +519,53 @@ function formatRelTime(iso: string): string {
   font-size: 11px;
   color: #ff3b30;
   padding: 2px 0;
+}
+.fg-current-file {
+  background: #f5f5f7;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+.fg-current-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.fg-current-action {
+  font-size: 11px;
+  font-weight: 600;
+  color: #007aff;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.fg-current-placeholder {
+  color: #86868b;
+  font-size: 12px;
+}
+.fg-current-in-progress {
+  font-size: 12px;
+  color: #86868b;
+  margin-top: 4px;
+}
+.fg-error-list {
+  margin-top: 8px;
+  border-top: 1px solid #e5e5ea;
+  padding-top: 6px;
+}
+.fg-error-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ff3b30;
+  margin-bottom: 4px;
+}
+.fg-error-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 12px;
+  overflow: hidden;
 }
 :deep(.fg-log-error td) {
   background: #fff5f5 !important;

@@ -99,17 +99,35 @@ class BaiduCloudStorage(CloudStorage):
 
     # ---- CloudStorage impl --------------------------------------------
 
-    def upload(self, source: BinaryIO, remote_path: str, size: int) -> None:
+    def upload(
+        self,
+        source: BinaryIO,
+        remote_path: str,
+        size: int,
+        on_chunk_sent: Optional[Callable[[int], None]] = None,
+        on_prepare_start: Optional[Callable[[], None]] = None,
+        on_prepare_done: Optional[Callable[[], None]] = None,
+    ) -> None:
         path = self._full(remote_path)
-        chunks = []
+
+        # Pass 1: compute per-chunk MD5s without holding all chunks in memory.
+        # Baidu precreate needs the full block_list upfront, so we must read
+        # the file twice rather than buffering everything at once.
+        if on_prepare_start:
+            on_prepare_start()
+        md5s = []
+        chunk_sizes = []
         while True:
             c = source.read(CHUNK_SIZE)
             if not c:
                 break
-            chunks.append(c)
-        if not chunks:
-            chunks = [b""]          # allow zero-byte files
-        md5s = [hashlib.md5(c).hexdigest() for c in chunks]
+            md5s.append(hashlib.md5(c).hexdigest())
+            chunk_sizes.append(len(c))
+        if not md5s:
+            md5s = [hashlib.md5(b"").hexdigest()]
+            chunk_sizes = [0]
+        if on_prepare_done:
+            on_prepare_done()
 
         # 1) precreate
         pre = self._request_json(f"{API}/file", "POST",
@@ -120,12 +138,16 @@ class BaiduCloudStorage(CloudStorage):
             raise RuntimeError(f"precreate failed: {pre}")
         upload_id = pre["uploadid"]
 
-        # 2) superfile2 per chunk
-        for i, c in enumerate(chunks):
+        # Pass 2: seek back to start and upload one chunk at a time (max CHUNK_SIZE in RAM).
+        source.seek(0)
+        for i, expected_size in enumerate(chunk_sizes):
+            c = source.read(CHUNK_SIZE)
             self._request(f"{PCS}/superfile2", "POST",
                 params={"path": path, "uploadid": upload_id,
                         "method": "upload", "type": "tmpfile", "partseq": i},
                 files=[("file", c)])
+            if on_chunk_sent:
+                on_chunk_sent(len(c))
 
         # 3) create (merge)
         res = self._request_json(f"{API}/file", "POST",
@@ -166,31 +188,66 @@ class BaiduCloudStorage(CloudStorage):
     def exists(self, remote_path: str) -> bool:
         return self._fs_id_for(self._full(remote_path)) is not None
 
+    # errno=31034 means "hit frequency limit" — Baidu returns HTTP 200 with this
+    # code instead of 429 when the listall rate-limit is hit.  Back off and retry.
+    _LISTALL_RATE_DELAYS = [30, 60, 120, 300]
+
     def list_files(self, remote_prefix: str) -> Iterator[FileMeta]:
+        """Recursively enumerate all files under remote_prefix.
+
+        Uses the non-recursive ``list`` API at each directory level and recurses
+        into subdirectories manually.  This is more reliable than ``listall``
+        with recursion=1 which Baidu silently truncates for large directories
+        (~18k entries per call) and frequently rate-limits (errno=31034 or
+        silent empty response).
+        """
         path = self._full(remote_prefix)
+        yield from self._walk(path)
+
+    def _walk(self, full_path: str) -> Iterator[FileMeta]:
+        """DFS walk via the non-recursive list API."""
         start, limit = 0, 1000
         while True:
-            try:
-                res = self._request_json(f"{API}/multimedia", "GET",
-                    params={"method": "listall", "path": path, "web": 0,
-                            "recursion": 1, "start": start, "limit": limit})
-            except requests.HTTPError as exc:
-                # Baidu returns 400 when the directory doesn't exist yet.
-                # Treat as empty listing rather than an error.
-                if exc.response is not None and exc.response.status_code == 400:
-                    return
-                raise
+            res = self._list_page(full_path, start, limit)
+            if res is None:
+                return  # directory does not exist (HTTP 400)
+            errno = res.get("errno", 0)
+            if errno != 0:
+                raise RuntimeError(
+                    f"Baidu list_files failed: errno={errno} errmsg={res.get('errmsg', '')} path={full_path!r}"
+                )
             items = res.get("list", [])
             for it in items:
                 if it.get("isdir"):
-                    continue
-                yield FileMeta(
-                    remote_path=self._strip_root(it["path"]),
-                    size=int(it.get("size", 0)),
-                )
+                    yield from self._walk(it["path"])
+                else:
+                    yield FileMeta(
+                        remote_path=self._strip_root(it["path"]),
+                        size=int(it.get("size", 0)),
+                    )
             if len(items) < limit:
                 break
             start += limit
+
+    def _list_page(self, path: str, start: int, limit: int):
+        """Fetch one page of directory listing (non-recursive) with retry."""
+        for attempt, delay in enumerate(self._LISTALL_RATE_DELAYS + [None]):
+            try:
+                res = self._request_json(f"{API}/file", "GET",
+                    params={"method": "list", "dir": path, "web": 0,
+                            "start": start, "limit": limit})
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 400:
+                    return None  # directory does not exist
+                raise
+            errno = res.get("errno", 0)
+            if errno in (31034, 31066) and delay is not None:
+                if self._on_retry:
+                    self._on_retry(attempt + 1, delay, errno)
+                time.sleep(delay)
+                continue
+            return res
+        return res
 
     # ---- internals ----------------------------------------------------
 

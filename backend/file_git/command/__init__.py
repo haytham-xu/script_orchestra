@@ -16,6 +16,7 @@ from .rebuild_cloud_index import (
     RebuildEstimate,
 )
 from .cleanup import command_cleanup, CleanupResult
+from .stop import command_stop, StopResult
 
 __all__ = [
     "RepoContext",
@@ -32,6 +33,7 @@ __all__ = [
     "command_rebuild_cloud_index",
     "estimate_rebuild_cloud_index",
     "command_cleanup",
+    "command_stop",
     "PushResult",
     "PullResult",
     "QueueResult",
@@ -44,4 +46,5 @@ __all__ = [
     "RebuildCloudIndexResult",
     "RebuildEstimate",
     "CleanupResult",
+    "StopResult",
 ]

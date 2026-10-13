@@ -175,34 +175,31 @@ def _entries(index: dict) -> List[str]:
 
 
 def list_children(repo_root: str, parent: str = "") -> List[dict]:
-    """Return direct children (one level) under parent middle-path.
+    """Return direct children (one level) under parent, lazily loaded.
 
-    Each child: { name, path, is_dir, in_local, in_remote, mode, status, can_set }
+    Local entries: reads only the target directory with os.listdir — O(1) regardless
+    of repo size. No full tree scan.
+    Remote entries: derived from the cloud index JSON file (one read per call).
     """
     parent = _norm(parent)
-    local, cloud = _both_indexes(repo_root)
     filt = load(repo_root)
 
-    local_paths = _entries(local)
-    cloud_paths = _entries(cloud)
-
-    def direct_children(paths: List[str]) -> Dict[str, bool]:
-        out: Dict[str, bool] = {}
-        prefix = parent + "/" if parent else ""
-        for mp in paths:
-            if parent and not mp.startswith(prefix):
+    # Local: only read the directory being expanded
+    if parent:
+        local_dir = os.path.join(repo_root, parent.replace("/", os.sep))
+    else:
+        local_dir = repo_root
+    loc_children: Dict[str, bool] = {}
+    if os.path.isdir(local_dir):
+        for name in os.listdir(local_dir):
+            if name == ".fgit" or name.startswith("."):
                 continue
-            rest = mp[len(prefix):] if prefix else mp
-            if not rest:
-                continue
-            head = rest.split("/", 1)
-            name = head[0]
-            is_dir = len(head) > 1
-            out[name] = out.get(name, False) or is_dir
-        return out
+            loc_children[name] = os.path.isdir(os.path.join(local_dir, name))
 
-    loc_children = direct_children(local_paths)
-    cld_children = direct_children(cloud_paths)
+    # Remote: cloud index is a single JSON file
+    cloud_index = IndexService.load_cloud_index(repo_root)
+    cloud_paths = _entries(cloud_index)
+    cld_children = _direct_children_map(cloud_paths, parent)
 
     names = sorted(set(loc_children) | set(cld_children))
     result: List[dict] = []
@@ -210,13 +207,10 @@ def list_children(repo_root: str, parent: str = "") -> List[dict]:
         child_path = f"{parent}/{name}" if parent else name
         in_local = name in loc_children
         in_remote = name in cld_children
+        is_dir = loc_children.get(name, False) or cld_children.get(name, False)
         mode = get_mode(filt, child_path)
         status = get_status(filt, child_path, in_local, in_remote)
-        is_dir = loc_children.get(name, False) or cld_children.get(name, False)
-
-        # Determine which modes are allowed as overrides for this child
         can_set = _allowed_overrides(filt, child_path, in_local, in_remote)
-
         result.append({
             "name": name,
             "path": child_path,
@@ -228,6 +222,23 @@ def list_children(repo_root: str, parent: str = "") -> List[dict]:
             "can_set": can_set,
         })
     return result
+
+
+def _direct_children_map(paths: List[str], parent: str) -> Dict[str, bool]:
+    """Extract direct children from a flat list of middle_paths."""
+    out: Dict[str, bool] = {}
+    prefix = parent + "/" if parent else ""
+    for mp in paths:
+        if parent and not mp.startswith(prefix):
+            continue
+        rest = mp[len(prefix):] if prefix else mp
+        if not rest:
+            continue
+        head = rest.split("/", 1)
+        name = head[0]
+        is_dir = len(head) > 1
+        out[name] = out.get(name, False) or is_dir
+    return out
 
 
 def _allowed_overrides(filt: dict, mp: str, in_local: bool, in_remote: bool) -> List[str]:

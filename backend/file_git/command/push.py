@@ -86,6 +86,7 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None,
         # Step 5: enqueue
         state = QueueService.load(ctx.repo_root)
         cloud_mp_set = {e.get("middle_path", "") for e in cloud_index.values()}
+        skipped = 0
         for entry in diff.added + diff.modified:
             mp = entry["middle_path"]
             mode = SyncFilterService.get_mode(filt, mp)
@@ -93,10 +94,7 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None,
             status = SyncFilterService.get_status(filt, mp, True, in_remote)
             action = ActionType.UPLOAD.value
             if mode != "synced":
-                LoggerService.log_file_state(
-                    ctx.repo_root, action_folder, mp,
-                    mode, status, True, in_remote, "skip", "ok", "skipped by sync filter",
-                )
+                skipped += 1  # not logged per-file — summarized below (keeps logs small)
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
@@ -120,10 +118,7 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None,
             status = SyncFilterService.get_status(filt, mp, in_local, True)
             action = ActionType.REMOTE_TRASH.value
             if mode != "synced":
-                LoggerService.log_file_state(
-                    ctx.repo_root, action_folder, mp,
-                    mode, status, in_local, True, "skip", "ok", "skipped by sync filter",
-                )
+                skipped += 1  # not logged per-file — summarized below (keeps logs small)
                 continue
             key_hash = _key_for(entry)
             QueueService.enqueue(state, key_hash, {
@@ -135,6 +130,11 @@ def command_push(repo_id: str, progress: Optional[ProgressFn] = None,
             LoggerService.log_file_state(
                 ctx.repo_root, action_folder, mp,
                 mode, status, in_local, True, action,
+            )
+        if skipped:
+            LoggerService.log_success(
+                ctx.repo_root, action_folder, "SKIP_SUMMARY", "-",
+                f"{skipped} files skipped by sync filter (not synced)",
             )
         QueueService.save(ctx.repo_root, state)
 

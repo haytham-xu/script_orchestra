@@ -9,6 +9,7 @@ Endpoints:
     /file-git/repos/<id>/push                POST — CommandService.push
     /file-git/repos/<id>/pull                POST — CommandService.pull
     /file-git/repos/<id>/resume              POST — CommandService.queue
+    /file-git/repos/<id>/stop                POST — stop active drain cleanly
     /file-git/repos/<id>/config              GET, PUT — read/patch .fgit/config.json
     /file-git/settings                       GET, PUT — global settings
 """
@@ -25,6 +26,7 @@ from .command import (
     command_pull,
     command_push,
     command_queue,
+    command_stop,
     command_manual_upload,
     command_post_manual_upload,
     command_pre_manual_download,
@@ -52,6 +54,10 @@ def _ok(payload: dict) -> tuple:
 
 def _err(msg: str, status: int = 500) -> tuple:
     return {"success": False, "error": msg}, status
+
+
+def _build_queue_payload(repo_root: str, qstate=None) -> dict:
+    return QueueService.build_payload(repo_root, qstate)
 
 
 
@@ -181,30 +187,10 @@ class RepoQueueResource(Resource):
             repo = RepositoryManager.get_repo_by_id(repo_id)
             if not repo:
                 return _err("Repository not found", 404)
-            qstate = QueueService.load(repo['local_path'])
-            items = [
-                {
-                    "key": k,
-                    "path": v.get("middle_path", v.get("encoded_path", k)),
-                    "action": v.get("action", ""),
-                    "status": v.get("status", ""),
-                    "size": v.get("size", 0),
-                    "retry_count": v.get("retry_count", 0),
-                    "last_error": v.get("last_error"),
-                }
-                for k, v in qstate.queue.items()
-            ]
-            return _ok({
-                "lock": qstate.lock,
-                "action_type": qstate.action_type,
-                "action_folder": qstate.action_folder,
-                "items": items,
-                "total": len(items),
-                "done": sum(1 for i in items if i["status"] == "DONE"),
-                "in_progress": sum(1 for i in items if i["status"] == "IN_PROGRESS"),
-                "error": sum(1 for i in items if i["status"] == "ERROR"),
-                "todo": sum(1 for i in items if i["status"] == "TODO"),
-            })
+            payload = _build_queue_payload(repo['local_path'], qstate=None)
+            return _ok(payload)
+        except Exception as exc:
+            return _err(str(exc))
         except Exception as exc:
             return _err(str(exc))
 
@@ -240,6 +226,8 @@ class RepoStatusResource(Resource):
                     "action_type": qstate.action_type,
                     "pending_count": len(qstate.queue),
                     "pending_upload_count": pending_upload_count,
+                    "paused": qstate.paused,
+                    "rate_limited_until": qstate.rate_limited_until,
                 },
                 "cloud_index_synced_at": IndexService.get_cloud_index_synced_at(
                     repo['local_path']
@@ -303,7 +291,7 @@ class RepoConfigResource(Resource):
 class RepoPushResource(Resource):
     def post(self, repo_id):
         try:
-            upload_only = (request.json or {}).get("upload_only", False)
+            upload_only = (request.get_json(silent=True) or {}).get("upload_only", False)
             def _progress(phase, current, total, message):
                 emit_progress(repo_id, 'push', phase, current, total, message)
             result = command_push(repo_id, progress=_progress, upload_only=upload_only)
@@ -370,6 +358,63 @@ class RepoResumeResource(Resource):
             return _err(str(exc), 404)
         except ValueError as exc:
             return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+
+@ns.route('/file-git/repos/<string:repo_id>/pause')
+class RepoPauseResource(Resource):
+    def post(self, repo_id):
+        try:
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            QueueService.pause(repo['local_path'])
+            emit_status(repo_id, 'paused', 'Operation paused by user')
+            return _ok({"message": "Pause signal sent — current file will finish, then the queue will stop"})
+        except Exception as exc:
+            return _err(str(exc))
+
+    def delete(self, repo_id):
+        try:
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            QueueService.unpause(repo['local_path'])
+            emit_status(repo_id, 'resuming', 'Operation unpaused')
+            return _ok({"message": "Unpaused"})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/stop')
+class RepoStopResource(Resource):
+    def post(self, repo_id):
+        try:
+            repo = RepositoryManager.get_repo_by_id(repo_id)
+            if not repo:
+                return _err("Repository not found", 404)
+            result = command_stop(repo_id)
+            if not result.ok:
+                return _err(result.message, 400)
+            emit_status(repo_id, 'stopping', 'Stop signal sent by user')
+            return _ok({"message": result.message})
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/stats')
+class RepoStatsResource(Resource):
+    def get(self, repo_id):
+        root = _repo_root_or_none(repo_id)
+        if not root:
+            return _err("repo not found", 404)
+        try:
+            return _ok({
+                "local": IndexService.load_index_stats(root, "local"),
+                "cloud": IndexService.load_index_stats(root, "cloud"),
+            })
         except Exception as exc:
             return _err(str(exc))
 
@@ -528,6 +573,34 @@ class RepoRebuildCloudIndexResource(Resource):
             return _err(str(exc))
 
 
+@ns.route('/file-git/repos/<string:repo_id>/encode-path')
+class RepoEncodePathResource(Resource):
+    def get(self, repo_id):
+        """Return the encoded cloud path for a given local subpath.
+
+        For ENCRYPTED repos each segment is HMAC-16 encoded.
+        For ORIGINAL repos the path is returned unchanged.
+        """
+        from .command.context import build_context
+        from .crypto import encode_middle_path
+        path = request.args.get('path', '').strip('/')
+        if not path:
+            return _ok({"encoded": ""})
+        try:
+            ctx = build_context(repo_id)
+            if ctx.mode == "ENCRYPTED":
+                encoded = encode_middle_path(ctx.key, path)
+            else:
+                encoded = path
+            return _ok({"encoded": encoded})
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
 @ns.route('/file-git/repos/<string:repo_id>/cleanup')
 class RepoCleanupResource(Resource):
     def get(self, repo_id):
@@ -648,12 +721,9 @@ class SyncFilterResource(Resource):
         if not root:
             return _err("repo not found", 404)
         try:
-            SyncFilterService.refresh_defaults(root)
             filt = SyncFilterService.load(root)
-            return _ok({
-                "decisions": filt.get("decisions", {}),
-                "children": SyncFilterService.list_children(root, ""),
-            })
+            children = SyncFilterService.list_children(root, "")
+            return _ok({"decisions": filt.get("decisions", {}), "children": children})
         except Exception as exc:
             return _err(str(exc))
 
@@ -673,7 +743,6 @@ class SyncFilterResource(Resource):
                 return _err(err, 400)
             SyncFilterService.set_mode(filt, path, mode)
             SyncFilterService.save(root, filt)
-            # Return children of the parent so UI can refresh
             parent = "/".join(path.split("/")[:-1]) if "/" in path else ""
             children = SyncFilterService.list_children(root, parent)
             return _ok({"decisions": filt.get("decisions", {}), "children": children})
@@ -689,7 +758,8 @@ class SyncFilterChildrenResource(Resource):
             return _err("repo not found", 404)
         try:
             parent = request.args.get('path', '')
-            return _ok({"children": SyncFilterService.list_children(root, parent)})
+            children = SyncFilterService.list_children(root, parent)
+            return _ok({"children": children})
         except Exception as exc:
             return _err(str(exc))
 
@@ -732,10 +802,15 @@ class RepoPushDryRunResource(Resource):
         try:
             from .service.index_service import IndexService as IS
             from .service import sync_filter_service as SFS
+            filt = SFS.load(root)
+            # Push conflicts only arise from remote-only folders. If none exist, skip
+            # loading indexes entirely — avoids reading large local_index.json.
+            decisions = filt.get("decisions", {})
+            if not any(v == "remote-only" for v in decisions.values()):
+                return _ok({"conflicts": []})
             local_index = IS.load_local_index(root)
             cloud_index = IS.load_cloud_index(root)
             diff = IS.diff(local_index, cloud_index)
-            filt = SFS.load(root)
             conflicts = []
             for entry in diff.added + diff.modified:
                 mp = entry["middle_path"]
@@ -761,10 +836,16 @@ class RepoPullDryRunResource(Resource):
         try:
             from .service.index_service import IndexService as IS
             from .service import sync_filter_service as SFS
+            filt = SFS.load(root)
+            # Pull conflicts arise from remote-only or synced folders only.
+            # If neither exists in decisions, skip loading indexes entirely.
+            decisions = filt.get("decisions", {})
+            has_conflict_modes = any(v in ("remote-only", "synced") for v in decisions.values())
+            if not has_conflict_modes:
+                return _ok({"conflicts": []})
             local_index = IS.load_local_index(root)
             cloud_index = IS.load_cloud_index(root)
             diff = IS.diff(cloud_index, local_index)
-            filt = SFS.load(root)
             conflicts = []
             # Check remote-only local copies
             for entry in local_index.values():

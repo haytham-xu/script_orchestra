@@ -26,6 +26,7 @@ from ..crypto import AesGcmEncryptStream, encode_middle_path
 from ..repository_manager import RepositoryManager
 from ..service import IndexService, LoggerService, QueueService
 from ..service.queue_service import LockError
+from ..websocket_service import emit_progress
 from .context import RepoContext, build_context
 
 PENDING_FILENAME = "pending_upload.json"
@@ -78,11 +79,16 @@ def command_manual_upload(
         # Full-repo scan restricted to the subpath. IndexService knows how
         # to skip hidden files (.fgit/, .DS_Store, etc.).
         full_scan = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
-        for entry in full_scan.values():
-            middle_path = entry["middle_path"]
-            if subpath and not (middle_path == subpath or middle_path.startswith(subpath + "/")):
-                continue
+        to_process = [
+            entry for entry in full_scan.values()
+            if not subpath
+            or entry["middle_path"] == subpath
+            or entry["middle_path"].startswith(subpath + "/")
+        ]
+        total = len(to_process)
 
+        for i, entry in enumerate(to_process):
+            middle_path = entry["middle_path"]
             record = {
                 "middle_path": middle_path,
                 "encoded_path": entry["encoded_path"],
@@ -100,6 +106,7 @@ def command_manual_upload(
                 record["buffer_path"] = os.path.relpath(buf_full, ctx.repo_root).replace("\\", "/")
 
             entries.append(record)
+            emit_progress(ctx.repo_id, "manual_upload", "queue", i + 1, total, f"ENCRYPT {middle_path}")
 
         # Persist pending_upload.json for post_manual_upload to consume
         pending_path = os.path.join(ctx.repo_root, ".fgit", PENDING_FILENAME)
