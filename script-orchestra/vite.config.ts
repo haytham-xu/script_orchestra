@@ -20,6 +20,10 @@ export default defineConfig({
     allowedHosts: ['.ts.net'],
     strictPort: true,
     proxy: {
+      '/clipboard-share': {
+        target: 'http://127.0.0.1:50001',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://127.0.0.1:50001',
         changeOrigin: true,

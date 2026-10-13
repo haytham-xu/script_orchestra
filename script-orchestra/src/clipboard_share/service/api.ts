@@ -1,24 +1,35 @@
-/**
- * Clipboard Share API Service
- *
- * Handles REST API calls for clipboard sharing
- */
+import { CLIPBOARD_SHARE_ENDPOINT } from '@/basic/Constants'
+import { getRequest, postRequest, deleteRequest } from '@/basic/RequestService'
+import axios from 'axios'
 
-// Dynamically determine the API base URL
-// If accessing from Windows, use the Mac's IP (e.g., http://192.168.1.100:50001)
-// If accessing from Mac, use localhost
-const getBaseURL = () => {
-  const protocol = window.location.protocol
-  const hostname = window.location.hostname
-  // If accessing via IP (like 192.168.1.100), use that IP for backend too
-  // Otherwise, use localhost
-  const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
-    ? 'localhost'
-    : hostname
-  return `${protocol}//${backendHost}:50001/clipboard-share/clipboard`
+const CLIPBOARD = `${CLIPBOARD_SHARE_ENDPOINT}/clipboard`
+const SERVER = `${CLIPBOARD_SHARE_ENDPOINT}/server`
+
+// On LAN: window.location is http://192.168.x.x:5001 — use relative URLs so
+// Vite proxies /clipboard-share/* to 127.0.0.1:50001.
+// On localhost: use RequestService (direct to 127.0.0.1:50001).
+const isLocalhost = () => {
+  const h = window.location.hostname
+  return h === 'localhost' || h === '127.0.0.1'
 }
 
-const BASE_URL = getBaseURL()
+async function _get<T>(path: string, params = {}): Promise<T> {
+  if (isLocalhost()) return getRequest<T>(path, params)
+  const res = await axios.get(path, { params })
+  return res.data as T
+}
+
+async function _post<T>(path: string, payload = {}): Promise<T> {
+  if (isLocalhost()) return postRequest<T>(path, {}, payload)
+  const res = await axios.post(path, payload)
+  return res.data as T
+}
+
+async function _delete<T>(path: string): Promise<T> {
+  if (isLocalhost()) return deleteRequest<T>(path)
+  const res = await axios.delete(path)
+  return res.data as T
+}
 
 export interface ClipboardItem {
   id: number
@@ -28,84 +39,30 @@ export interface ClipboardItem {
   length: number
 }
 
-export interface AddContentRequest {
-  content: string
-  source?: string
+export interface LanServerStatus {
+  running: boolean
+  port: number | null
+  ip: string
+  url: string | null
 }
 
-/**
- * Add new clipboard content
- */
-export async function addClipboardContent(data: AddContentRequest): Promise<ClipboardItem> {
-  const response = await fetch(`${BASE_URL}/add`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(data)
-  })
+export const addClipboardContent = (content: string, source = 'web') =>
+  _post<ClipboardItem>(`${CLIPBOARD}/add`, { content, source })
 
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.message || 'Failed to add clipboard content')
-  }
+export const getLatestClipboard = () =>
+  _get<ClipboardItem>(`${CLIPBOARD}/latest`)
 
-  return response.json()
-}
+export const getClipboardHistory = (limit = 20) =>
+  _get<ClipboardItem[]>(`${CLIPBOARD}/history`, { limit })
 
-/**
- * Get the latest clipboard content
- */
-export async function getLatestClipboard(): Promise<ClipboardItem> {
-  const response = await fetch(`${BASE_URL}/latest`)
+export const clearClipboardHistory = () =>
+  _delete<{ message: string; count: number }>(`${CLIPBOARD}/clear`)
 
-  if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error('No clipboard content available')
-    }
-    throw new Error('Failed to fetch latest clipboard')
-  }
+export const getLanServerStatus = () =>
+  _get<LanServerStatus>(`${SERVER}/status`)
 
-  return response.json()
-}
+export const startLanServer = (port?: number) =>
+  _post<LanServerStatus & { message: string }>(`${SERVER}/start`, port !== undefined ? { port } : {})
 
-/**
- * Get clipboard history
- */
-export async function getClipboardHistory(limit: number = 20): Promise<ClipboardItem[]> {
-  const response = await fetch(`${BASE_URL}/history?limit=${limit}`)
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch clipboard history')
-  }
-
-  return response.json()
-}
-
-/**
- * Get specific clipboard item by ID
- */
-export async function getClipboardById(id: number): Promise<ClipboardItem> {
-  const response = await fetch(`${BASE_URL}/${id}`)
-
-  if (!response.ok) {
-    throw new Error(`Clipboard item ${id} not found`)
-  }
-
-  return response.json()
-}
-
-/**
- * Clear all clipboard history
- */
-export async function clearClipboardHistory(): Promise<{ message: string; count: number }> {
-  const response = await fetch(`${BASE_URL}/clear`, {
-    method: 'DELETE'
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to clear clipboard history')
-  }
-
-  return response.json()
-}
+export const stopLanServer = () =>
+  _post<LanServerStatus & { message: string }>(`${SERVER}/stop`)

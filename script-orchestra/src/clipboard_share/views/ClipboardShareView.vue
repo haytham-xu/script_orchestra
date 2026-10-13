@@ -1,38 +1,33 @@
 <template>
   <div class="clipboard-share-view">
-    <!-- Header -->
     <div class="header">
       <div class="header-left">
         <el-button @click="goBack" circle>
           <el-icon><ArrowLeft /></el-icon>
         </el-button>
         <h1>Clipboard Share</h1>
-        <el-tag v-if="isConnected" type="success" size="small">
-          <el-icon><Connection /></el-icon>
-          Live
+        <el-tag v-if="wsConnected" type="success" size="small">
+          <el-icon><Connection /></el-icon> Live
         </el-tag>
         <el-tag v-else type="danger" size="small">
-          <el-icon><CircleClose /></el-icon>
-          Offline
+          <el-icon><CircleClose /></el-icon> Offline
         </el-tag>
       </div>
       <div class="header-right">
         <el-button @click="refreshHistory" :loading="isLoading">
-          <el-icon><Refresh /></el-icon>
-          Refresh
+          <el-icon><Refresh /></el-icon> Refresh
         </el-button>
         <el-button @click="showClearConfirm" type="danger" plain>
-          <el-icon><Delete /></el-icon>
-          Clear All
+          <el-icon><Delete /></el-icon> Clear All
         </el-button>
       </div>
     </div>
 
-    <!-- Input Section -->
+    <!-- Input -->
     <el-card class="input-section">
       <template #header>
         <div class="card-header">
-          <span>Add New Content</span>
+          <span>Add Content</span>
           <el-select v-model="selectedSource" size="small" style="width: 120px">
             <el-option label="Web" value="web" />
             <el-option label="Mac" value="mac" />
@@ -43,25 +38,69 @@
       <el-input
         v-model="newContent"
         type="textarea"
-        :rows="6"
-        placeholder="Paste or type your content here... (supports Ctrl+V / Cmd+V)"
+        :rows="5"
+        placeholder="Paste or type content here... (Ctrl+Enter to submit)"
         @keydown.ctrl.enter="submitContent"
         @keydown.meta.enter="submitContent"
       />
       <div class="input-actions">
-        <span class="input-hint">Press Ctrl+Enter (Cmd+Enter) to submit</span>
+        <span class="input-hint">Ctrl+Enter to submit</span>
         <el-button type="primary" @click="submitContent" :loading="isSubmitting">
-          <el-icon><Upload /></el-icon>
-          Submit
+          <el-icon><Upload /></el-icon> Submit
         </el-button>
       </div>
     </el-card>
 
-    <!-- History Section -->
+    <!-- LAN Server -->
+    <el-card class="lan-section">
+      <template #header>
+        <span>LAN Access</span>
+      </template>
+      <div class="lan-body">
+        <div class="lan-ip-row">
+          <span class="lan-label">Your IP</span>
+          <span class="lan-ip">{{ lanStatus.ip || '—' }}</span>
+        </div>
+        <div class="lan-ip-row">
+          <span class="lan-label">Share URL</span>
+          <span class="lan-url">{{ viteUrl }}</span>
+        </div>
+        <div class="lan-hint">
+          Open this URL on any device on the same network — uses the same Vue interface.
+        </div>
+        <div class="lan-actions">
+          <el-button size="small" @click="copyUrl(viteUrl)">
+            <el-icon><CopyDocument /></el-icon> Copy URL
+          </el-button>
+        </div>
+
+        <el-divider content-position="left" style="margin: 12px 0 8px">
+          <span style="font-size:12px;color:#aaa">Standalone (no Vite needed)</span>
+        </el-divider>
+        <div class="lan-actions" style="align-items:center">
+          <template v-if="lanStatus.running">
+            <span class="lan-url" style="font-size:13px">{{ lanStatus.url }}</span>
+            <el-button size="small" @click="copyUrl(lanStatus.url!)">
+              <el-icon><CopyDocument /></el-icon>
+            </el-button>
+            <el-button type="danger" size="small" :loading="lanLoading" @click="stopLan">Stop</el-button>
+          </template>
+          <template v-else>
+            <el-input-number v-model="lanPort" :min="1024" :max="65535" size="small"
+              style="width:130px" controls-position="right" />
+            <el-button type="primary" size="small" :loading="lanLoading" @click="startLan">
+              Start (port {{ lanPort }})
+            </el-button>
+          </template>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- History -->
     <el-card class="history-section">
       <template #header>
         <div class="card-header">
-          <span>History ({{ clipboardHistory.length }} items)</span>
+          <span>History ({{ clipboardHistory.length }})</span>
           <el-input
             v-model="searchText"
             placeholder="Search..."
@@ -69,51 +108,21 @@
             style="width: 200px"
             clearable
           >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
+            <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
         </div>
       </template>
 
       <div v-if="isLoading" class="loading-container">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <span>Loading history...</span>
+        <span>Loading...</span>
       </div>
-
-      <el-empty
-        v-else-if="filteredHistory.length === 0 && clipboardHistory.length === 0"
-        description="No clipboard content yet"
-      >
+      <el-empty v-else-if="filteredHistory.length === 0 && clipboardHistory.length === 0" description="No clipboard content yet">
         <el-button type="primary" @click="focusInput">Add Your First Item</el-button>
       </el-empty>
-
-      <el-empty
-        v-else-if="filteredHistory.length === 0"
-        description="No matching results"
-      />
-
+      <el-empty v-else-if="filteredHistory.length === 0" description="No matching results" />
       <div v-else class="history-list">
-        <ClipboardItem
-          v-for="item in filteredHistory"
-          :key="item.id"
-          :item="item"
-        />
-      </div>
-    </el-card>
-
-    <!-- Network Info -->
-    <el-card class="info-section">
-      <template #header>Connection Info</template>
-      <div class="info-content">
-        <p><strong>Current URL:</strong> {{ currentURL }}</p>
-        <p><strong>Backend API:</strong> {{ backendURL }}</p>
-        <p v-if="macIP !== 'YOUR_MAC_IP'">
-          <strong>Access from other devices:</strong> http://{{ macIP }}:5001/clipboard-share
-        </p>
-        <p class="info-hint">
-          💡 Tip: Make sure both devices are on the same network. The backend API URL is automatically detected based on your current access URL.
-        </p>
+        <ClipboardItem v-for="item in filteredHistory" :key="item.id" :item="item" />
       </div>
     </el-card>
   </div>
@@ -124,76 +133,62 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowLeft,
-  Refresh,
-  Delete,
-  Upload,
-  Search,
-  Loading,
-  Connection,
-  CircleClose
+  ArrowLeft, Refresh, Delete, Upload, Search,
+  Loading, Connection, CircleClose, CopyDocument
 } from '@element-plus/icons-vue'
 import ClipboardItem from '../components/ClipboardItem.vue'
 import {
   addClipboardContent,
   getClipboardHistory,
   clearClipboardHistory,
-  type ClipboardItem as ClipboardItemType
+  getLanServerStatus,
+  startLanServer,
+  stopLanServer,
+  type ClipboardItem as ClipboardItemType,
+  type LanServerStatus
 } from '../service/api'
 import { getWebSocketService } from '../service/websocket'
 
 const router = useRouter()
 const wsService = getWebSocketService()
 
-// State
 const newContent = ref('')
 const selectedSource = ref('web')
 const clipboardHistory = ref<ClipboardItemType[]>([])
 const isLoading = ref(false)
 const isSubmitting = ref(false)
-const isConnected = ref(false)
+const wsConnected = ref(false)
 const searchText = ref('')
-const macIP = ref('YOUR_MAC_IP')
-const currentURL = ref('')
-const backendURL = ref('')
 
-// Computed
+const lanStatus = ref<LanServerStatus>({ running: false, port: null, ip: '', url: null })
+const lanPort = ref(50002)
+const lanLoading = ref(false)
+
+const viteUrl = computed(() =>
+  lanStatus.value.ip ? `http://${lanStatus.value.ip}:5001/clipboard-share` : ''
+)
+
 const filteredHistory = computed(() => {
-  if (!searchText.value) {
-    return clipboardHistory.value
-  }
-  const search = searchText.value.toLowerCase()
-  return clipboardHistory.value.filter((item) =>
-    item.content.toLowerCase().includes(search)
-  )
+  if (!searchText.value) return clipboardHistory.value
+  const q = searchText.value.toLowerCase()
+  return clipboardHistory.value.filter(i => i.content.toLowerCase().includes(q))
 })
 
-// Methods
-function goBack() {
-  router.push('/')
-}
+function goBack() { router.push('/') }
 
 async function submitContent() {
   if (!newContent.value.trim()) {
     ElMessage.warning('Content cannot be empty')
     return
   }
-
   isSubmitting.value = true
   try {
-    const item = await addClipboardContent({
-      content: newContent.value,
-      source: selectedSource.value
-    })
-
-    // Add to history (will also receive via WebSocket, but add immediately for better UX)
+    const item = await addClipboardContent(newContent.value, selectedSource.value)
     clipboardHistory.value.unshift(item)
-
     newContent.value = ''
-    ElMessage.success('Content added successfully!')
-  } catch (error: any) {
-    console.error('Failed to add content:', error)
-    ElMessage.error(error.message || 'Failed to add content')
+    ElMessage.success('Submitted!')
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to add content')
   } finally {
     isSubmitting.value = false
   }
@@ -203,9 +198,8 @@ async function refreshHistory() {
   isLoading.value = true
   try {
     clipboardHistory.value = await getClipboardHistory(50)
-  } catch (error: any) {
-    console.error('Failed to fetch history:', error)
-    ElMessage.error(error.message || 'Failed to fetch history')
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to fetch history')
   } finally {
     isLoading.value = false
   }
@@ -213,153 +207,117 @@ async function refreshHistory() {
 
 async function showClearConfirm() {
   try {
-    await ElMessageBox.confirm(
-      'This will permanently delete all clipboard history. Continue?',
-      'Warning',
-      {
-        confirmButtonText: 'Clear All',
-        cancelButtonText: 'Cancel',
-        type: 'warning'
-      }
-    )
-
+    await ElMessageBox.confirm('Delete all clipboard history?', 'Warning', {
+      confirmButtonText: 'Clear All',
+      cancelButtonText: 'Cancel',
+      type: 'warning'
+    })
     const result = await clearClipboardHistory()
     clipboardHistory.value = []
     ElMessage.success(result.message)
-  } catch (error: any) {
-    if (error !== 'cancel') {
-      console.error('Failed to clear history:', error)
-      ElMessage.error('Failed to clear history')
-    }
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('Failed to clear history')
   }
 }
 
-function focusInput() {
-  document.querySelector('textarea')?.focus()
-}
+function focusInput() { document.querySelector('textarea')?.focus() }
 
 function handleWebSocketUpdate(item: ClipboardItemType) {
-  // Check if item already exists (avoid duplicates)
-  const exists = clipboardHistory.value.some((i) => i.id === item.id)
-  if (!exists) {
+  if (!clipboardHistory.value.some(i => i.id === item.id)) {
     clipboardHistory.value.unshift(item)
-    ElMessage({
-      message: `New clipboard content from ${item.source}`,
-      type: 'success',
-      duration: 2000
-    })
+    ElMessage({ message: `New content from ${item.source}`, type: 'success', duration: 2000 })
   }
 }
 
-async function detectMacIP() {
-  // Detect current URL and backend URL
+async function fetchLanStatus() {
   try {
-    currentURL.value = window.location.href
-    const hostname = window.location.hostname
-    const protocol = window.location.protocol
+    const status = await getLanServerStatus()
+    lanStatus.value = status
+    if (status.port) lanPort.value = status.port
+  } catch (_) {}
+}
 
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      macIP.value = hostname
-    }
-
-    // Show backend URL
-    const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
-      ? 'localhost'
-      : hostname
-    backendURL.value = `${protocol}//${backendHost}:50001`
-  } catch (error) {
-    console.error('Failed to detect IP:', error)
+async function startLan() {
+  lanLoading.value = true
+  try {
+    const result = await startLanServer(lanPort.value)
+    lanStatus.value = result
+    ElMessage.success(`LAN server started: ${result.url}`)
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to start LAN server')
+  } finally {
+    lanLoading.value = false
   }
 }
 
-// Lifecycle
+async function stopLan() {
+  lanLoading.value = true
+  try {
+    const result = await stopLanServer()
+    lanStatus.value = result
+    ElMessage.success('LAN server stopped')
+  } catch (e: any) {
+    ElMessage.error(e.message || 'Failed to stop LAN server')
+  } finally {
+    lanLoading.value = false
+  }
+}
+
+function copyUrl(url: string) {
+  if (!url) return
+  navigator.clipboard.writeText(url)
+    .then(() => ElMessage.success('URL copied!'))
+    .catch(() => ElMessage.error('Copy failed'))
+}
+
 onMounted(async () => {
-  // Connect to WebSocket first (before any await)
   wsService.connect()
   wsService.onClipboardUpdate(handleWebSocketUpdate)
 
-  // Monitor connection status
   const interval = setInterval(() => {
-    isConnected.value = wsService.isConnected()
+    wsConnected.value = wsService.isConnected()
   }, 5000)
 
-  // Register cleanup BEFORE any await
   onUnmounted(() => {
     wsService.offClipboardUpdate()
     wsService.disconnect()
     clearInterval(interval)
   })
 
-  // Now do async operations
-  await refreshHistory()
+  await Promise.all([refreshHistory(), fetchLanStatus()])
 
-  // Check connection status
-  setTimeout(() => {
-    isConnected.value = wsService.isConnected()
-  }, 1000)
-
-  // Detect Mac IP
-  detectMacIP()
+  setTimeout(() => { wsConnected.value = wsService.isConnected() }, 1000)
 })
 </script>
 
 <style scoped>
 .clipboard-share-view {
   padding: 20px;
-  max-width: 1200px;
+  max-width: 1000px;
   margin: 0 auto;
 }
-
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
 }
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.header-left h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-}
-
-.header-right {
-  display: flex;
-  gap: 12px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.input-section {
-  margin-bottom: 20px;
-}
-
-.input-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-}
-
-.input-hint {
-  font-size: 12px;
-  color: #909399;
-}
-
-.history-section {
-  margin-bottom: 20px;
-}
-
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left h1 { margin: 0; font-size: 24px; font-weight: 600; }
+.header-right { display: flex; gap: 12px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.input-section { margin-bottom: 16px; }
+.input-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.input-hint { font-size: 12px; color: #909399; }
+.lan-section { margin-bottom: 16px; }
+.lan-body { display: flex; flex-direction: column; gap: 10px; }
+.lan-ip-row { display: flex; align-items: center; gap: 12px; }
+.lan-label { font-size: 13px; color: #909399; min-width: 72px; }
+.lan-ip { font-size: 15px; font-weight: 600; font-family: monospace; color: #303133; }
+.lan-url { font-size: 14px; font-family: monospace; color: #409eff; }
+.lan-hint { font-size: 13px; color: #909399; }
+.lan-actions { display: flex; gap: 8px; align-items: center; }
+.history-section { margin-bottom: 20px; }
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -369,32 +327,6 @@ onMounted(async () => {
   color: #909399;
   gap: 12px;
 }
-
-.loading-container .el-icon {
-  font-size: 32px;
-}
-
-.history-list {
-  max-height: 600px;
-  overflow-y: auto;
-}
-
-.info-section {
-  background: #f0f9ff;
-  border-color: #91caff;
-}
-
-.info-content p {
-  margin: 8px 0;
-  font-size: 14px;
-}
-
-.info-hint {
-  color: #1677ff;
-  background: #e6f4ff;
-  padding: 12px;
-  border-radius: 4px;
-  margin-top: 12px;
-  border-left: 3px solid #1677ff;
-}
+.loading-container .el-icon { font-size: 32px; }
+.history-list { max-height: 600px; overflow-y: auto; }
 </style>

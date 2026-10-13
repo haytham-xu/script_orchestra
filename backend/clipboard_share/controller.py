@@ -114,3 +114,53 @@ class ClipboardClearResource(Resource):
             "message": f"Cleared {count} clipboard items",
             "count": count
         }, 200
+
+
+# ── LAN server control ────────────────────────────────────────────────────────
+
+server_ns = Namespace("server", description="LAN server control")
+
+server_status_model = server_ns.model('ServerStatus', {
+    'running': fields.Boolean(description='Whether the LAN server is running'),
+    'port': fields.Integer(description='LAN server port (null when stopped)'),
+    'ip': fields.String(description='Machine LAN IP address'),
+    'url': fields.String(description='Full access URL (null when stopped)'),
+})
+
+
+@server_ns.route('/status')
+class ServerStatusResource(Resource):
+    @server_ns.marshal_with(server_status_model)
+    def get(self):
+        """Get LAN server status and local IP"""
+        from .lan_server import get_lan_server
+        return get_lan_server().get_status()
+
+
+@server_ns.route('/start')
+class ServerStartResource(Resource):
+    def post(self):
+        """Start the LAN server on 0.0.0.0"""
+        from .lan_server import get_lan_server
+        from .settings_manager import load_settings, save_settings
+        settings = load_settings()
+        body = request.get_json(silent=True, force=True) or {}
+        port = int(body.get('port', settings['lan_port']))
+        success, msg = get_lan_server().start(port)
+        if not success:
+            server_ns.abort(400, msg)
+        settings['lan_port'] = port
+        save_settings(settings)
+        status = get_lan_server().get_status()
+        return {'message': msg, **status}, 200
+
+
+@server_ns.route('/stop')
+class ServerStopResource(Resource):
+    def post(self):
+        """Stop the LAN server"""
+        from .lan_server import get_lan_server
+        success, msg = get_lan_server().stop()
+        if not success:
+            server_ns.abort(400, msg)
+        return {'message': msg, **get_lan_server().get_status()}, 200

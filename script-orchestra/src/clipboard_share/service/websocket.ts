@@ -10,10 +10,13 @@ import type { ClipboardItem } from './api'
 const getSocketURL = () => {
   const protocol = window.location.protocol
   const hostname = window.location.hostname
-  const backendHost = hostname === 'localhost' || hostname === '127.0.0.1'
-    ? 'localhost'
-    : hostname
-  return `${protocol}//${backendHost}:50001`
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    // Localhost: connect directly to Flask/SocketIO
+    return `${protocol}//localhost:50001`
+  }
+  // LAN access: connect to Vite dev server, which proxies /socket.io to the backend
+  const port = window.location.port || '5001'
+  return `${protocol}//${hostname}:${port}`
 }
 
 const SOCKET_URL = getSocketURL()

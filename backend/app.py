@@ -408,6 +408,17 @@ def create_app() -> Flask:
     if claude_bridge_repo:
         claude_bridge_repo.init_db()
 
+    # ── Clipboard Share auto_start ────────────────────────────────
+    if clipboard_share_blueprint:
+        try:
+            from clipboard_share.settings_manager import load_settings as _cs_load
+            from clipboard_share.lan_server import get_lan_server as _cs_get_lan
+            _cs_settings = _cs_load()
+            if _cs_settings.get('auto_start'):
+                _cs_get_lan().start(_cs_settings.get('lan_port', 50002))
+        except Exception as _e:
+            print(f'[ClipboardShare] auto_start failed: {_e}')
+
     return app, socketio
 
 
@@ -435,10 +446,10 @@ if __name__ == "__main__":
     check_cypress_snapshots()
 
     app, socketio = create_app()
-    host = os.environ.get('HOST', '0.0.0.0')
+    host = os.environ.get('HOST', '127.0.0.1')
     port = int(os.environ.get('PORT', '50001'))
 
-    debug_flag = os.environ.get('FLASK_DEBUG', '1') == '1'
+    debug_flag = os.environ.get('FLASK_DEBUG', '0') == '1'
 
     if socketio:
         print(f"[App] Starting with WebSocket support on {host}:{port} (debug={debug_flag})")
