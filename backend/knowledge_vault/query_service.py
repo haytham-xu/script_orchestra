@@ -5,6 +5,8 @@ fragment_vector SQLite table, cosine-search in memory.
 """
 import json
 import math
+import threading
+import time
 from typing import List, Dict, Tuple, Optional
 
 from . import repository, settings_manager
@@ -13,10 +15,29 @@ from . import repository, settings_manager
 
 _model = None
 _model_name = ""
+_model_last_used: float = 0.0
+_MODEL_IDLE_TTL = 600  # unload after 10 minutes idle
+_unload_timer: Optional[threading.Timer] = None
+
+
+def _schedule_unload() -> None:
+    global _unload_timer
+    if _unload_timer is not None:
+        _unload_timer.cancel()
+    _unload_timer = threading.Timer(_MODEL_IDLE_TTL, _maybe_unload)
+    _unload_timer.daemon = True
+    _unload_timer.start()
+
+
+def _maybe_unload() -> None:
+    global _model, _model_name, _model_last_used
+    if time.monotonic() - _model_last_used >= _MODEL_IDLE_TTL:
+        _model = None
+        _model_name = ""
 
 
 def _get_model():
-    global _model, _model_name
+    global _model, _model_name, _model_last_used
     name = settings_manager.load_settings().get("embed_model", "").strip()
     if not name:
         raise RuntimeError("embed_model is not configured in knowledge_vault settings")
@@ -24,6 +45,8 @@ def _get_model():
         from sentence_transformers import SentenceTransformer  # type: ignore
         _model = SentenceTransformer(name)
         _model_name = name
+    _model_last_used = time.monotonic()
+    _schedule_unload()
     return _model
 
 

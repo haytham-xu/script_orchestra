@@ -360,7 +360,7 @@ export default defineComponent({
       loadToolMeta()
       loadEnabledTools()
       pollStatus()
-      statusTimer = setInterval(pollStatus, 5000)
+      statusTimer = setInterval(pollStatus, 30000)
     })
 
     onUnmounted(() => {
