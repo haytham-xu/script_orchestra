@@ -26,6 +26,18 @@
         </div>
       </template>
 
+      <!-- Scan progress bar -->
+      <div v-if="scanning && scanTotal > 0" class="dt1-scan-progress">
+        <el-progress
+          :percentage="Math.round(scanDone * 100 / scanTotal)"
+          :stroke-width="6"
+          class="dt1-scan-bar" />
+        <span class="dt1-scan-label">Classifying {{ scanDone }} / {{ scanTotal }} tabs…</span>
+      </div>
+      <div v-else-if="scanning" class="dt1-scan-progress">
+        <span class="dt1-scan-label">Fetching tab list…</span>
+      </div>
+
       <div v-if="candidates.length === 0 && !scanning" class="dt1-hint">
         <template v-if="totalTabsScanned > 0">
           Scanned {{ totalTabsScanned }} tabs — none matched the source domain.
@@ -41,6 +53,14 @@
         <div class="dt1-cand-head">
           <el-checkbox :model-value="allSelected" @change="toggleSelectAll" />
           <span>{{ selectedUrls.size }} / {{ candidates.length }} selected  (from {{ totalTabsScanned }} tabs)</span>
+          <div class="dt1-cand-type-btns">
+            <el-button v-if="type1Count > 0" size="small" @click="selectByType('type1')">
+              T1 ({{ type1Count }})
+            </el-button>
+            <el-button v-if="type2Count > 0" size="small" @click="selectByType('type2')">
+              T2 ({{ type2Count }})
+            </el-button>
+          </div>
           <div class="dt1-cand-actions">
             <el-button type="danger" :disabled="selectedUrls.size === 0 || jobRunning"
                        @click="execute">Download selected</el-button>
@@ -52,6 +72,10 @@
             :model-value="selectedUrls.has(c.url)"
             @change="toggleSelected(c.url)" />
           <span class="dt1-cand-aid">aid {{ c.aid || '—' }}</span>
+          <el-tag :type="c.dl_type === 'type1' ? 'success' : c.dl_type === 'type2' ? 'warning' : 'info'"
+                  size="small" class="dt1-cand-type">
+            {{ c.dl_type === 'type1' ? 'T1' : c.dl_type === 'type2' ? 'T2' : '?' }}
+          </el-tag>
           <span class="dt1-cand-url" :title="c.url">{{ c.url }}</span>
         </label>
       </div>
@@ -74,12 +98,17 @@
             <el-tag :type="statusTagType(item.status)" size="small" class="dt1-job-status">
               {{ item.status }}
             </el-tag>
+            <el-tag v-if="item.dl_type === 'type1' || item.dl_type === 'type2'"
+                    :type="item.dl_type === 'type1' ? 'success' : 'warning'"
+                    size="small" class="dt1-job-dtype">
+              {{ item.dl_type === 'type1' ? 'T1' : 'T2' }}
+            </el-tag>
             <span class="dt1-job-url" :title="item.url">{{ item.url }}</span>
             <span v-if="item.filename" class="dt1-job-filename" :title="item.filename">
               → {{ item.filename }}
             </span>
           </div>
-          <div v-if="item.status === 'skipped' || item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0)"
+          <div v-if="(!item.sub_items || !item.sub_items.length) && (item.status === 'skipped' || item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0))"
                class="dt1-job-line2">
             <el-progress
               :percentage="item.progress_percent"
@@ -95,6 +124,30 @@
             </span>
           </div>
           <div v-if="item.message" class="dt1-job-msg" :title="item.message">{{ item.message }}</div>
+
+          <!-- Per-file sub-items (Type 2 multi-chapter) -->
+          <div v-if="item.sub_items && item.sub_items.length > 0" class="dt1-subitem-list">
+            <div v-for="(sub, si) in item.sub_items" :key="si" class="dt1-subitem-row">
+              <el-tag :type="statusTagType(sub.status)" size="small" class="dt1-sub-status">
+                {{ sub.status }}
+              </el-tag>
+              <span class="dt1-sub-name" :title="sub.filename">{{ sub.filename }}</span>
+              <el-progress
+                v-if="sub.status !== 'pending'"
+                :percentage="sub.progress_percent"
+                :status="sub.status === 'done' ? 'success' : (sub.status === 'error' ? 'exception' : undefined)"
+                :stroke-width="4"
+                class="dt1-sub-bar" />
+              <span v-if="sub.bytes_downloaded > 0 || sub.bytes_total > 0" class="dt1-job-metric">
+                {{ fmtBytes(sub.bytes_downloaded) }}
+                <template v-if="sub.bytes_total > 0"> / {{ fmtBytes(sub.bytes_total) }}</template>
+              </span>
+              <span v-if="sub.status === 'downloading' && sub.speed_bps > 0" class="dt1-job-metric">
+                {{ fmtSpeed(sub.speed_bps) }}
+              </span>
+              <span v-if="sub.message" class="dt1-sub-msg">{{ sub.message }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </el-card>
@@ -118,7 +171,7 @@
           placeholder="one per line, e.g. cdn.foo.com" spellcheck="false" />
       </div>
       <div class="dt1-set-row">
-        <label>Link label</label>
+        <label>Link label <span class="dt1-type1-note">(Type 1 only)</span></label>
         <el-input v-model="settingsCfg.linkLabel"
           placeholder="visible text of the anchor to pick" spellcheck="false" />
       </div>
@@ -126,6 +179,10 @@
         <label>Download path</label>
         <el-input v-model="settingsCfg.downloadPath"
           placeholder="/absolute/path/to/output" spellcheck="false" />
+      </div>
+      <div class="dt1-set-row">
+        <label>Parallel segments <span class="dt1-type1-note">(1 = single stream; raise with care, CDN rate-limits easily)</span></label>
+        <el-input-number v-model="settingsCfg.downloadParts" :min="1" :max="16" :step="1" style="width:120px" />
       </div>
       <el-button type="primary" :loading="settingsSaving" @click="saveSettings" style="margin-top:8px">Save</el-button>
     </div>
@@ -204,7 +261,34 @@
   flex: none; font-family: monospace; font-size: 11px; color: #475569;
   min-width: 90px; text-align: right;
 }
+.dt1-type1-note { font-size: 11px; font-weight: 400; color: #94a3b8; }
 .dt1-settings { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .dt1-set-row { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .dt1-set-row label { font-weight: 500; color: #1d1d1f; }
+
+.dt1-subitem-list {
+  margin-top: 4px; margin-left: 12px;
+  border-left: 2px solid #e2e8f0; padding-left: 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.dt1-subitem-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; padding: 2px 0;
+}
+.dt1-sub-status { flex: none; }
+.dt1-sub-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: monospace; color: #475569;
+}
+.dt1-sub-bar { flex: none; width: 120px; }
+.dt1-scan-progress {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 0 8px;
+}
+.dt1-scan-bar { flex: 1; }
+.dt1-scan-label { flex: none; font-size: 12px; color: #64748b; }
+.dt1-cand-type-btns { display: flex; gap: 6px; }
+.dt1-cand-type { flex: none; }
+.dt1-job-dtype { flex: none; }
 </style>

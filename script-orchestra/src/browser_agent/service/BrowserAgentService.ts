@@ -381,15 +381,33 @@ export async function sendTabsToDownloadQueue(urls: string[]): Promise<SendTabsR
 
 // --- Download SSMH ------------------------------------------------------
 
-export interface SSMHCandidate { url: string; aid: string }
+export interface SSMHCandidate { url: string; aid: string; dl_type: 'type1' | 'type2' | 'unknown' }
 export interface SSMHScanResult {
   candidates: SSMHCandidate[]
   total_tabs: number
 }
 
+export interface SSMHScanStatus {
+  running: boolean
+  total_tabs: number
+  total: number
+  done: number
+  candidates: SSMHCandidate[]
+}
+
+export interface SSMHSubItem {
+  filename: string
+  status: string
+  bytes_downloaded: number
+  bytes_total: number
+  speed_bps: number
+  progress_percent: number
+  message: string
+}
+
 export interface SSMHItem {
   url: string
-  status: string   // pending | fetching_source | fetching_download_page | downloading | done | error | unmatched_download_domain
+  status: string   // pending | fetching_source | fetching_download_page | downloading | done | error | unmatched_download_domain | manual_required
   message: string
   filename: string
   download_url: string
@@ -398,6 +416,8 @@ export interface SSMHItem {
   bytes_total: number
   speed_bps: number
   progress_percent: number
+  dl_type?: string
+  sub_items?: SSMHSubItem[]
 }
 
 export interface SSMHStatus {
@@ -407,14 +427,18 @@ export interface SSMHStatus {
   items: SSMHItem[]
 }
 
-export async function ssmhScan(): Promise<SSMHScanResult> {
-  return postRequest<SSMHScanResult>(
+export async function ssmhScan(): Promise<{ message: string; total_tabs: number }> {
+  return postRequest<{ message: string; total_tabs: number }>(
     `${BROWSER_AGENT_ENDPOINT}/download-ssmh/scan`, {}, {})
 }
 
-export async function ssmhExecute(urls: string[]): Promise<{ message: string; total: number }> {
+export async function ssmhScanStatus(): Promise<SSMHScanStatus> {
+  return getRequest<SSMHScanStatus>(`${BROWSER_AGENT_ENDPOINT}/download-ssmh/scan/status`)
+}
+
+export async function ssmhExecute(items: Array<{ url: string; dl_type: string }>): Promise<{ message: string; total: number }> {
   return postRequest<{ message: string; total: number }>(
-    `${BROWSER_AGENT_ENDPOINT}/download-ssmh/execute`, {}, { urls })
+    `${BROWSER_AGENT_ENDPOINT}/download-ssmh/execute`, {}, { items })
 }
 
 export async function ssmhStatus(): Promise<SSMHStatus> {

@@ -13,6 +13,8 @@ from . import tab_archive_repository
 
 TABLE = "browser_agent_browser_tab"
 TABLE_HISTORY = "browser_agent_download_history"
+TABLE_SSMH_LOG = "browser_agent_ssmh_download_log"
+TABLE_SSMH_SCAN = "browser_agent_ssmh_scan_cache"
 
 
 def _conn():
@@ -41,6 +43,26 @@ def init_db() -> None:
             url_path TEXT UNIQUE NOT NULL,
             source_type TEXT NOT NULL,
             downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_SSMH_LOG} (
+            id INTEGER PRIMARY KEY,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            source_url TEXT NOT NULL,
+            dl_type TEXT NOT NULL DEFAULT '',
+            method TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            filename TEXT DEFAULT '',
+            error_msg TEXT DEFAULT ''
+        )
+    """)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_SSMH_SCAN} (
+            url_path TEXT PRIMARY KEY,
+            dl_type TEXT NOT NULL,
+            first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -145,3 +167,52 @@ def record_downloaded_path(url_path: str, source_type: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def log_ssmh_download(source_url: str, dl_type: str, method: str,
+                      status: str, filename: str = '', error_msg: str = '') -> None:
+    """Record one download attempt (one row per method tried per file)."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"INSERT INTO {TABLE_SSMH_LOG} "
+            "(source_url, dl_type, method, status, filename, error_msg) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (source_url, dl_type, method, status, filename, error_msg),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # logging must never crash the caller
+
+
+def get_ssmh_scan_type(url_path: str) -> Optional[str]:
+    """Return cached dl_type for this path, or None if not yet classified."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT dl_type FROM {TABLE_SSMH_SCAN} WHERE url_path = ?", (url_path,))
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def upsert_ssmh_scan_type(url_path: str, dl_type: str) -> None:
+    """Store or update the dl_type for a scanned path."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"INSERT INTO {TABLE_SSMH_SCAN} (url_path, dl_type) VALUES (?, ?) "
+            "ON CONFLICT(url_path) DO UPDATE SET dl_type=excluded.dl_type, "
+            "updated_at=CURRENT_TIMESTAMP",
+            (url_path, dl_type),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass

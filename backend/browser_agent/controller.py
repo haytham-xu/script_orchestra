@@ -192,6 +192,23 @@ class TabDedupGroupResource(Resource):
         return result, 200
 
 
+@ns.route("/tab-dedup/open-tabs")
+class TabDedupOpenResource(Resource):
+    def post(self):
+        """Open a list of URLs as new tabs in the current window."""
+        data = request.get_json(silent=True) or {}
+        urls = data.get("urls", [])
+        destination = data.get("destination", "current_window")
+        if not isinstance(urls, list) or not urls:
+            return {"error": "urls must be a non-empty list"}, 400
+        items = [{"url": u} for u in urls if isinstance(u, str) and u.strip()]
+        result, err = agent_bridge.enqueue_and_wait(
+            "open_tabs", {"items": items, "destination": destination}, timeout=30.0)
+        if err:
+            return {"error": err}, 504
+        return result, 200
+
+
 # --- Tab archive ------------------------------------------------------------
 
 @ns.route("/tab-archive/snapshot")
@@ -739,27 +756,40 @@ class TabArchiveShelfItemOpenResource(Resource):
 @ns.route("/download-ssmh/scan")
 class DownloadSSMHScanResource(Resource):
     def post(self):
-        """Ask the extension for the current tab list, filter to Type-1
-        source-URL candidates, return them."""
+        """Ask the extension for the current tab list, start background classification.
+        Returns 202 immediately; poll GET /scan/status for progress."""
         result, err = agent_bridge.enqueue_and_wait("list_tabs")
         if err:
             return {"error": err}, 504
         cfg = settings_manager.load_settings().get("downloadSSMH", {}) or {}
         tab_urls = [t.get("url", "") for t in (result or {}).get("tabs", [])]
-        candidates = download_ssmh.scan(tab_urls, cfg)
-        return {"candidates": candidates, "total_tabs": len(tab_urls)}, 200
+        total_tabs = len(tab_urls)
+        started = download_ssmh.start_scan_job(tab_urls, cfg, total_tabs)
+        if not started:
+            return {"error": "a scan is already running"}, 409
+        return {"message": "scanning", "total_tabs": total_tabs}, 202
+
+
+@ns.route("/download-ssmh/scan/status")
+class DownloadSSMHScanStatusResource(Resource):
+    def get(self):
+        return download_ssmh.get_scan_status(), 200
 
 
 @ns.route("/download-ssmh/execute")
 class DownloadSSMHExecuteResource(Resource):
     def post(self):
         data = request.json or {}
-        urls = data.get("urls") or []
-        if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
-            return {"error": "urls must be a list of strings"}, 400
-        if not urls:
-            return {"error": "no URLs provided"}, 400
-        result = download_ssmh.start_job(urls)
+        items = data.get("items") or []
+        # Backward compat: accept old {urls: [...]} format.
+        if not items and data.get("urls"):
+            items = [{"url": u, "dl_type": "unknown"} for u in data["urls"]]
+        if not isinstance(items, list) or not items:
+            return {"error": "items must be a non-empty list of {url, dl_type}"}, 400
+        for it in items:
+            if not isinstance(it, dict) or not isinstance(it.get("url"), str):
+                return {"error": "each item must have a string url"}, 400
+        result = download_ssmh.start_job(items)
         if "error" in result:
             return result, 409
         return result, 202

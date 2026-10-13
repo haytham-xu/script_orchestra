@@ -29,6 +29,7 @@ export interface DownloadSSMHConfig {
   downloadDomains: string[]
   downloadPath: string
   linkLabel: string
+  downloadParts: number
 }
 
 export interface DownloadJMConfig {

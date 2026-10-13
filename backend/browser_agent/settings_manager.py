@@ -28,6 +28,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         # Text label of the anchor to pick on the download-index page.
         # e.g. the site's "backup line / Server 2" link.
         "linkLabel": "",
+        # Number of parallel range segments per file (1 = single stream).
+        # Increase carefully — CDN rate-limits easily trigger 429 above 1.
+        "downloadParts": 1,
     },
     # Download JM — Cloudflare-protected site that requires the user to be
     # logged in via their real browser. The extension hands back cookies.
@@ -154,6 +157,7 @@ def _validate_download_ssmh(cfg: Any) -> dict:
     dst = cfg.get("downloadDomains", [])
     path = cfg.get("downloadPath", "")
     link_label = cfg.get("linkLabel", "")
+    download_parts = cfg.get("downloadParts", 1)
     if not isinstance(src, list) or not all(isinstance(d, str) for d in src):
         raise ValueError("downloadSSMH.sourceDomains must be a list of strings")
     if not isinstance(dst, list) or not all(isinstance(d, str) for d in dst):
@@ -162,11 +166,16 @@ def _validate_download_ssmh(cfg: Any) -> dict:
         raise ValueError("downloadSSMH.downloadPath must be a string")
     if not isinstance(link_label, str):
         raise ValueError("downloadSSMH.linkLabel must be a string")
+    try:
+        download_parts = max(1, min(int(download_parts), 16))
+    except (TypeError, ValueError):
+        raise ValueError("downloadSSMH.downloadParts must be an integer (1-16)")
     return {
         "sourceDomains": [d.strip().lower() for d in src if d.strip()],
         "downloadDomains": [d.strip().lower() for d in dst if d.strip()],
         "downloadPath": path.strip(),
         "linkLabel": link_label.strip(),
+        "downloadParts": download_parts,
     }
 
 
