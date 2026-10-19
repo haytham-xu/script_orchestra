@@ -108,20 +108,25 @@
               → {{ item.filename }}
             </span>
           </div>
-          <div v-if="(!item.sub_items || !item.sub_items.length) && (item.status === 'skipped' || item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0))"
+          <div v-if="(!item.sub_items || !item.sub_items.length) && (item.status === 'downloading' || (item.status === 'done' && item.bytes_downloaded > 0))"
                class="dt1-job-line2">
             <el-progress
               :percentage="item.progress_percent"
-              :status="(item.status === 'done' || item.status === 'skipped') ? 'success' : undefined"
+              :status="item.status === 'done' ? 'success' : undefined"
               :stroke-width="6"
               class="dt1-job-bar" />
-            <span v-if="item.status !== 'skipped'" class="dt1-job-metric">
+            <span class="dt1-job-metric">
               {{ fmtBytes(item.bytes_downloaded) }}
               <template v-if="item.bytes_total > 0"> / {{ fmtBytes(item.bytes_total) }}</template>
             </span>
             <span v-if="item.status === 'downloading' && item.speed_bps > 0" class="dt1-job-metric">
               {{ fmtSpeed(item.speed_bps) }}
             </span>
+          </div>
+          <div v-if="(!item.sub_items || !item.sub_items.length) && item.status === 'skipped'"
+               class="dt1-job-skip-badge">
+            <el-icon><CircleCheckFilled /></el-icon>
+            Already on disk — skipped
           </div>
           <div v-if="item.message" class="dt1-job-msg" :title="item.message">{{ item.message }}</div>
 
@@ -291,4 +296,9 @@
 .dt1-cand-type-btns { display: flex; gap: 6px; }
 .dt1-cand-type { flex: none; }
 .dt1-job-dtype { flex: none; }
+.dt1-job-skip-badge {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 4px; font-size: 12px; font-weight: 500; color: #16a34a;
+}
+.dt1-job-skip-badge .el-icon { font-size: 14px; }
 </style>

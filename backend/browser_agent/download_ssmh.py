@@ -918,6 +918,7 @@ def _download_images_fallback(
 
     _upd(status="done", progress_percent=100,
          message=f"Downloaded {n_imgs - errors}/{n_imgs} images")
+    repository.add_ssmh_path_cache(urlparse(source_url).path, img_dir, 'dir')
     return True, ""
 
 
@@ -1039,6 +1040,7 @@ def _process_type1_inner(index: int, source_url: str, download_index_url: str,
              "ok" if downloaded else "failed", filename, cdn_err)
 
     if downloaded:
+        repository.add_ssmh_path_cache(urlparse(source_url).path, final_path)
         return True
 
     # Candidate 3: image-by-image from reader/slide page
@@ -1263,6 +1265,9 @@ def _process_type2_inner(index: int, source_url: str, download_index_url: str,
             else:
                 _log(source_url, "type2", "worker_api", "failed", f["name"], wapi_err)
 
+        if downloaded:
+            repository.add_ssmh_path_cache(urlparse(source_url).path, final_path)
+
         if not downloaded:
             # Candidate 3: image-by-image from reader/slide page
             img_ok, img_reason = _download_images_fallback(
@@ -1306,7 +1311,41 @@ def _process_type2_inner(index: int, source_url: str, download_index_url: str,
         return True
 
 
+def _all_paths_valid(cached: list) -> bool:
+    """Return True if every cached path exists on disk and is non-empty."""
+    if not cached:
+        return False
+    for final_path, path_type in cached:
+        if path_type == 'dir':
+            if not os.path.isdir(final_path):
+                return False
+            try:
+                if not any(
+                    os.path.getsize(os.path.join(final_path, fn)) > 0
+                    for fn in os.listdir(final_path)
+                ):
+                    return False
+            except OSError:
+                return False
+        else:
+            if not (os.path.isfile(final_path) and os.path.getsize(final_path) > 1024):
+                return False
+    return True
+
+
 def _process_one(index: int, source_url: str, cfg: dict) -> None:
+    url_path = urlparse(source_url).path
+    cached = repository.get_ssmh_path_cache(url_path)
+    if _all_paths_valid(cached):
+        _update_item(index, status="skipped",
+                     message=f"All {len(cached)} file(s) already exist on disk",
+                     progress_percent=100)
+        try:
+            _close_source_tab(source_url)
+        except Exception:
+            pass
+        return
+
     _update_item(index, status="fetching_source")
     try:
         source_html = _http_get(source_url)

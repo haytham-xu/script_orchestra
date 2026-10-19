@@ -15,6 +15,7 @@ TABLE = "browser_agent_browser_tab"
 TABLE_HISTORY = "browser_agent_download_history"
 TABLE_SSMH_LOG = "browser_agent_ssmh_download_log"
 TABLE_SSMH_SCAN = "browser_agent_ssmh_scan_cache"
+TABLE_SSMH_PATH_CACHE = "browser_agent_ssmh_path_cache"
 
 
 def _conn():
@@ -63,6 +64,16 @@ def init_db() -> None:
             dl_type TEXT NOT NULL,
             first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {TABLE_SSMH_PATH_CACHE} (
+            id INTEGER PRIMARY KEY,
+            url_path TEXT NOT NULL,
+            final_path TEXT NOT NULL,
+            path_type TEXT NOT NULL DEFAULT 'file',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(url_path, final_path)
         )
     """)
     conn.commit()
@@ -212,6 +223,51 @@ def upsert_ssmh_scan_type(url_path: str, dl_type: str) -> None:
             "updated_at=CURRENT_TIMESTAMP",
             (url_path, dl_type),
         )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def add_ssmh_path_cache(url_path: str, final_path: str, path_type: str = 'file') -> None:
+    """Record a successfully-downloaded path for a source URL. Ignored on error."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"INSERT OR IGNORE INTO {TABLE_SSMH_PATH_CACHE} "
+            "(url_path, final_path, path_type) VALUES (?, ?, ?)",
+            (url_path, final_path, path_type),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_ssmh_path_cache(url_path: str) -> List[tuple]:
+    """Return [(final_path, path_type), ...] previously recorded for this source URL."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT final_path, path_type FROM {TABLE_SSMH_PATH_CACHE} WHERE url_path = ?",
+            (url_path,),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        return [(r[0], r[1]) for r in rows]
+    except Exception:
+        return []
+
+
+def clear_ssmh_path_cache(url_path: str) -> None:
+    """Remove all cached paths for a source URL (call before re-downloading)."""
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"DELETE FROM {TABLE_SSMH_PATH_CACHE} WHERE url_path = ?", (url_path,))
         conn.commit()
         conn.close()
     except Exception:
