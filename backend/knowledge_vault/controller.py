@@ -628,3 +628,18 @@ class FragmentGroupMembersResource(Resource):
             return {"error": "fragment_ids must be a list of integers"}, 400
         repository.set_group_members(gid, fids)
         return {"fragment_ids": repository.get_group_members(gid)}, 200
+
+
+@ns.route("/ui/table-widths")
+class UITableWidthsResource(Resource):
+    def get(self):
+        widths = repository.get_ui_state("table_widths") or {}
+        return {"widths": widths}, 200
+
+    def put(self):
+        data = request.json or {}
+        widths = data.get("widths")
+        if not isinstance(widths, dict):
+            return {"error": "widths must be an object"}, 400
+        repository.set_ui_state("table_widths", widths)
+        return {"widths": widths}, 200

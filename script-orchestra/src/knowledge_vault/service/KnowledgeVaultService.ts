@@ -85,3 +85,13 @@ export async function setGroupMembers(groupId: number, fragmentIds: number[]): P
 export async function getGroupMembers(groupId: number): Promise<number[]> {
   return (await getRequest<{ fragment_ids: number[] }>(`${B}/fragment-groups/${groupId}/members`)).fragment_ids
 }
+
+export type TableWidthStore = Record<string, Record<string, number>>
+
+export async function getTableWidths(): Promise<TableWidthStore> {
+  return (await getRequest<{ widths: TableWidthStore }>(`${B}/ui/table-widths`)).widths || {}
+}
+
+export async function saveTableWidths(widths: TableWidthStore): Promise<TableWidthStore> {
+  return (await putRequest<{ widths: TableWidthStore }>(`${B}/ui/table-widths`, {}, { widths })).widths || {}
+}
