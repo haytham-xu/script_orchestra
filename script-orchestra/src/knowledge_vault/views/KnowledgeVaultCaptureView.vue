@@ -190,6 +190,12 @@
 
           <div class="kv-blocks-edit">
             <div v-for="(blk, i) in editingBlocks" :key="i" class="kv-block-edit">
+              <div class="kv-inline-add-bar kv-inline-add-bar--top">
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'text')">+ Text ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'code')">+ Code ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'url')">+ URL ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'long')">+ Long ↑</el-button>
+              </div>
               <div class="kv-bk-toolbar">
                 <div class="kv-bk-type-group">
                   <button v-for="t in ['text','code','url','long']" :key="t"
@@ -208,12 +214,12 @@
                 :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
                 :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
                 style="margin-top:4px" />
-            </div>
-            <div class="kv-add-block-bar">
-              <el-button text size="small" @click="addBlock('text')">+ Text</el-button>
-              <el-button text size="small" @click="addBlock('code')">+ Code</el-button>
-              <el-button text size="small" @click="addBlock('url')">+ URL</el-button>
-              <el-button text size="small" @click="addBlock('long')">+ Long</el-button>
+              <div class="kv-inline-add-bar kv-inline-add-bar--bottom">
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'text')">+ Text ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'code')">+ Code ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'long')">+ Long ↓</el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -344,6 +350,12 @@
       </el-select>
       <div class="kv-blocks-edit">
         <div v-for="(blk, i) in draftBlocks" :key="i" class="kv-block-edit">
+          <div class="kv-inline-add-bar kv-inline-add-bar--top">
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'text')">+ Text ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'code')">+ Code ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'url')">+ URL ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'long')">+ Long ↑</el-button>
+          </div>
           <div class="kv-bk-toolbar">
             <div class="kv-bk-type-group">
               <button v-for="t in ['text','code','url','long']" :key="t"
@@ -360,12 +372,12 @@
             :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
             :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
             style="margin-top:4px" />
-        </div>
-        <div class="kv-add-block-bar">
-          <el-button text size="small" @click="addDraftBlock('text')">+ Text</el-button>
-          <el-button text size="small" @click="addDraftBlock('code')">+ Code</el-button>
-          <el-button text size="small" @click="addDraftBlock('url')">+ URL</el-button>
-          <el-button text size="small" @click="addDraftBlock('long')">+ Long</el-button>
+          <div class="kv-inline-add-bar kv-inline-add-bar--bottom">
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'text')">+ Text ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'code')">+ Code ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'long')">+ Long ↓</el-button>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -601,7 +613,39 @@
 }
 .kv-bk-type-btn.active { background: #0a84ff; color: #fff; }
 .kv-bk-type-btn:not(.active):hover { background: rgba(10,132,255,0.08); }
-.kv-add-block-bar { display: flex; gap: 6px; padding-top: 4px; }
+.kv-inline-add-bar {
+  display: flex; gap: 2px; flex-wrap: wrap;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity .12s ease, max-height .12s ease, margin .12s ease;
+}
+.kv-inline-add-bar--top { margin-bottom: 0; }
+.kv-inline-add-bar--bottom { margin-top: 0; }
+.kv-block-edit:hover .kv-inline-add-bar,
+.kv-block-edit:focus-within .kv-inline-add-bar {
+  opacity: 1;
+  max-height: 40px;
+  pointer-events: auto;
+}
+.kv-block-edit:hover .kv-inline-add-bar--top,
+.kv-block-edit:focus-within .kv-inline-add-bar--top {
+  margin-bottom: 4px;
+}
+.kv-block-edit:hover .kv-inline-add-bar--bottom,
+.kv-block-edit:focus-within .kv-inline-add-bar--bottom {
+  margin-top: 4px;
+}
+@media (hover: none) {
+  .kv-inline-add-bar {
+    opacity: 1;
+    max-height: 40px;
+    pointer-events: auto;
+  }
+  .kv-inline-add-bar--top { margin-bottom: 4px; }
+  .kv-inline-add-bar--bottom { margin-top: 4px; }
+}
 :deep(.kv-textarea-mono textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 :deep(.kv-input-required .el-input__wrapper) { box-shadow: 0 0 0 1px #f56c6c inset; }
 :deep(.kv-input-required .el-input__wrapper:hover) { box-shadow: 0 0 0 1px #f56c6c inset; }

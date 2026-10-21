@@ -138,8 +138,12 @@ export default defineComponent({
     }
     function cancelEdit() { detailEditing.value = false }
 
-    function addBlock(type: ContentBlock['type'] = 'text') {
-      editingBlocks.value.push({ type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) })
+    function createBlock(type: ContentBlock['type'] = 'text'): ContentBlock {
+      return { type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) }
+    }
+    function insertEditingBlockAt(index: number, type: ContentBlock['type'] = 'text') {
+      const insertAt = Math.max(0, Math.min(index, editingBlocks.value.length))
+      editingBlocks.value.splice(insertAt, 0, createBlock(type))
     }
     function removeBlock(idx: number) { if (editingBlocks.value.length > 1) editingBlocks.value.splice(idx, 1) }
     function moveBlock(idx: number, dir: -1 | 1) {
@@ -199,8 +203,9 @@ export default defineComponent({
       draftGroupId.value = currentGroupId.value
       draftHeaderTouched.value = false; addDialog.value = true
     }
-    function addDraftBlock(type: ContentBlock['type'] = 'text') {
-      draftBlocks.value.push({ type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) })
+    function insertDraftBlockAt(index: number, type: ContentBlock['type'] = 'text') {
+      const insertAt = Math.max(0, Math.min(index, draftBlocks.value.length))
+      draftBlocks.value.splice(insertAt, 0, createBlock(type))
     }
     function removeDraftBlock(idx: number) { if (draftBlocks.value.length > 1) draftBlocks.value.splice(idx, 1) }
     async function addFragment() {
@@ -434,9 +439,9 @@ export default defineComponent({
       openDetail, closeDetail, startEdit, cancelEdit, saveEdit, deleteSelected,
       archiveSelected, unarchiveSelected,
       editingBlocks, editingNote, editingHeader, editingLabelIds,
-      addBlock, removeBlock, moveBlock,
+      insertEditingBlockAt, removeBlock, moveBlock,
       addDialog, draftBlocks, draftNote, draftHeader, draftLabelIds, draftGroupId, saving, draftHeaderTouched,
-      openAdd, addDraftBlock, removeDraftBlock, addFragment,
+      openAdd, insertDraftBlockAt, removeDraftBlock, addFragment,
       groupDialog, editingGroup, savingGroup,
       openCreateGroup, openEditGroup, saveGroup, confirmDeleteGroup,
       groupMemberDialog, fragmentToGroup, targetGroupId,
