@@ -1088,7 +1088,8 @@ def _process_type2_inner(index: int, source_url: str, download_index_url: str,
             {"key": ch.get("key", ""),
              "name": _filename_from_link(ch.get("dl2", "")) if ch.get("dl2") else
                      _sanitize_filename((ch.get("name") or ch.get("key", "").split("/")[-1]) + ".zip"),
-             "dl2": ch.get("dl2", "")}
+             "dl2": ch.get("dl2", ""),
+             "ch_aid": ch.get("ch_aid", "")}
             for ch in chapters if ch.get("key") or ch.get("dl2")
         ]
     else:
