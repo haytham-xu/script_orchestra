@@ -138,8 +138,204 @@ export default defineComponent({
     }
     function cancelEdit() { detailEditing.value = false }
 
-    function addBlock(type: ContentBlock['type'] = 'text') {
-      editingBlocks.value.push({ type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) })
+    function createBlock(type: ContentBlock['type'] = 'text'): ContentBlock {
+      return { type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) }
+    }
+
+    type TableData = { headers: string[]; rows: string[][] }
+    type TableWidthStore = Record<string, Record<string, number>>
+    const TABLE_WIDTHS_KEY = 'knowledge_vault.table_widths.v1'
+
+    const tableWidths = ref<TableWidthStore>({})
+
+    function loadTableWidthsFromLocal() {
+      try {
+        const raw = localStorage.getItem(TABLE_WIDTHS_KEY)
+        if (!raw) return
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') tableWidths.value = parsed
+      } catch {
+        tableWidths.value = {}
+      }
+    }
+
+    function saveTableWidthsToLocal() {
+      try { localStorage.setItem(TABLE_WIDTHS_KEY, JSON.stringify(tableWidths.value))
+      } catch { /* ignore localStorage failures */ }
+    }
+
+    async function loadTableWidths() {
+      loadTableWidthsFromLocal()
+      try {
+        const remote = await api.getTableWidths()
+        if (remote && typeof remote === 'object') {
+          tableWidths.value = remote
+          saveTableWidthsToLocal()
+        }
+      } catch {
+        // Keep local fallback when backend fetch fails
+      }
+    }
+
+    async function syncTableWidthsToServer() {
+      try {
+        await api.saveTableWidths(tableWidths.value)
+      } catch {
+        // Keep local copy even if sync fails
+      }
+    }
+
+    function tableColProp(colIdx: number): string {
+      return `c${colIdx}`
+    }
+
+    function tableRowsForView(body: string): Array<Record<string, string | number>> {
+      const table = tableForView(body)
+      return table.rows.map((cells, rowIdx) => {
+        const row: Record<string, string | number> = { __idx: rowIdx }
+        table.headers.forEach((_, colIdx) => {
+          row[tableColProp(colIdx)] = cells[colIdx] ?? ''
+        })
+        return row
+      })
+    }
+
+    function getTablePersistKey(scope: 'capture' | 'organize', fragId: number, blockIdx: number, colCount: number): string {
+      return `${scope}:${fragId}:${blockIdx}:${colCount}`
+    }
+
+    function getTableColWidth(tableKey: string, colIdx: number): number | undefined {
+      return tableWidths.value[tableKey]?.[tableColProp(colIdx)]
+    }
+
+    function onTableHeaderDragEnd(tableKey: string, newWidth: number, columnProperty?: string) {
+      if (!columnProperty) return
+      const width = Math.max(80, Math.round(newWidth || 0))
+      if (!tableWidths.value[tableKey]) tableWidths.value[tableKey] = {}
+      tableWidths.value[tableKey][columnProperty] = width
+      tableWidths.value = { ...tableWidths.value }
+      saveTableWidthsToLocal()
+      void syncTableWidthsToServer()
+    }
+
+    function defaultTableData(): TableData {
+      return { headers: ['', ''], rows: [['', '']] }
+    }
+
+    function toTableBody(data: TableData): string {
+      return JSON.stringify(data)
+    }
+
+    function parseMarkdownTable(body: string): TableData | null {
+      const lines = body.split('\n').map(l => l.trim()).filter(Boolean)
+      if (lines.length < 2 || !lines[0].includes('|')) return null
+      const parseRow = (line: string): string[] => line
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map(c => c.trim())
+      const headers = parseRow(lines[0])
+      if (!headers.length) return null
+      const dataLines = lines.slice(2)
+      const rows = dataLines
+        .filter(line => line.includes('|'))
+        .map(parseRow)
+        .map(r => headers.map((_, idx) => r[idx] ?? ''))
+      return { headers, rows: rows.length ? rows : [['', ...headers.slice(1).map(() => '')]] }
+    }
+
+    function parseTableBody(body: string): TableData {
+      const fallback = defaultTableData()
+      if (!body?.trim()) return fallback
+      try {
+        const parsed = JSON.parse(body)
+        if (parsed && Array.isArray(parsed.headers) && Array.isArray(parsed.rows)) {
+          const headers = parsed.headers.map((h: unknown) => String(h ?? '').trim())
+          const rows = parsed.rows
+            .filter((r: unknown) => Array.isArray(r))
+            .map((r: unknown) => (r as unknown[]).map(c => String(c ?? '')))
+            .map((r: string[]) => headers.map((_, idx) => r[idx] ?? ''))
+          return { headers, rows: rows.length ? rows : [headers.map(() => '')] }
+        }
+      } catch {
+        const md = parseMarkdownTable(body)
+        if (md) return md
+      }
+      return fallback
+    }
+
+    function ensureTableBody(block: ContentBlock) {
+      if (block.type !== 'table') return
+      const parsed = parseTableBody(block.body)
+      block.body = toTableBody(parsed)
+    }
+
+    function tableDataOf(block: ContentBlock): TableData {
+      ensureTableBody(block)
+      return parseTableBody(block.body)
+    }
+
+    function updateTableData(block: ContentBlock, next: TableData) {
+      block.body = toTableBody(next)
+    }
+
+    function getTableHeaders(block: ContentBlock): string[] {
+      return tableDataOf(block).headers
+    }
+
+    function getTableRows(block: ContentBlock): string[][] {
+      return tableDataOf(block).rows
+    }
+
+    function updateTableHeader(block: ContentBlock, colIdx: number, value: string) {
+      const data = tableDataOf(block)
+      data.headers[colIdx] = value
+      updateTableData(block, data)
+    }
+
+    function updateTableCell(block: ContentBlock, rowIdx: number, colIdx: number, value: string) {
+      const data = tableDataOf(block)
+      data.rows[rowIdx][colIdx] = value
+      updateTableData(block, data)
+    }
+
+    function addTableRow(block: ContentBlock) {
+      const data = tableDataOf(block)
+      data.rows.push(data.headers.map(() => ''))
+      updateTableData(block, data)
+    }
+
+    function removeTableRow(block: ContentBlock, rowIdx: number) {
+      const data = tableDataOf(block)
+      if (data.rows.length <= 1) return
+      data.rows.splice(rowIdx, 1)
+      updateTableData(block, data)
+    }
+
+    function addTableColumn(block: ContentBlock) {
+      const data = tableDataOf(block)
+      data.headers.push('')
+      data.rows = data.rows.map(r => [...r, ''])
+      updateTableData(block, data)
+    }
+
+    function removeTableColumn(block: ContentBlock, colIdx: number) {
+      const data = tableDataOf(block)
+      if (data.headers.length <= 1) return
+      data.headers.splice(colIdx, 1)
+      data.rows = data.rows.map(r => r.filter((_, idx) => idx !== colIdx))
+      updateTableData(block, data)
+    }
+
+    function tableForView(body: string): TableData {
+      return parseTableBody(body)
+    }
+
+    function insertEditingBlockAt(index: number, type: ContentBlock['type'] = 'text') {
+      const insertAt = Math.max(0, Math.min(index, editingBlocks.value.length))
+      const next = createBlock(type)
+      if (next.type === 'table') next.body = toTableBody(defaultTableData())
+      editingBlocks.value.splice(insertAt, 0, next)
     }
     function removeBlock(idx: number) { if (editingBlocks.value.length > 1) editingBlocks.value.splice(idx, 1) }
     function moveBlock(idx: number, dir: -1 | 1) {
@@ -199,8 +395,11 @@ export default defineComponent({
       draftGroupId.value = currentGroupId.value
       draftHeaderTouched.value = false; addDialog.value = true
     }
-    function addDraftBlock(type: ContentBlock['type'] = 'text') {
-      draftBlocks.value.push({ type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) })
+    function insertDraftBlockAt(index: number, type: ContentBlock['type'] = 'text') {
+      const insertAt = Math.max(0, Math.min(index, draftBlocks.value.length))
+      const next = createBlock(type)
+      if (next.type === 'table') next.body = toTableBody(defaultTableData())
+      draftBlocks.value.splice(insertAt, 0, next)
     }
     function removeDraftBlock(idx: number) { if (draftBlocks.value.length > 1) draftBlocks.value.splice(idx, 1) }
     async function addFragment() {
@@ -368,6 +567,7 @@ export default defineComponent({
     }
     function setBlockType(blocks: ContentBlock[], idx: number, type: string) {
       blocks[idx] = { ...blocks[idx], type: type as ContentBlock['type'] }
+      if (blocks[idx].type === 'table') ensureTableBody(blocks[idx])
     }
     async function copyBlock(text: string) {
       try { await navigator.clipboard.writeText(text); ElMessage.success('Copied') }
@@ -400,6 +600,7 @@ export default defineComponent({
     }
 
     onMounted(async () => {
+      await loadTableWidths()
       await loadAll()
       try {
         reindexStatus.value = await api.getReindexStatus()
@@ -434,9 +635,9 @@ export default defineComponent({
       openDetail, closeDetail, startEdit, cancelEdit, saveEdit, deleteSelected,
       archiveSelected, unarchiveSelected,
       editingBlocks, editingNote, editingHeader, editingLabelIds,
-      addBlock, removeBlock, moveBlock,
+      insertEditingBlockAt, removeBlock, moveBlock,
       addDialog, draftBlocks, draftNote, draftHeader, draftLabelIds, draftGroupId, saving, draftHeaderTouched,
-      openAdd, addDraftBlock, removeDraftBlock, addFragment,
+      openAdd, insertDraftBlockAt, removeDraftBlock, addFragment,
       groupDialog, editingGroup, savingGroup,
       openCreateGroup, openEditGroup, saveGroup, confirmDeleteGroup,
       groupMemberDialog, fragmentToGroup, targetGroupId,
@@ -447,6 +648,12 @@ export default defineComponent({
       organizeDeleteOne, organizeDeleteSelected,
       reindexStatus, triggerReindex,
       fmtDate, fragmentSummary, copyBlock, setBlockType, renderMd,
+      tableForView,
+      tableRowsForView, tableColProp,
+      getTablePersistKey, getTableColWidth, onTableHeaderDragEnd,
+      getTableHeaders, getTableRows,
+      updateTableHeader, updateTableCell,
+      addTableRow, removeTableRow, addTableColumn, removeTableColumn,
       expandedLongs, toggleLong,
     }
   },

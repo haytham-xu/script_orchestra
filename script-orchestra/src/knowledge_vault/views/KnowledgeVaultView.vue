@@ -86,7 +86,7 @@
             </div>
             <div class="kv-blocks">
               <div v-for="(blk, i) in searchDetail.blocks" :key="i" class="kv-block">
-                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
                   @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                   <span class="kv-blk-subtitle" v-if="blk.subtitle">{{ blk.subtitle }}</span>
                   <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
@@ -98,6 +98,28 @@
                 <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
                 <div v-else-if="blk.type === 'url'" class="kv-url-body">
                   <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+                </div>
+                <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
+                  <el-table
+                    :data="tableRowsForView(blk.body)"
+                    size="small"
+                    border
+                    class="kv-table-view"
+                    @header-dragend="(newWidth, _oldWidth, column) => onTableHeaderDragEnd(getTablePersistKey('search', searchDetail?.id || 0, i, tableForView(blk.body).headers.length), newWidth, column?.property)"
+                  >
+                    <el-table-column
+                      v-for="(header, colIdx) in tableForView(blk.body).headers"
+                      :key="colIdx"
+                      :prop="tableColProp(colIdx)"
+                      :label="header || `Column ${colIdx + 1}`"
+                      :min-width="120"
+                      :width="getTableColWidth(getTablePersistKey('search', searchDetail?.id || 0, i, tableForView(blk.body).headers.length), colIdx)"
+                    >
+                      <template #default="{ row }">
+                        <span class="kv-table-cell">{{ row[tableColProp(colIdx)] }}</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
                 </div>
                 <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               </div>
@@ -198,6 +220,7 @@
 .kv-blk-bar--code { background: #2d2d2d; }
 .kv-blk-bar--url { background: #f0f7ff; }
 .kv-blk-bar--long { background: #f5f0ff; }
+.kv-blk-bar--table { background: #ecfdf5; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-subtitle {
   flex: 1; font-size: 12px; color: #555; font-style: italic;
@@ -237,6 +260,10 @@
 .kv-url-body { padding: 6px 12px 10px; }
 .kv-url-link { font-size: 12px; color: #0a84ff; word-break: break-all; text-decoration: none; }
 .kv-url-link:hover { text-decoration: underline; }
+.kv-table-view-wrap { padding: 8px 12px 10px; overflow-x: auto; background: #fff; }
+.kv-table-view { min-width: 320px; }
+.kv-table-cell { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #1d1d1f; }
+.kv-table-body { overflow-x: auto; }
 
 /* shared micro */
 .kv-date { font-size: 11px; color: #86868b; white-space: nowrap; }

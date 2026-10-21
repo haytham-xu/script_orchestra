@@ -51,6 +51,11 @@ _SCHEMA = [
         group_id INTEGER NOT NULL,
         PRIMARY KEY (fragment_id, group_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS knowledge_vault_ui_state (
+        pref_key TEXT PRIMARY KEY,
+        pref_value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""",
 ]
 
 
@@ -375,3 +380,34 @@ def get_fragment_group_id(fragment_id: int) -> Optional[int]:
     row = cur.fetchone()
     conn.close()
     return row[0] if row else None
+
+
+# ---- UI state (cross-device preferences) -----------------------------
+
+def get_ui_state(pref_key: str) -> Optional[dict]:
+    conn = _conn()
+    cur = conn.cursor()
+    cur.execute("SELECT pref_value FROM knowledge_vault_ui_state WHERE pref_key = ?", (pref_key,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        parsed = json.loads(row[0])
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def set_ui_state(pref_key: str, value: dict) -> None:
+    conn = _conn()
+    conn.execute(
+        """INSERT INTO knowledge_vault_ui_state (pref_key, pref_value, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(pref_key) DO UPDATE SET
+             pref_value = excluded.pref_value,
+             updated_at = excluded.updated_at""",
+        (pref_key, json.dumps(value, ensure_ascii=False), datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()

@@ -156,7 +156,7 @@
 
           <div class="kv-blocks">
             <div v-for="(blk, i) in selectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -172,6 +172,28 @@
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+              </div>
+              <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
+                <el-table
+                  :data="tableRowsForView(blk.body)"
+                  size="small"
+                  border
+                  class="kv-table-view"
+                  @header-dragend="(newWidth, _oldWidth, column) => onTableHeaderDragEnd(getTablePersistKey('capture', selectedFrag?.id || 0, i, tableForView(blk.body).headers.length), newWidth, column?.property)"
+                >
+                  <el-table-column
+                    v-for="(header, colIdx) in tableForView(blk.body).headers"
+                    :key="colIdx"
+                    :prop="tableColProp(colIdx)"
+                    :label="header || `Column ${colIdx + 1}`"
+                    :min-width="120"
+                    :width="getTableColWidth(getTablePersistKey('capture', selectedFrag?.id || 0, i, tableForView(blk.body).headers.length), colIdx)"
+                  >
+                    <template #default="{ row }">
+                      <span class="kv-table-cell">{{ row[tableColProp(colIdx)] }}</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
               </div>
               <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
             </div>
@@ -190,9 +212,16 @@
 
           <div class="kv-blocks-edit">
             <div v-for="(blk, i) in editingBlocks" :key="i" class="kv-block-edit">
+              <div class="kv-inline-add-bar kv-inline-add-bar--top">
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'text')">+ Text ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'code')">+ Code ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'url')">+ URL ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'table')">+ Table ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'long')">+ Long ↑</el-button>
+              </div>
               <div class="kv-bk-toolbar">
                 <div class="kv-bk-type-group">
-                  <button v-for="t in ['text','code','url','long']" :key="t"
+                  <button v-for="t in ['text','code','url','table','long']" :key="t"
                     class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                     @click="setBlockType(editingBlocks, i, t)">{{ t }}</button>
                 </div>
@@ -203,17 +232,74 @@
                 <el-button text size="small" type="danger" :disabled="editingBlocks.length <= 1" @click="removeBlock(i)">✕</el-button>
               </div>
               <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
-              <el-input v-model="blk.body" type="textarea"
+              <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
                 :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
                 :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
                 :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
                 style="margin-top:4px" />
-            </div>
-            <div class="kv-add-block-bar">
-              <el-button text size="small" @click="addBlock('text')">+ Text</el-button>
-              <el-button text size="small" @click="addBlock('code')">+ Code</el-button>
-              <el-button text size="small" @click="addBlock('url')">+ URL</el-button>
-              <el-button text size="small" @click="addBlock('long')">+ Long</el-button>
+              <div v-else class="kv-table-editor-wrap">
+                <el-table
+                  :data="getTableRows(blk).map((cells, rowIdx) => ({ __idx: rowIdx, cells }))"
+                  size="small"
+                  border
+                  class="kv-table-editor"
+                >
+                  <el-table-column
+                    v-for="(header, colIdx) in getTableHeaders(blk)"
+                    :key="colIdx"
+                    :min-width="150"
+                  >
+                    <template #header>
+                      <div class="kv-table-head-cell">
+                        <el-input
+                          :model-value="header"
+                          size="small"
+                          placeholder="Header"
+                          @update:model-value="(v) => updateTableHeader(blk, colIdx, v)"
+                        />
+                        <el-button
+                          text
+                          size="small"
+                          type="danger"
+                          :disabled="getTableHeaders(blk).length <= 1"
+                          @click="removeTableColumn(blk, colIdx)"
+                        >−</el-button>
+                      </div>
+                    </template>
+                    <template #default="{ row }">
+                      <el-input
+                        :model-value="row.cells[colIdx]"
+                        size="small"
+                        @update:model-value="(v) => updateTableCell(blk, row.__idx, colIdx, v)"
+                      />
+                    </template>
+                  </el-table-column>
+                  <el-table-column width="56" fixed="right">
+                    <template #header>
+                      <el-button text size="small" @click="addTableColumn(blk)">+C</el-button>
+                    </template>
+                    <template #default="{ row }">
+                      <el-button
+                        text
+                        size="small"
+                        type="danger"
+                        :disabled="getTableRows(blk).length <= 1"
+                        @click="removeTableRow(blk, row.__idx)"
+                      >✕</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div class="kv-table-editor-actions">
+                  <el-button text size="small" @click="addTableRow(blk)">+ Row</el-button>
+                </div>
+              </div>
+              <div class="kv-inline-add-bar kv-inline-add-bar--bottom">
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'text')">+ Text ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'code')">+ Code ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'table')">+ Table ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'long')">+ Long ↓</el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -301,7 +387,7 @@
           </div>
           <div class="kv-blocks">
             <div v-for="(blk, i) in organizeSelectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -317,6 +403,28 @@
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+              </div>
+              <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
+                <el-table
+                  :data="tableRowsForView(blk.body)"
+                  size="small"
+                  border
+                  class="kv-table-view"
+                  @header-dragend="(newWidth, _oldWidth, column) => onTableHeaderDragEnd(getTablePersistKey('organize', organizeSelectedFrag?.id || 0, i, tableForView(blk.body).headers.length), newWidth, column?.property)"
+                >
+                  <el-table-column
+                    v-for="(header, colIdx) in tableForView(blk.body).headers"
+                    :key="colIdx"
+                    :prop="tableColProp(colIdx)"
+                    :label="header || `Column ${colIdx + 1}`"
+                    :min-width="120"
+                    :width="getTableColWidth(getTablePersistKey('organize', organizeSelectedFrag?.id || 0, i, tableForView(blk.body).headers.length), colIdx)"
+                  >
+                    <template #default="{ row }">
+                      <span class="kv-table-cell">{{ row[tableColProp(colIdx)] }}</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
               </div>
               <div v-else-if="blk.type === 'long' && expandedLongs.has(blk)" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
             </div>
@@ -344,9 +452,16 @@
       </el-select>
       <div class="kv-blocks-edit">
         <div v-for="(blk, i) in draftBlocks" :key="i" class="kv-block-edit">
+          <div class="kv-inline-add-bar kv-inline-add-bar--top">
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'text')">+ Text ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'code')">+ Code ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'url')">+ URL ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'table')">+ Table ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'long')">+ Long ↑</el-button>
+          </div>
           <div class="kv-bk-toolbar">
             <div class="kv-bk-type-group">
-              <button v-for="t in ['text','code','url','long']" :key="t"
+              <button v-for="t in ['text','code','url','table','long']" :key="t"
                 class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                 @click="setBlockType(draftBlocks, i, t)">{{ t }}</button>
             </div>
@@ -355,17 +470,74 @@
             <el-button text size="small" type="danger" :disabled="draftBlocks.length <= 1" @click="removeDraftBlock(i)">✕</el-button>
           </div>
           <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
-          <el-input v-model="blk.body" type="textarea"
+          <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
             :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
             :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
             :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
             style="margin-top:4px" />
-        </div>
-        <div class="kv-add-block-bar">
-          <el-button text size="small" @click="addDraftBlock('text')">+ Text</el-button>
-          <el-button text size="small" @click="addDraftBlock('code')">+ Code</el-button>
-          <el-button text size="small" @click="addDraftBlock('url')">+ URL</el-button>
-          <el-button text size="small" @click="addDraftBlock('long')">+ Long</el-button>
+          <div v-else class="kv-table-editor-wrap">
+            <el-table
+              :data="getTableRows(blk).map((cells, rowIdx) => ({ __idx: rowIdx, cells }))"
+              size="small"
+              border
+              class="kv-table-editor"
+            >
+              <el-table-column
+                v-for="(header, colIdx) in getTableHeaders(blk)"
+                :key="colIdx"
+                :min-width="150"
+              >
+                <template #header>
+                  <div class="kv-table-head-cell">
+                    <el-input
+                      :model-value="header"
+                      size="small"
+                      placeholder="Header"
+                      @update:model-value="(v) => updateTableHeader(blk, colIdx, v)"
+                    />
+                    <el-button
+                      text
+                      size="small"
+                      type="danger"
+                      :disabled="getTableHeaders(blk).length <= 1"
+                      @click="removeTableColumn(blk, colIdx)"
+                    >−</el-button>
+                  </div>
+                </template>
+                <template #default="{ row }">
+                  <el-input
+                    :model-value="row.cells[colIdx]"
+                    size="small"
+                    @update:model-value="(v) => updateTableCell(blk, row.__idx, colIdx, v)"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column width="56" fixed="right">
+                <template #header>
+                  <el-button text size="small" @click="addTableColumn(blk)">+C</el-button>
+                </template>
+                <template #default="{ row }">
+                  <el-button
+                    text
+                    size="small"
+                    type="danger"
+                    :disabled="getTableRows(blk).length <= 1"
+                    @click="removeTableRow(blk, row.__idx)"
+                  >✕</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="kv-table-editor-actions">
+              <el-button text size="small" @click="addTableRow(blk)">+ Row</el-button>
+            </div>
+          </div>
+          <div class="kv-inline-add-bar kv-inline-add-bar--bottom">
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'text')">+ Text ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'code')">+ Code ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'table')">+ Table ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'long')">+ Long ↓</el-button>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -546,6 +718,7 @@
 .kv-blk-bar--code { background: #2d2d2d; }
 .kv-blk-bar--url { background: #f0f7ff; }
 .kv-blk-bar--long { background: #f5f0ff; }
+.kv-blk-bar--table { background: #ecfdf5; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-date { font-size: 11px; color: #86868b; white-space: nowrap; flex-shrink: 0; }
 .kv-blk-bar--code .kv-blk-date { color: #888; }
@@ -576,6 +749,21 @@
 .kv-url-body { padding: 6px 12px 10px; }
 .kv-url-link { font-size: 12px; color: #0a84ff; word-break: break-all; text-decoration: none; }
 .kv-url-link:hover { text-decoration: underline; }
+.kv-table-body { overflow-x: auto; }
+.kv-table-view-wrap { padding: 8px 12px 10px; overflow-x: auto; background: #fff; }
+.kv-table-view { min-width: 320px; }
+.kv-table-cell { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #1d1d1f; }
+.kv-table-editor-wrap {
+  margin-top: 6px;
+  border: 1px dashed rgba(0,0,0,0.15);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  overflow-x: auto;
+}
+.kv-table-editor { min-width: 360px; }
+.kv-table-head-cell { display: flex; align-items: center; gap: 4px; }
+.kv-table-editor-actions { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
 .kv-blk-subtitle {
   flex: 1; font-size: 12px; color: #555; font-style: italic;
   display: flex; align-items: center; gap: 4px; min-width: 0;
@@ -601,7 +789,39 @@
 }
 .kv-bk-type-btn.active { background: #0a84ff; color: #fff; }
 .kv-bk-type-btn:not(.active):hover { background: rgba(10,132,255,0.08); }
-.kv-add-block-bar { display: flex; gap: 6px; padding-top: 4px; }
+.kv-inline-add-bar {
+  display: flex; gap: 2px; flex-wrap: wrap;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity .12s ease, max-height .12s ease, margin .12s ease;
+}
+.kv-inline-add-bar--top { margin-bottom: 0; }
+.kv-inline-add-bar--bottom { margin-top: 0; }
+.kv-block-edit:hover .kv-inline-add-bar,
+.kv-block-edit:focus-within .kv-inline-add-bar {
+  opacity: 1;
+  max-height: 40px;
+  pointer-events: auto;
+}
+.kv-block-edit:hover .kv-inline-add-bar--top,
+.kv-block-edit:focus-within .kv-inline-add-bar--top {
+  margin-bottom: 4px;
+}
+.kv-block-edit:hover .kv-inline-add-bar--bottom,
+.kv-block-edit:focus-within .kv-inline-add-bar--bottom {
+  margin-top: 4px;
+}
+@media (hover: none) {
+  .kv-inline-add-bar {
+    opacity: 1;
+    max-height: 40px;
+    pointer-events: auto;
+  }
+  .kv-inline-add-bar--top { margin-bottom: 4px; }
+  .kv-inline-add-bar--bottom { margin-top: 4px; }
+}
 :deep(.kv-textarea-mono textarea) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 :deep(.kv-input-required .el-input__wrapper) { box-shadow: 0 0 0 1px #f56c6c inset; }
 :deep(.kv-input-required .el-input__wrapper:hover) { box-shadow: 0 0 0 1px #f56c6c inset; }
