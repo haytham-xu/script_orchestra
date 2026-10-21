@@ -97,6 +97,14 @@
           <el-form-item label="Auto-cleanup retention (days)">
             <el-input-number v-model="editHookDays" :min="0" :max="365" />
           </el-form-item>
+          <el-form-item label="Decrypt destination (manual download)">
+            <el-input v-model="editDownloadDestRoot" placeholder="e.g. D:\recovered\boutique" spellcheck="false" />
+            <p class="fg-hint">
+              Absolute path. Used only when "Decrypt to custom destination" is checked on the
+              Manual Transfer page — files are decrypted here (preserving their folder structure)
+              instead of being reconciled into the repo. Leave empty to disable.
+            </p>
+          </el-form-item>
         </el-form>
       </section>
 
@@ -109,25 +117,41 @@
           <el-button :icon="Delete" type="danger" plain :disabled="!canCleanup" @click="cleanup('all')">Cleanup All</el-button>
         </div>
 
-        <!-- Inline progress bar for Rebuild Cloud Index -->
-        <div v-if="prepareProgress" class="fg-prepare-progress" style="margin-top:12px;">
-          <div class="fg-prepare-bar-row">
-            <el-progress
-              :percentage="Math.min(prepareProgress.pct, 100)"
-              :stroke-width="6"
-              :show-text="false"
-              style="flex: 1;" />
-            <span class="fg-prepare-pct">{{ Math.min(prepareProgress.pct, 100) }}%</span>
+        <!-- Operation progress panel -->
+        <transition name="fg-op-expand">
+          <div v-if="settingsProgress.active" class="fg-op-panel">
+            <!-- Status line -->
+            <div class="fg-op-status-line">
+              <el-icon v-if="settingsProgress.status === 'running'" class="fg-op-icon-spin"><Loading /></el-icon>
+              <el-icon v-else-if="settingsProgress.status === 'done'" class="fg-op-icon-done"><CircleCheck /></el-icon>
+              <el-icon v-else class="fg-op-icon-error"><CircleClose /></el-icon>
+              <span class="fg-op-label">{{ settingsProgress.label }}</span>
+              <span v-if="settingsProgress.count > 0" class="fg-op-count">
+                {{ settingsProgress.count.toLocaleString() }} files
+              </span>
+              <span class="fg-op-dot" :class="`fg-op-dot--${settingsProgress.status}`"></span>
+            </div>
+            <!-- Progress bar -->
+            <div class="fg-op-bar-wrap">
+              <div v-if="settingsProgress.status === 'running'" class="fg-op-bar-indeterminate">
+                <div class="fg-op-bar-inner"></div>
+              </div>
+              <div v-else-if="settingsProgress.status === 'done'" class="fg-op-bar-done"></div>
+              <div v-else class="fg-op-bar-error"></div>
+            </div>
+            <!-- Current file / result message -->
+            <div class="fg-op-detail">
+              <span v-if="settingsProgress.status === 'running' && settingsProgress.currentFile"
+                class="fg-op-current-file" :title="settingsProgress.currentFile">
+                {{ settingsProgress.currentFile }}
+              </span>
+              <span v-else-if="settingsProgress.message" class="fg-op-message"
+                :class="settingsProgress.status === 'error' ? 'fg-op-message--error' : ''">
+                {{ settingsProgress.message }}
+              </span>
+            </div>
           </div>
-          <div class="fg-prepare-meta">
-            <span>{{ prepareProgress.current.toLocaleString() }} / {{ prepareProgress.total.toLocaleString() }} files</span>
-            <span v-if="prepareProgress.eta" class="fg-prepare-eta">ETA {{ prepareProgress.eta }}</span>
-            <span v-else-if="prepareProgress.pct >= 100" class="fg-prepare-done">Done</span>
-          </div>
-          <div v-if="prepareProgress.pct < 100 && prepareProgress.currentFile" class="fg-prepare-file" :title="prepareProgress.currentFile">
-            {{ prepareProgress.currentFile }}
-          </div>
-        </div>
+        </transition>
       </section>
 
       <!-- File Log -->
@@ -196,7 +220,7 @@ import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import { FileGitService } from '../service/FileGitService'
 import type { RepoIndexStats } from '../service/FileGitService'
 import {
-  ArrowLeft, Refresh, Check, Delete,
+  ArrowLeft, Refresh, Check, Delete, Loading, CircleCheck, CircleClose,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -206,9 +230,9 @@ const view = useFileGitRepoDetail()
 const {
   repo, config, isLoading, isBusy,
   canRebuildLocal, canRebuildCloud, canCleanup,
-  editPassword, editRemotePath, editHookDays,
+  editPassword, editRemotePath, editHookDays, editDownloadDestRoot,
   finalRemotePath,
-  prepareProgress,
+  settingsProgress,
   loadAll, loadConfig,
   saveConfig,
   rebuildLocalIndex, rebuildCloudIndex,
@@ -340,10 +364,7 @@ function goToDetail() {
   gap: 32px;
   flex-wrap: wrap;
 }
-.fg-stats-group {
-  min-width: 180px;
-  flex: 1;
-}
+.fg-stats-group { min-width: 180px; flex: 1; }
 .fg-stats-label {
   font-size: 11px;
   font-weight: 600;
@@ -360,50 +381,103 @@ function goToDetail() {
   border-bottom: 1px solid #f2f2f7;
 }
 .fg-stat-row:last-child { border-bottom: none; }
-.fg-stat-name {
-  font-size: 13px;
-  color: #48484a;
-}
-.fg-stat-val {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1d1d1f;
-  font-variant-numeric: tabular-nums;
-}
-.fg-prepare-progress {
-  padding: 10px 12px;
+.fg-stat-name { font-size: 13px; color: #48484a; }
+.fg-stat-val { font-size: 14px; font-weight: 600; color: #1d1d1f; font-variant-numeric: tabular-nums; }
+
+/* Operation progress panel */
+.fg-op-panel {
+  margin-top: 12px;
+  padding: 10px 14px 8px;
   background: #f8f9fa;
-  border-radius: 8px;
   border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
 }
-.fg-prepare-bar-row {
+.fg-op-status-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 7px;
+  margin-bottom: 8px;
 }
-.fg-prepare-pct {
+.fg-op-icon-spin {
+  color: #409eff;
+  animation: fg-spin 1s linear infinite;
+}
+.fg-op-icon-done { color: #67c23a; }
+.fg-op-icon-error { color: #f56c6c; }
+@keyframes fg-spin { to { transform: rotate(360deg); } }
+.fg-op-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  flex: 1;
+  min-width: 0;
+}
+.fg-op-count {
   font-size: 12px;
   font-weight: 600;
   color: #409eff;
-  min-width: 36px;
-  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.fg-prepare-meta {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #606266;
+.fg-op-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
-.fg-prepare-eta { color: #909399; }
-.fg-prepare-done { color: #67c23a; font-weight: 600; }
-.fg-prepare-file {
-  margin-top: 4px;
+.fg-op-dot--running  { background: #409eff; animation: fg-pulse 1.2s ease-in-out infinite; }
+.fg-op-dot--done     { background: #67c23a; }
+.fg-op-dot--error    { background: #f56c6c; }
+.fg-op-dot--idle     { background: #c0c4cc; }
+@keyframes fg-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* Progress bar */
+.fg-op-bar-wrap { height: 4px; border-radius: 2px; overflow: hidden; margin-bottom: 8px; background: #e4e7ed; }
+.fg-op-bar-indeterminate { height: 100%; width: 100%; position: relative; overflow: hidden; }
+.fg-op-bar-inner {
+  position: absolute;
+  height: 100%;
+  width: 35%;
+  background: #409eff;
+  border-radius: 2px;
+  animation: fg-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes fg-indeterminate {
+  0%   { left: -40%; }
+  60%  { left: 100%; }
+  100% { left: 100%; }
+}
+.fg-op-bar-done  { height: 100%; width: 100%; background: #67c23a; border-radius: 2px; }
+.fg-op-bar-error { height: 100%; width: 100%; background: #f56c6c; border-radius: 2px; }
+
+/* Current file / message */
+.fg-op-detail { min-height: 16px; }
+.fg-op-current-file {
   font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   color: #909399;
-  font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: block;
+}
+.fg-op-message {
+  font-size: 12px;
+  color: #606266;
+}
+.fg-op-message--error { color: #f56c6c; }
+
+/* Expand/collapse transition */
+.fg-op-expand-enter-active, .fg-op-expand-leave-active {
+  transition: max-height 0.25s ease, opacity 0.25s ease;
+  max-height: 120px;
+}
+.fg-op-expand-enter-from, .fg-op-expand-leave-to {
+  max-height: 0;
+  opacity: 0;
 }
 </style>

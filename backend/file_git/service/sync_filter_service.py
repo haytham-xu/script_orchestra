@@ -180,6 +180,11 @@ def list_children(repo_root: str, parent: str = "") -> List[dict]:
     Local entries: reads only the target directory with os.listdir — O(1) regardless
     of repo size. No full tree scan.
     Remote entries: derived from the cloud index JSON file (one read per call).
+
+    Each child includes:
+      - size: file size in bytes for local files (None for dirs or remote-only files)
+      - unsynced_count: for directories, how many of their direct children are not
+        fully synced (status != 'synced'); 0 for files
     """
     parent = _norm(parent)
     filt = load(repo_root)
@@ -211,6 +216,22 @@ def list_children(repo_root: str, parent: str = "") -> List[dict]:
         mode = get_mode(filt, child_path)
         status = get_status(filt, child_path, in_local, in_remote)
         can_set = _allowed_overrides(filt, child_path, in_local, in_remote)
+
+        # File size for local files (None for dirs or remote-only files)
+        size: Optional[int] = None
+        if not is_dir and in_local:
+            try:
+                size = os.path.getsize(os.path.join(local_dir, name))
+            except OSError:
+                pass
+
+        # For directories: count how many direct children are not synced
+        unsynced_count = 0
+        if is_dir:
+            unsynced_count = _count_unsynced_children(
+                repo_root, child_path, filt, cloud_paths
+            )
+
         result.append({
             "name": name,
             "path": child_path,
@@ -220,8 +241,35 @@ def list_children(repo_root: str, parent: str = "") -> List[dict]:
             "mode": mode,
             "status": status,
             "can_set": can_set,
+            "size": size,
+            "unsynced_count": unsynced_count,
         })
     return result
+
+
+def _count_unsynced_children(repo_root: str, dir_path: str, filt: dict,
+                              cloud_paths: List[str]) -> int:
+    """Count direct children of dir_path whose sync status is not 'synced'."""
+    local_dir = os.path.join(repo_root, dir_path.replace("/", os.sep))
+    loc_names: set = set()
+    if os.path.isdir(local_dir):
+        for name in os.listdir(local_dir):
+            if name == ".fgit" or name.startswith("."):
+                continue
+            loc_names.add(name)
+
+    cld_map = _direct_children_map(cloud_paths, dir_path)
+    all_names = set(loc_names) | set(cld_map)
+    if not all_names:
+        return 0
+
+    count = 0
+    for name in all_names:
+        gc_path = f"{dir_path}/{name}"
+        status = get_status(filt, gc_path, name in loc_names, name in cld_map)
+        if status != "synced":
+            count += 1
+    return count
 
 
 def _direct_children_map(paths: List[str], parent: str) -> Dict[str, bool]:

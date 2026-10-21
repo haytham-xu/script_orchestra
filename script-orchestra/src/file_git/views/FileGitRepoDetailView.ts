@@ -7,7 +7,7 @@
  *   Diff, Rebuild Local Index, Rebuild Cloud Index,
  *   Cleanup, Resume (visible only when lock=true)
  */
-import { computed, onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -52,16 +52,164 @@ export function useFileGitRepoDetail() {
   const progressHasError = computed(() => progressItems.value.some(i => i.status === 'error'))
   const progressActiveCount = computed(() => progressItems.value.filter(i => i.status === 'active').length)
 
-  // Manual upload inline progress bar + ETA
-  const prepareProgress = ref<{
-    current: number; total: number; pct: number; currentFile: string; eta: string | null
-  } | null>(null)
-  const _prepareStartMs = ref(0)
+  // Manual upload prepare operation progress panel
+  const manualPreparePanel = reactive({
+    active: false,
+    status: 'idle' as 'idle' | 'running' | 'done' | 'error',
+    current: 0,
+    total: 0,
+    pct: 0,
+    currentFile: '',
+    eta: null as string | null,
+    message: '',
+  })
+  let _mpStartMs = 0
+  let _mpHideTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Settings-page operation progress panel
+  const settingsProgress = reactive({
+    active: false,
+    op: '',
+    label: '',
+    status: 'idle' as 'idle' | 'running' | 'done' | 'error',
+    count: 0,
+    message: '',
+    currentFile: '',
+  })
+  let _sHideTimer: ReturnType<typeof setTimeout> | null = null
+
+  function _settingsStart(op: string, label: string) {
+    if (_sHideTimer) { clearTimeout(_sHideTimer); _sHideTimer = null }
+    settingsProgress.active = true
+    settingsProgress.op = op
+    settingsProgress.label = label
+    settingsProgress.status = 'running'
+    settingsProgress.count = 0
+    settingsProgress.message = ''
+    settingsProgress.currentFile = ''
+  }
+
+  function _settingsDone(ok: boolean, message: string, count?: number) {
+    if (!settingsProgress.active) return
+    settingsProgress.status = ok ? 'done' : 'error'
+    settingsProgress.message = message
+    if (count !== undefined) settingsProgress.count = count
+    _sHideTimer = setTimeout(() => {
+      settingsProgress.active = false
+    }, 5000)
+  }
+
+  function _manualPrepareStart() {
+    if (_mpHideTimer) { clearTimeout(_mpHideTimer); _mpHideTimer = null }
+    manualPreparePanel.active = true
+    manualPreparePanel.status = 'running'
+    manualPreparePanel.current = 0
+    manualPreparePanel.total = 0
+    manualPreparePanel.pct = 0
+    manualPreparePanel.currentFile = ''
+    manualPreparePanel.eta = null
+    manualPreparePanel.message = ''
+    _mpStartMs = 0
+  }
+
+  function _manualPrepareDone(ok: boolean, message: string) {
+    if (!manualPreparePanel.active) return
+    manualPreparePanel.status = ok ? 'done' : 'error'
+    manualPreparePanel.message = message
+    if (manualPreparePanel.total > 0) {
+      manualPreparePanel.current = manualPreparePanel.total
+      manualPreparePanel.pct = 100
+    }
+    manualPreparePanel.eta = null
+    _mpHideTimer = setTimeout(() => { manualPreparePanel.active = false }, 5000)
+  }
 
   // Post-manual-upload confirm result
   const confirmResult = ref<{
     ok: boolean; confirmed: number; missing: string[]; message: string
   } | null>(null)
+
+  // Confirm-step operation progress panel
+  const confirmProgress = reactive({
+    active: false,
+    status: 'idle' as 'idle' | 'running' | 'done' | 'error',
+    step: 0,
+    totalSteps: 4,
+    stepLabel: '',
+    message: '',
+  })
+  let _cHideTimer: ReturnType<typeof setTimeout> | null = null
+
+  function _confirmStart() {
+    if (_cHideTimer) { clearTimeout(_cHideTimer); _cHideTimer = null }
+    confirmProgress.active = true
+    confirmProgress.status = 'running'
+    confirmProgress.step = 0
+    confirmProgress.stepLabel = 'Initiating...'
+    confirmProgress.message = ''
+  }
+
+  function _confirmDone(ok: boolean, message: string) {
+    if (!confirmProgress.active) return
+    confirmProgress.status = ok ? 'done' : 'error'
+    confirmProgress.message = message
+    _cHideTimer = setTimeout(() => { confirmProgress.active = false }, 5000)
+  }
+
+  // Manual-download decrypt progress panel (mirrors manualPreparePanel)
+  const downloadPanel = reactive({
+    active: false,
+    status: 'idle' as 'idle' | 'running' | 'done' | 'error',
+    current: 0,
+    total: 0,
+    pct: 0,
+    currentFile: '',
+    eta: null as string | null,
+    message: '',
+  })
+  let _dlStartMs = 0
+  let _dlHideTimer: ReturnType<typeof setTimeout> | null = null
+
+  function _dlStart() {
+    if (_dlHideTimer) { clearTimeout(_dlHideTimer); _dlHideTimer = null }
+    downloadPanel.active = true
+    downloadPanel.status = 'running'
+    downloadPanel.current = 0
+    downloadPanel.total = 0
+    downloadPanel.pct = 0
+    downloadPanel.currentFile = ''
+    downloadPanel.eta = null
+    downloadPanel.message = ''
+    _dlStartMs = 0
+  }
+
+  function _dlDone(ok: boolean, message: string) {
+    if (!downloadPanel.active) return
+    downloadPanel.status = ok ? 'done' : 'error'
+    downloadPanel.message = message
+    if (downloadPanel.total > 0) {
+      downloadPanel.current = downloadPanel.total
+      downloadPanel.pct = 100
+    }
+    downloadPanel.eta = null
+    _dlHideTimer = setTimeout(() => { downloadPanel.active = false }, 5000)
+  }
+
+  // Post-manual-download result
+  const downloadResult = ref<{
+    ok: boolean; decrypted: number; unmapped: string[]
+    destination: string | null; message: string
+  } | null>(null)
+
+  // Manual-download "decrypt to custom destination" toggle
+  const downloadUseCustomDest = ref(false)
+
+  // Download-scan lazy tree state
+  const dlScanTreeRef = ref<any>(null)
+  const dlScanTreeKey = ref(0)
+  const dlScanLoading = ref(false)
+  const dlScanSummary = ref<{ count: number; total_size: number } | null>(null)
+  const dlScanDone = ref(false)   // true once a scan has produced results
 
   // Diff panel state
   const diffAdded = ref<DiffEntry[]>([])
@@ -75,6 +223,7 @@ export function useFileGitRepoDetail() {
   const editPassword = ref('')
   const editRemotePath = ref('')
   const editHookDays = ref<number | null>(null)
+  const editDownloadDestRoot = ref('')
 
   // Manual upload state — persisted to localStorage per repo so subpath
   // survives page refresh.
@@ -168,6 +317,8 @@ export function useFileGitRepoDetail() {
         mode: c.mode,
         status: c.status,
         can_set: c.can_set,
+        size: c.size ?? null,
+        unsynced_count: c.unsynced_count ?? 0,
         isLeaf: !c.is_dir,
       }))
       resolve(nodes)
@@ -195,6 +346,53 @@ export function useFileGitRepoDetail() {
   }
 
   const syncTreeKey = ref(0)
+
+  // ------------------------------------------------------------------
+  // Manual-download scan — lazy tree of remote-only (cloud exists, local
+  // missing) entries, showing plaintext + encrypted paths.
+  // ------------------------------------------------------------------
+
+  async function loadDownloadScanChildren(node: any, resolve: (data: any[]) => void) {
+    if (!dlScanDone.value) { resolve([]); return }
+    const parentPath = node.level === 0 ? '' : node.data.path
+    if (node.level === 0) dlScanLoading.value = true
+    try {
+      const res = await FileGitService.getDownloadScanChildren(repoId.value, parentPath)
+      const nodes = (res.children || []).map((c) => ({
+        label: c.name,
+        path: c.path,
+        is_dir: c.is_dir,
+        size: c.size ?? null,
+        encoded_path: c.encoded_path,
+        isLeaf: !c.is_dir,
+      }))
+      resolve(nodes)
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Failed to load scan tree')
+      resolve([])
+    } finally {
+      if (node.level === 0) dlScanLoading.value = false
+    }
+  }
+
+  async function runDownloadScan() {
+    dlScanLoading.value = true
+    try {
+      const res = await FileGitService.downloadScan(repoId.value)
+      if (!res.success) {
+        ElMessage.error(res.error || 'Scan failed')
+        return
+      }
+      dlScanSummary.value = { count: res.count ?? 0, total_size: res.total_size ?? 0 }
+      dlScanDone.value = true
+      ElMessage.success(res.message || `Found ${res.count ?? 0} remote-only item(s)`)
+      dlScanTreeKey.value += 1   // force the lazy tree to reload from root
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Scan failed')
+    } finally {
+      dlScanLoading.value = false
+    }
+  }
 
   // ------------------------------------------------------------------
   // File Log — per-action structured log viewer
@@ -389,6 +587,7 @@ export function useFileGitRepoDetail() {
         editPassword.value = ''
         editRemotePath.value = res.config.remote_path
         editHookDays.value = res.config.hook_retention_days ?? 7
+        editDownloadDestRoot.value = res.config.download_dest_root ?? ''
       } else if (res.error) {
         ElMessage.error(res.error)
       }
@@ -418,6 +617,7 @@ export function useFileGitRepoDetail() {
       const patch: any = {
         remote_path: editRemotePath.value.trim(),
         hook_retention_days: editHookDays.value ?? 7,
+        download_dest_root: editDownloadDestRoot.value.trim(),
       }
       // Only send password when the user typed a new one
       if (editPassword.value) patch.password = editPassword.value
@@ -474,8 +674,6 @@ export function useFileGitRepoDetail() {
 
   function startProgressTracking(operation: string) {
     progressItems.value = []
-    prepareProgress.value = null
-    _prepareStartMs.value = 0
     fileGitWS.connect()
     // Clear any stale listeners before registering new ones — prevents duplicate
     // streams when startProgressTracking is called more than once (e.g. onMounted
@@ -506,25 +704,53 @@ export function useFileGitRepoDetail() {
           progressItems.value.push({ path: label, action: operation, status: 'active', detail: evt.message })
         }
       }
-      // Update inline progress bar for manual_upload — only accept events that
-      // move forward (same total + higher current, or a different total = new run).
-      if (evt.current > 0 && evt.total > 0) {
-        const prev = prepareProgress.value
-        const sameRun = prev && prev.total === evt.total
-        if (!sameRun || evt.current >= prev.current) {
+      // Update prepare panel — only for manual_upload operation
+      if (evt.operation === 'manual_upload' && evt.current > 0 && evt.total > 0) {
+        if (evt.current >= manualPreparePanel.current) {
           const now = Date.now()
-          if (!sameRun) _prepareStartMs.value = now
-          if (_prepareStartMs.value === 0) _prepareStartMs.value = now
-          const elapsed = (now - _prepareStartMs.value) / 1000
+          if (_mpStartMs === 0) _mpStartMs = now
+          const elapsed = (now - _mpStartMs) / 1000
           const rate = elapsed > 0 ? evt.current / elapsed : 0
           const etaSec = rate > 0 ? (evt.total - evt.current) / rate : null
-          prepareProgress.value = {
-            current: evt.current,
-            total: evt.total,
-            pct: evt.percentage,
-            currentFile: evt.message.replace(/^ENCRYPT /, ''),
-            eta: etaSec !== null ? _fmtEta(etaSec) : null,
-          }
+          manualPreparePanel.current = evt.current
+          manualPreparePanel.total = evt.total
+          manualPreparePanel.pct = evt.percentage
+          manualPreparePanel.currentFile = evt.message.replace(/^ENCRYPT /, '')
+          manualPreparePanel.eta = etaSec !== null ? _fmtEta(etaSec) : null
+        }
+      }
+      // Update settings panel for scan operations
+      if (evt.phase === 'scan' && settingsProgress.active && settingsProgress.op === evt.operation) {
+        settingsProgress.count = evt.current
+        const rawMsg = evt.message
+        if (rawMsg.startsWith('DONE ')) {
+          // Completion sentinel emitted by rebuild commands ("DONE N files" / "DONE N entries")
+          _settingsDone(true, rawMsg.slice(5), evt.current)
+          _finishProgressTracking()
+        } else {
+          const rawPath = rawMsg.replace(/^SCAN /, '')
+          if (rawPath && rawPath !== 'done') settingsProgress.currentFile = rawPath
+        }
+      }
+      // Update confirm progress panel for post_manual_upload phase events
+      if (evt.operation === 'post_manual_upload' && evt.phase !== 'queue' && confirmProgress.active) {
+        confirmProgress.step = evt.current
+        confirmProgress.totalSteps = evt.total
+        confirmProgress.stepLabel = evt.message
+      }
+      // Update download decrypt panel — only for post_manual_download operation
+      if (evt.operation === 'post_manual_download' && evt.current > 0 && evt.total > 0) {
+        if (evt.current >= downloadPanel.current) {
+          const now = Date.now()
+          if (_dlStartMs === 0) _dlStartMs = now
+          const elapsed = (now - _dlStartMs) / 1000
+          const rate = elapsed > 0 ? evt.current / elapsed : 0
+          const etaSec = rate > 0 ? (evt.total - evt.current) / rate : null
+          downloadPanel.current = evt.current
+          downloadPanel.total = evt.total
+          downloadPanel.pct = evt.percentage
+          downloadPanel.currentFile = evt.message.replace(/^(DECRYPT|SKIP) /, '')
+          downloadPanel.eta = etaSec !== null ? _fmtEta(etaSec) : null
         }
       }
     })
@@ -539,9 +765,6 @@ export function useFileGitRepoDetail() {
   function _finishProgressTracking() {
     fileGitWS.off(repoId.value)
     progressItems.value.forEach(i => { if (i.status === 'active') i.status = 'done' })
-    if (prepareProgress.value) {
-      prepareProgress.value = { ...prepareProgress.value, current: prepareProgress.value.total, pct: 100, eta: null }
-    }
   }
 
   async function _pushWithDryRun() {
@@ -647,17 +870,22 @@ export function useFileGitRepoDetail() {
     await loadStatus()
   }
 
-  const manualUpload = () => {
+  const manualUpload = async () => {
+    _manualPrepareStart()
     startProgressTracking('manual_upload')
-    return runAction(
+    await runAction(
       'Manual Upload',
       () => FileGitService.manualUpload(repoId.value, manualSubpath.value.trim()),
-      _finishProgressTracking,
+      (res: any) => _manualPrepareDone(true, res.message || 'Prepared'),
     )
+    if (manualPreparePanel.status === 'running') _manualPrepareDone(false, 'Failed')
+    _finishProgressTracking()
   }
-  const postManualUpload = () => {
+  const postManualUpload = async () => {
     confirmResult.value = null
-    return runAction(
+    _confirmStart()
+    startProgressTracking('post_manual_upload')
+    await runAction(
       'Post Manual Upload',
       () => FileGitService.postManualUpload(repoId.value),
       (res: any) => {
@@ -667,17 +895,68 @@ export function useFileGitRepoDetail() {
           missing: res.missing ?? [],
           message: res.message || '',
         }
+        _confirmDone(true, res.message || `${res.confirmed ?? '?'} files confirmed`)
       },
     )
+    if (confirmProgress.status === 'running') _confirmDone(false, 'Failed')
+    _finishProgressTracking()
   }
   const preManualDownload = () => runAction(
     'Pre Manual Download',
     () => FileGitService.preManualDownload(repoId.value),
   )
-  const postManualDownload = () => runAction(
-    'Post Manual Download',
-    () => FileGitService.postManualDownload(repoId.value),
+  const postManualDownload = async () => {
+    downloadResult.value = null
+    _dlStart()
+    startProgressTracking('post_manual_download')
+    let ok = false
+    let message = 'Done'
+    await runAction(
+      'Post Manual Download',
+      async () => {
+        const res: any = await FileGitService.postManualDownload(
+          repoId.value, downloadUseCustomDest.value,
+        )
+        // Populate result regardless of success so unmapped files stay visible
+        // (success is false when some ciphertext couldn't be mapped back).
+        downloadResult.value = {
+          ok: !!res.success,
+          decrypted: res.decrypted ?? 0,
+          unmapped: res.unmapped ?? [],
+          destination: res.destination ?? null,
+          message: res.message || '',
+        }
+        ok = !!res.success
+        message = res.message || 'Done'
+        return res
+      },
+    )
+    _dlDone(ok, message)
+    _finishProgressTracking()
+  }
+
+  const canAbandonManualUpload = computed(() =>
+    !isBusy.value && isLocked.value && lockActionType.value === 'manual_upload'
   )
+  async function abandonManualUpload() {
+    try {
+      await ElMessageBox.confirm(
+        'This will release the lock and clear the buffer. Any encrypted files in .fgit/buffer/ will be deleted.',
+        'Abandon Manual Upload',
+        { confirmButtonText: 'Abandon', cancelButtonText: 'Keep', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+    try {
+      const res = await FileGitService.abandonManualUpload(repoId.value)
+      ElMessage.info(res.message || 'Manual upload abandoned')
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.error || e.message || 'Abandon failed')
+    }
+    await loadStatus()
+    await loadQueue()
+  }
 
   async function runDiff() {
     isBusy.value = true
@@ -700,10 +979,18 @@ export function useFileGitRepoDetail() {
     }
   }
 
-  const rebuildLocalIndex = () => runAction(
-    'Rebuild Local Index',
-    () => FileGitService.rebuildLocalIndex(repoId.value),
-  )
+  const rebuildLocalIndex = async () => {
+    if (isBusy.value) return
+    _settingsStart('rebuild_local_index', 'Rebuild Local Index')
+    startProgressTracking('rebuild_local_index')
+    await runAction(
+      'Rebuild Local Index',
+      () => FileGitService.rebuildLocalIndex(repoId.value),
+      (res: any) => _settingsDone(true, res.message || `${res.count ?? '?'} files`, res.count),
+    )
+    if (settingsProgress.status === 'running') _settingsDone(false, 'Failed')
+    _finishProgressTracking()
+  }
 
   const applyFilter = () => {
     startProgressTracking('apply_filter')
@@ -726,15 +1013,19 @@ export function useFileGitRepoDetail() {
 
     // Confirmed — run with progress tracking
     isBusy.value = true
+    _settingsStart('rebuild_cloud_index', 'Rebuild Cloud Index')
     startProgressTracking('rebuild_cloud_index')
     try {
       const res = await FileGitService.rebuildCloudIndex(repoId.value)
       if (res.success) {
+        _settingsDone(true, res.message || 'Cloud index rebuilt', res.count)
         ElMessage.success(res.message || 'Cloud index rebuilt')
       } else {
+        _settingsDone(false, res.error || 'Rebuild failed')
         ElMessage.error(res.error || 'Rebuild failed')
       }
     } catch (e: any) {
+      _settingsDone(false, 'Error')
       ElMessage.error(e.response?.data?.error || e.message || 'Rebuild failed')
     } finally {
       _finishProgressTracking()
@@ -764,13 +1055,17 @@ export function useFileGitRepoDetail() {
       return
     }
     try {
+      _settingsStart(`cleanup_${mode}`, `Cleanup ${mode === 'expired' ? 'Expired' : 'All'}`)
       const res = await FileGitService.cleanup(repoId.value, mode)
       if (res.success) {
+        _settingsDone(true, res.message || 'Cleanup complete')
         ElMessage.success(res.message || 'Cleanup complete')
       } else {
+        _settingsDone(false, res.error || 'Cleanup failed')
         ElMessage.error(res.error || 'Cleanup failed')
       }
     } catch (e: any) {
+      _settingsDone(false, 'Error')
       ElMessage.error(e.response?.data?.error || e.message || 'Cleanup failed')
     } finally {
       isBusy.value = false
@@ -822,6 +1117,32 @@ export function useFileGitRepoDetail() {
 
   function stopQueuePoll() { /* no-op: replaced by WebSocket */ }
 
+  function _opLabel(op: string): string {
+    if (op === 'rebuild_local_index') return 'Rebuild Local Index'
+    if (op === 'rebuild_cloud_index') return 'Rebuild Cloud Index'
+    if (op === 'cleanup_expired') return 'Cleanup Expired'
+    if (op === 'cleanup_all') return 'Cleanup All'
+    return op
+  }
+
+  async function loadSettingsProgress() {
+    try {
+      const res = await FileGitService.getSettingsProgress(repoId.value)
+      if (!res.success || !res.state) return
+      const { operation, status, message, count } = res.state
+      const label = _opLabel(operation)
+      if (status === 'running') {
+        _settingsStart(operation, label)
+        startProgressTracking(operation)
+      } else if (status === 'done' || status === 'error') {
+        _settingsStart(operation, label)
+        _settingsDone(status === 'done', message, count > 0 ? count : undefined)
+      }
+    } catch {
+      // non-fatal: progress panel simply doesn't restore
+    }
+  }
+
   function goBack() {
     router.push('/file-git')
   }
@@ -830,13 +1151,19 @@ export function useFileGitRepoDetail() {
     loadAll().then(() => {
       if (queue.value?.lock === true) {
         startProgressTracking(queue.value.action_type ?? 'operation')
+      } else {
+        loadSettingsProgress()
       }
     })
     loadQueue()
     fileGitWS.onQueue(repoId.value, applyQueueUpdate)
     loadFileLogFolders()
   })
-  onUnmounted(() => { fileGitWS.off(repoId.value) })
+  onUnmounted(() => {
+    fileGitWS.off(repoId.value)
+    if (_sHideTimer) clearTimeout(_sHideTimer)
+    if (_cHideTimer) clearTimeout(_cHideTimer)
+  })
 
   return {
     repoId,
@@ -863,8 +1190,9 @@ export function useFileGitRepoDetail() {
     progressVisible,
     progressHasError,
     progressActiveCount,
-    prepareProgress,
+    manualPreparePanel,
     confirmResult,
+    confirmProgress,
     canPushPull,
     canResume,
     canPause,
@@ -891,6 +1219,7 @@ export function useFileGitRepoDetail() {
     editPassword,
     editRemotePath,
     editHookDays,
+    editDownloadDestRoot,
     manualSubpath,
     manualUploadRemotePath,
     manualUploadLocalPath,
@@ -907,8 +1236,20 @@ export function useFileGitRepoDetail() {
     stop,
     manualUpload,
     postManualUpload,
+    canAbandonManualUpload,
+    abandonManualUpload,
     preManualDownload,
     postManualDownload,
+    downloadResult,
+    downloadPanel,
+    downloadUseCustomDest,
+    dlScanTreeRef,
+    dlScanTreeKey,
+    dlScanLoading,
+    dlScanSummary,
+    dlScanDone,
+    loadDownloadScanChildren,
+    runDownloadScan,
     runDiff,
     rebuildLocalIndex,
     rebuildCloudIndex,
@@ -916,6 +1257,7 @@ export function useFileGitRepoDetail() {
     cleanup,
     openFolder,
     goBack,
+    settingsProgress,
     fileTreeKey,
     filesLoading,
     loadFileTreeChildren,

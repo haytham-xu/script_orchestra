@@ -21,15 +21,40 @@ const path = require('path')
 const HOME = process.env.HOME
 const ROOT = __dirname
 
+// Python interpreter path differs by OS.
+// Windows: venv\Scripts\pythonw.exe  (or python.exe)
+// Linux/Mac: venv/bin/python
+const IS_WIN = process.platform === 'win32'
+const PYTHON = IS_WIN
+  ? path.join(ROOT, 'backend/venv/Scripts/pythonw.exe')
+  : path.join(ROOT, 'backend/venv/bin/python')
+
 module.exports = {
   apps: [
     {
       name: 'sob', // Script Orchestra Backend
       cwd: path.join(ROOT, 'backend'),
-      script: path.join(ROOT, 'backend/venv/bin/python'),
-      args: 'app.py',
-      interpreter: 'none',
+      script: 'app.py',
+      interpreter: PYTHON,
+      interpreter_args: '-u',
       exec_mode: 'fork',
+      // Watch for code changes and restart automatically.
+      // ignore_watch uses minimatch glob patterns (NOT regex).
+      watch: true,
+      ignore_watch: [
+        'venv', 'node_modules',
+        'logs', 'test_data', 'temp', 'temp_poc',
+        'captcha_training', 'captcha_templates',
+        // Ignore any nested tests/ or __pycache__/ directory
+        '**/tests', '**/__pycache__',
+        // Ignore all SQLite files including WAL/SHM journal files
+        'data',
+        '**/*.pyc',
+        '**/*.db', '**/*.db-wal', '**/*.db-shm', '**/*.sqlite',
+        '**/*.log',
+        '**/*.json',
+        '**/*.jpg', '**/*.jpeg', '**/*.png',
+      ],
       env: {
         PORT: '50001',
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || '',

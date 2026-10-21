@@ -42,7 +42,18 @@
                 </el-select>
               </template>
               <el-tag v-else size="small" type="info" class="fg-sync-inherited">inherited</el-tag>
-              <el-tag size="small" :type="statusTagType(data.status)" class="fg-sync-status">
+              <!-- Partial sync: dir has 'synced' mode but some direct children are not synced -->
+              <template v-if="data.is_dir && data.unsynced_count > 0 && data.status === 'synced'">
+                <el-tag size="small" type="warning" class="fg-sync-status">partial</el-tag>
+                <el-tooltip
+                  placement="top"
+                  :content="`${data.unsynced_count} direct item(s) not fully synced`"
+                  :hide-after="0"
+                  effect="dark">
+                  <el-icon class="fg-partial-icon" @click.stop><InfoFilled /></el-icon>
+                </el-tooltip>
+              </template>
+              <el-tag v-else size="small" :type="statusTagType(data.status)" class="fg-sync-status">
                 {{ data.status }}
               </el-tag>
               <!-- Encrypted cloud path hint — only for ENCRYPTED repos -->
@@ -191,6 +202,14 @@ function modeLabel(mode: SyncMode) {
 .fg-sync-select { width: 130px; flex-shrink: 0; }
 .fg-sync-status { flex-shrink: 0; }
 .fg-sync-inherited { opacity: 0.55; }
+.fg-partial-icon {
+  font-size: 13px;
+  color: #e6a23c;
+  cursor: default;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.fg-partial-icon:hover { color: #cf8110; }
 .fg-sync-enc-icon {
   font-size: 13px;
   color: #c0c4cc;

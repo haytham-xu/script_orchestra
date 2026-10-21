@@ -29,8 +29,11 @@ from .command import (
     command_stop,
     command_manual_upload,
     command_post_manual_upload,
+    command_abandon_manual_upload,
     command_pre_manual_download,
     command_post_manual_download,
+    command_download_scan,
+    download_scan_children,
     command_diff,
     command_rebuild_local_index,
     command_rebuild_cloud_index,
@@ -42,6 +45,7 @@ from .service import QueueService
 from .service import sync_filter_service as SyncFilterService
 from .service.index_service import IndexService
 from .settings_manager import SettingsManager
+from .settings_op_store import get_op_state
 from . import baidu_oauth
 from .websocket_service import emit_progress, emit_status
 
@@ -453,12 +457,26 @@ class RepoPostManualUploadResource(Resource):
                 "confirmed": result.confirmed,
                 "missing": result.missing,
             }
-            return (_ok(payload) if result.ok
-                    else ({"success": False, "error": result.message, **payload}, 500))
+            # Always return 200 — missing files is a business-logic outcome,
+            # not a server error. Frontend reads `missing` list to decide how to display.
+            return _ok({"success": result.ok, **payload})
         except LookupError as exc:
             return _err(str(exc), 404)
         except ValueError as exc:
             return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/abandon-manual-upload')
+class RepoAbandonManualUploadResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_abandon_manual_upload(repo_id)
+            return (_ok({"message": result["message"]}) if result["ok"]
+                    else ({"success": False, "error": result["message"]}, 400))
+        except LookupError as exc:
+            return _err(str(exc), 404)
         except Exception as exc:
             return _err(str(exc))
 
@@ -487,15 +505,52 @@ class RepoPreManualDownloadResource(Resource):
 class RepoPostManualDownloadResource(Resource):
     def post(self, repo_id):
         try:
-            result = command_post_manual_download(repo_id)
+            use_custom_dest = bool(
+                (request.get_json(silent=True) or {}).get("use_custom_dest", False)
+            )
+            result = command_post_manual_download(repo_id, use_custom_dest=use_custom_dest)
             payload = {
                 "message": result.message,
                 "action_folder": result.action_folder,
                 "decrypted": result.decrypted,
                 "unmapped": result.unmapped,
+                "destination": result.destination,
             }
-            return (_ok(payload) if result.ok
-                    else ({"success": False, "error": result.message, **payload}, 500))
+            # Always 200 — unmapped files are a business outcome, not a server error.
+            return _ok({"success": result.ok, **payload})
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/download-scan')
+class RepoDownloadScanResource(Resource):
+    def post(self, repo_id):
+        try:
+            result = command_download_scan(repo_id)
+            return _ok({
+                "message": result.message,
+                "count": result.count,
+                "total_size": result.total_size,
+            })
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        except ValueError as exc:
+            return _err(str(exc), 400)
+        except Exception as exc:
+            return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/download-scan/children')
+class RepoDownloadScanChildrenResource(Resource):
+    def get(self, repo_id):
+        try:
+            path = request.args.get("path", "")
+            children = download_scan_children(repo_id, path)
+            return _ok({"children": children})
         except LookupError as exc:
             return _err(str(exc), 404)
         except ValueError as exc:
@@ -636,6 +691,14 @@ class RepoCleanupResource(Resource):
             return _err(str(exc), 400)
         except Exception as exc:
             return _err(str(exc))
+
+
+@ns.route('/file-git/repos/<string:repo_id>/settings-progress')
+class RepoSettingsProgressResource(Resource):
+    def get(self, repo_id):
+        """Return the last/current settings-page operation state for this repo."""
+        state = get_op_state(repo_id)
+        return _ok({"state": state})
 
 
 @ns.route('/file-git/settings')

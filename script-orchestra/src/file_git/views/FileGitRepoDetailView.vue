@@ -157,18 +157,31 @@
       <section class="fg-card">
         <div class="fg-files-header">
           <h2>Files</h2>
-          <el-button size="small" :icon="Refresh" :loading="filesLoading" @click="refreshFileTree">Refresh</el-button>
+          <el-button size="small" :icon="Refresh" :loading="syncLoading" @click="syncTreeKey++">Refresh</el-button>
         </div>
         <el-tree
-          :key="fileTreeKey"
+          :key="syncTreeKey"
           lazy
-          :load="loadFileTreeChildren"
+          :load="loadSyncChildren"
           :props="{ label: 'label', isLeaf: 'isLeaf' }"
           node-key="path">
           <template #default="{ data }">
             <span class="fg-tree-node">
               <span>{{ data.label }}</span>
-              <span v-if="!data.is_dir" class="fg-size">{{ formatSize(data.size) }}</span>
+              <template v-if="data.is_dir && data.unsynced_count > 0 && data.status === 'synced'">
+                <el-tag size="small" type="warning" class="fg-sync-status">partial</el-tag>
+                <el-tooltip
+                  placement="top"
+                  :content="`${data.unsynced_count} direct item(s) not fully synced`"
+                  :hide-after="0"
+                  effect="dark">
+                  <el-icon class="fg-partial-icon" @click.stop><InfoFilled /></el-icon>
+                </el-tooltip>
+              </template>
+              <el-tag v-else size="small" :type="statusTagType(data.status)" class="fg-sync-status">
+                {{ data.status }}
+              </el-tag>
+              <span v-if="!data.is_dir && data.size != null" class="fg-size">{{ formatSize(data.size) }}</span>
             </span>
           </template>
         </el-tree>
@@ -269,7 +282,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useFileGitRepoDetail } from './FileGitRepoDetailView'
 import {
   ArrowLeft, FolderOpened, Refresh, Upload, Download, Lock, Setting, Tools, Filter, QuestionFilled,
-  VideoPause, Clock,
+  VideoPause, Clock, InfoFilled,
 } from '@element-plus/icons-vue'
 import ProgressPopover from '../components/ProgressPopover.vue'
 
@@ -289,6 +302,7 @@ const {
   push, pull, resume, pause, unpause, stop,
   openFolder, goBack,
   fileTreeKey, filesLoading, loadFileTreeChildren, refreshFileTree,
+  syncTreeKey, syncLoading, loadSyncChildren,
   queueCurrent, queueErrors, bytesDone, bytesTotal, uploadPhase, queueStats, loadQueue,
   progressItems, progressVisible, progressActiveCount,
 } = view
@@ -328,6 +342,13 @@ function formatSize(n: number) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`
   return `${(n / 1024 ** 3).toFixed(2)} GB`
+}
+
+function statusTagType(status: string) {
+  if (status === 'synced') return 'success'
+  if (status === 'pending push' || status === 'pending pull') return 'warning'
+  if (status.startsWith('conflict') || status === 'unknown') return 'danger'
+  return 'info'
 }
 
 function formatBeijingTime(iso: string): string {
@@ -498,6 +519,20 @@ function formatRelTime(iso: string): string {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+.fg-sync-status { flex-shrink: 0; }
+.fg-partial-icon {
+  font-size: 13px;
+  color: #e6a23c;
+  cursor: default;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.fg-partial-icon:hover { color: #cf8110; }
+.fg-size {
+  font-size: 11px;
+  color: #a8abb2;
+  flex-shrink: 0;
 }
 .fg-queue-status {
   width: 16px;

@@ -23,6 +23,7 @@ from typing import List, Optional
 
 from ..repository_manager import RepositoryManager
 from ..service import IndexService, LoggerService, QueueService
+from ..websocket_service import emit_progress
 from .context import RepoContext, build_context
 from .manual_upload import PENDING_FILENAME
 
@@ -68,10 +69,38 @@ def command_post_manual_upload(repo_id: str) -> PostManualUploadResult:
         # (MockCloudStorage returns paths with a leading "/" while BaiduStorage
         # may or may not, depending on whether root_prefix has a leading "/").
         remote_scan_prefix = _cloud_prefix(ctx, subpath)
+        emit_progress(repo_id, "post_manual_upload", "list", 0, 4, "Fetching cloud listing...")
         cloud_listing = {
             m["remote_path"].lstrip("/"): m
             for m in ctx.storage.list_files(remote_scan_prefix)
         }
+
+        # Safety guard: a manual upload confirm should find the files the user
+        # just dragged to the cloud. If the live listing comes back EMPTY while
+        # we still have pending entries, the listing almost certainly failed
+        # (rate limit / timeout / wrong backend) OR the user has not actually
+        # uploaded yet. Either way, proceeding would feed 0 confirmed entries
+        # into the reconcile and (historically) wipe real cloud_index data.
+        # Abort WITHOUT touching cloud_index and keep the lock so the user can
+        # retry after fixing the upload. (See _reconcile_cloud_index note.)
+        if entries and not cloud_listing:
+            msg = (
+                f"Cloud listing under {remote_scan_prefix!r} is empty but "
+                f"{len(entries)} file(s) are pending confirmation. Nothing was "
+                "changed. Make sure the files were dragged into the cloud app "
+                "(and the correct cloud backend is configured), then retry Confirm."
+            )
+            LoggerService.log_error(
+                ctx.repo_root, action_folder, "MANUAL_UPLOAD_CONFIRM", "-", msg,
+            )
+            return PostManualUploadResult(
+                ok=False, message=msg, confirmed=0,
+                missing=[e["middle_path"] for e in entries],
+                action_folder=action_folder,
+            )
+
+        emit_progress(repo_id, "post_manual_upload", "reconcile", 1, 4,
+                      f"Reconciling {len(entries)} files against {len(cloud_listing)} cloud entries...")
 
         # Step 3: match pending entries against actual cloud state
         confirmed_entries: List[dict] = []
@@ -103,6 +132,7 @@ def command_post_manual_upload(repo_id: str) -> PostManualUploadResult:
         )
 
         # Step 3c: rebuild local_index to reflect current disk state
+        emit_progress(repo_id, "post_manual_upload", "local_index", 2, 4, "Rebuilding local index...")
         new_local_index = IndexService.scan_local_files(ctx.repo_root, key=ctx.key)
         IndexService.save_local_index(ctx.repo_root, new_local_index)
         QueueService.snapshot_index_into_action(
@@ -110,7 +140,11 @@ def command_post_manual_upload(repo_id: str) -> PostManualUploadResult:
         )
 
         # Step 4: upload cloud_index.json
+        emit_progress(repo_id, "post_manual_upload", "upload_index", 3, 4, "Uploading cloud index...")
         _upload_cloud_index(ctx, new_cloud_index)
+        emit_progress(repo_id, "post_manual_upload", "done", 4, 4,
+                      f"Done: {len(confirmed_entries)} confirmed"
+                      + (f", {len(missing)} missing" if missing else ""))
 
         # Step 5: clean up buffer + pending file
         if ctx.mode == "ENCRYPTED":
@@ -193,23 +227,24 @@ def _reconcile_cloud_index(
     confirmed_entries: list,
     subpath: str,
 ) -> dict:
-    """Replace the subtree under ``subpath`` in the cloud_index with the
-    just-confirmed entries.
+    """Merge just-confirmed entries into the cloud_index (additive).
 
-    Entries outside the subpath are left untouched (they weren't part of
-    this manual upload).
+    Manual upload is a *fill-gaps* operation: ``confirmed_entries`` only ever
+    contains the files this batch uploaded (the gaps), never the full subtree.
+    We therefore MERGE — add/update the confirmed entries and leave every other
+    entry untouched.
+
+    IMPORTANT — do NOT delete entries under ``subpath``. An earlier version
+    removed the whole subtree and re-added only the confirmed entries; combined
+    with an empty/partial cloud listing that silently wiped thousands of real,
+    already-synced entries (e.g. the entire ``tr/`` tree). Manual upload can
+    only ever add: it cannot enumerate pre-existing cloud files by middle_path
+    (encoding is one-way), so it has no authority to prune. Deletions are the
+    job of push / rebuild_cloud_index, not confirm.
     """
     import hashlib
 
-    def _in_subpath(mp: str) -> bool:
-        if not subpath:
-            return True
-        return mp == subpath or mp.startswith(subpath + "/")
-
-    new_index = {
-        k: v for k, v in current.items()
-        if not _in_subpath(v["middle_path"])
-    }
+    new_index = dict(current)
     for e in confirmed_entries:
         key = hashlib.md5(e["middle_path"].encode("utf-8")).hexdigest()
         new_index[key] = {

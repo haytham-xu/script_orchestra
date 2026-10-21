@@ -31,6 +31,7 @@ class RepoContext:
     storage: CloudStorage
     key: Optional[bytes]         # None for ORIGINAL, 32 bytes for ENCRYPTED
     config: dict                 # full config.json (for advanced uses)
+    download_dest_root: str = ""  # optional custom decrypt target (manual download)
 
     def cloud_index_remote_path(self) -> str:
         """The remote path of the cloud_index.json blob (§3.9)."""
@@ -85,6 +86,7 @@ def build_context(repo_id: str) -> RepoContext:
         storage=storage,
         key=key,
         config=config,
+        download_dest_root=(config.get("download_dest_root") or "").strip(),
     )
 
 

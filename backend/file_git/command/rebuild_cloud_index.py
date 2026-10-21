@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import List
 
 from ..service import IndexService
+from ..settings_op_store import set_op_state
 from ..websocket_service import emit_progress
 from .context import RepoContext, build_context
 
@@ -74,65 +75,75 @@ def estimate_rebuild_cloud_index(repo_id: str) -> RebuildEstimate:
 
 def command_rebuild_cloud_index(repo_id: str) -> RebuildCloudIndexResult:
     ctx = build_context(repo_id)
+    set_op_state(repo_id, "rebuild_cloud_index", "running", "Scanning cloud...", 0)
+    try:
+        old_index = IndexService.load_cloud_index(ctx.repo_root)
+        reverse = {v["encoded_path"]: v["middle_path"] for v in old_index.values()}
 
-    old_index = IndexService.load_cloud_index(ctx.repo_root)
-    reverse = {v["encoded_path"]: v["middle_path"] for v in old_index.values()}
+        # Use existing cloud_index size as estimated total for progress display.
+        estimated_total = max(len(old_index), 1)
+        new_index: dict = {}
+        unknown: List[str] = []
+        norm_root = ctx.storage.to_listing_key(ctx.remote_root).rstrip("/")
 
-    # Use existing cloud_index size as estimated total for progress display.
-    estimated_total = max(len(old_index), 1)
-    new_index: dict = {}
-    unknown: List[str] = []
-    norm_root = ctx.storage.to_listing_key(ctx.remote_root).rstrip("/")
+        # Collect ALL entries before touching disk; if list_files raises (e.g. Baidu
+        # rate-limit exhausted mid-traversal) the old cloud_index is left intact.
+        count = 0
+        for meta in ctx.storage.list_files(ctx.remote_root):
+            remote_path = meta["remote_path"]
+            norm_path = remote_path.lstrip("/")
+            relative = norm_path[len(norm_root):].lstrip("/") if norm_root and norm_path.startswith(norm_root) else norm_path
+            if not relative or relative.startswith(".fgit/"):
+                continue
 
-    # Collect ALL entries before touching disk; if list_files raises (e.g. Baidu
-    # rate-limit exhausted mid-traversal) the old cloud_index is left intact.
-    count = 0
-    for meta in ctx.storage.list_files(ctx.remote_root):
-        remote_path = meta["remote_path"]
-        norm_path = remote_path.lstrip("/")
-        relative = norm_path[len(norm_root):].lstrip("/") if norm_root and norm_path.startswith(norm_root) else norm_path
-        if not relative or relative.startswith(".fgit/"):
-            continue
+            encoded_path = relative
 
-        encoded_path = relative
+            if ctx.mode == "ENCRYPTED":
+                middle_path = reverse.get(relative)
+                if middle_path is None:
+                    middle_path = f"UNKNOWN_{hashlib.md5(relative.encode()).hexdigest()[:8]}"
+                    unknown.append(relative)
+                old_entry = old_index.get(hashlib.md5(middle_path.encode("utf-8")).hexdigest())
+                size = old_entry["size"] if old_entry else meta["size"]
+            else:
+                middle_path = relative
+                size = meta["size"]
 
-        if ctx.mode == "ENCRYPTED":
-            middle_path = reverse.get(relative)
-            if middle_path is None:
-                middle_path = f"UNKNOWN_{hashlib.md5(relative.encode()).hexdigest()[:8]}"
-                unknown.append(relative)
-            old_entry = old_index.get(hashlib.md5(middle_path.encode("utf-8")).hexdigest())
-            size = old_entry["size"] if old_entry else meta["size"]
-        else:
-            middle_path = relative
-            size = meta["size"]
+            key = hashlib.md5(middle_path.encode("utf-8")).hexdigest()
+            new_index[key] = {
+                "middle_path": middle_path,
+                "encoded_path": encoded_path,
+                "size": size,
+            }
+            count += 1
+            if count % 10 == 0:
+                emit_progress(
+                    ctx.repo_id, "rebuild_cloud_index", "scan",
+                    count, estimated_total, f"SCAN {middle_path}",
+                )
 
-        key = hashlib.md5(middle_path.encode("utf-8")).hexdigest()
-        new_index[key] = {
-            "middle_path": middle_path,
-            "encoded_path": encoded_path,
-            "size": size,
-        }
-        count += 1
-        emit_progress(
-            ctx.repo_id, "rebuild_cloud_index", "scan",
-            count, estimated_total, f"SCAN {middle_path}",
+        # Emit final progress so the UI reaches 100%.
+        if count > 0:
+            emit_progress(ctx.repo_id, "rebuild_cloud_index", "scan", count, count, "DONE {} entries".format(count))
+
+        # Only overwrite once traversal completed without error.
+        IndexService.save_cloud_index(ctx.repo_root, new_index)
+        _upload_cloud_index(ctx, new_index)
+
+        msg = f"Rebuilt cloud_index with {len(new_index)} entries"
+        if unknown:
+            msg += f", {len(unknown)} unmapped (see UNKNOWN_* middle_paths)"
+
+        set_op_state(repo_id, "rebuild_cloud_index", "done", msg, len(new_index))
+        return RebuildCloudIndexResult(
+            ok=True,
+            message=msg,
+            count=len(new_index),
+            unknown=unknown,
         )
-
-    # Only overwrite once traversal completed without error.
-    IndexService.save_cloud_index(ctx.repo_root, new_index)
-    _upload_cloud_index(ctx, new_index)
-
-    msg = f"Rebuilt cloud_index with {len(new_index)} entries"
-    if unknown:
-        msg += f", {len(unknown)} unmapped (see UNKNOWN_* middle_paths)"
-
-    return RebuildCloudIndexResult(
-        ok=True,
-        message=msg,
-        count=len(new_index),
-        unknown=unknown,
-    )
+    except Exception as exc:
+        set_op_state(repo_id, "rebuild_cloud_index", "error", str(exc), 0)
+        raise
 
 
 def _upload_cloud_index(ctx: RepoContext, cloud_index: dict) -> None:

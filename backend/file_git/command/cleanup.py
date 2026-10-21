@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from ..service import LoggerService, TrashService
+from ..settings_op_store import set_op_state
 from .context import build_context
 
 
@@ -71,22 +72,29 @@ def command_cleanup(
 
     # Real removal — reuse existing helpers so semantics stay identical
     # to the automatic hook.
-    if mode == "all":
-        trash_removed = TrashService.cleanup_all(ctx.repo_root)
-        action_removed = LoggerService.cleanup_all_actions(ctx.repo_root)
-    else:
-        trash_removed = TrashService.cleanup_old(ctx.repo_root, retention)
-        action_removed = LoggerService.cleanup_old_actions(ctx.repo_root, retention)
+    set_op_state(repo_id, f"cleanup_{mode}", "running", "Cleaning up...", 0)
+    try:
+        if mode == "all":
+            trash_removed = TrashService.cleanup_all(ctx.repo_root)
+            action_removed = LoggerService.cleanup_all_actions(ctx.repo_root)
+        else:
+            trash_removed = TrashService.cleanup_old(ctx.repo_root, retention)
+            action_removed = LoggerService.cleanup_old_actions(ctx.repo_root, retention)
 
-    return CleanupResult(
-        ok=True,
-        message=(
+        msg = (
             f"Cleanup complete: removed {trash_removed} trash folders "
             f"and {action_removed} action folders ({mode}, retention={retention}d)"
-        ),
-        trash_removed=trash_removed,
-        action_removed=action_removed,
-    )
+        )
+        set_op_state(repo_id, f"cleanup_{mode}", "done", msg, 0)
+        return CleanupResult(
+            ok=True,
+            message=msg,
+            trash_removed=trash_removed,
+            action_removed=action_removed,
+        )
+    except Exception as exc:
+        set_op_state(repo_id, f"cleanup_{mode}", "error", str(exc), 0)
+        raise
 
 
 # ----------------------------------------------------------------------

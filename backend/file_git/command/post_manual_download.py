@@ -29,6 +29,7 @@ from typing import List, Optional
 from ..crypto import AesGcmDecryptStream
 from ..repository_manager import RepositoryManager
 from ..service import IndexService, LoggerService, QueueService
+from ..websocket_service import emit_progress
 from .context import RepoContext, build_context
 
 
@@ -39,9 +40,13 @@ class PostManualDownloadResult:
     decrypted: int = 0
     unmapped: List[str] = field(default_factory=list)
     action_folder: Optional[str] = None
+    destination: Optional[str] = None
 
 
-def command_post_manual_download(repo_id: str) -> PostManualDownloadResult:
+def command_post_manual_download(
+    repo_id: str,
+    use_custom_dest: bool = False,
+) -> PostManualDownloadResult:
     ctx = build_context(repo_id)
 
     state = QueueService.load(ctx.repo_root)
@@ -52,6 +57,60 @@ def command_post_manual_download(repo_id: str) -> PostManualDownloadResult:
                     "Download' first.",
         )
     action_folder = state.action_folder or ""
+
+    # Custom-destination mode: pure decrypt-export. Decrypt the buffer to a
+    # per-repo configured path (preserving middle_path structure) WITHOUT
+    # reconciling indexes — the files never land in the repo, so local_index /
+    # cloud_index stay untouched. Only valid for ENCRYPTED repos.
+    if use_custom_dest:
+        dest = ctx.download_dest_root
+        if not dest:
+            return PostManualDownloadResult(
+                ok=False,
+                message="No download destination configured for this repo. "
+                        "Set it in the repo Settings page first.",
+                action_folder=action_folder,
+            )
+        if ctx.mode != "ENCRYPTED":
+            return PostManualDownloadResult(
+                ok=False,
+                message="Custom-destination decrypt only applies to ENCRYPTED repos.",
+                action_folder=action_folder,
+            )
+        try:
+            os.makedirs(dest, exist_ok=True)
+            decrypted_count, unmapped = _decrypt_buffer_to_local(
+                ctx, action_folder, target_base=dest,
+            )
+            QueueService.release(ctx.repo_root)
+            RepositoryManager.update_status(ctx.repo_id, "ready")
+            LoggerService.log_success(
+                ctx.repo_root, action_folder, "MANUAL_DOWNLOAD_EXPORT",
+                "-", f"decrypted {decrypted_count} files to {dest}, "
+                     f"unmapped={len(unmapped)}",
+            )
+            msg = f"Decrypted {decrypted_count} files to {dest}"
+            if unmapped:
+                msg += f", {len(unmapped)} unmapped (see error.log)"
+            return PostManualDownloadResult(
+                ok=len(unmapped) == 0,
+                message=msg,
+                decrypted=decrypted_count,
+                unmapped=unmapped,
+                action_folder=action_folder,
+                destination=dest,
+            )
+        except Exception as exc:
+            LoggerService.log_error(
+                ctx.repo_root, action_folder, "MANUAL_DOWNLOAD_EXPORT", "-",
+                f"aborted: {exc}",
+            )
+            RepositoryManager.update_status(ctx.repo_id, "error")
+            return PostManualDownloadResult(
+                ok=False,
+                message=f"Decrypt-export aborted: {exc}",
+                action_folder=action_folder,
+            )
 
     try:
         decrypted_count = 0
@@ -129,8 +188,15 @@ def command_post_manual_download(repo_id: str) -> PostManualDownloadResult:
 # helpers
 # ----------------------------------------------------------------------
 
-def _decrypt_buffer_to_local(ctx: RepoContext, action_folder: str) -> tuple:
+def _decrypt_buffer_to_local(
+    ctx: RepoContext,
+    action_folder: str,
+    target_base: Optional[str] = None,
+) -> tuple:
     """Walk .fgit/buffer/, decrypt each ciphertext file to its middle_path.
+
+    ``target_base`` is the root under which decrypted files are written
+    (``repo/<middle_path>`` by default). Pass a custom path for decrypt-export.
 
     Returns (decrypted_count, list_of_unmapped_encoded_paths).
     """
@@ -138,17 +204,26 @@ def _decrypt_buffer_to_local(ctx: RepoContext, action_folder: str) -> tuple:
     if not os.path.isdir(buffer_root):
         return 0, []
 
+    base = target_base or ctx.repo_root
+
     cloud_index = IndexService.load_cloud_index(ctx.repo_root)
     # Build reverse mapping: encoded_path → middle_path
     reverse = {v["encoded_path"]: v["middle_path"] for v in cloud_index.values()}
 
+    # Count ciphertext files up front so the UI progress bar has a total.
+    total = 0
+    for _cur, _dirs, files in os.walk(buffer_root):
+        total += len(files)
+
     decrypted = 0
     unmapped: List[str] = []
+    seen = 0
 
     for cur_dir, _dirs, files in os.walk(buffer_root):
         for fname in files:
             buf_full = os.path.join(cur_dir, fname)
             encoded_rel = os.path.relpath(buf_full, buffer_root).replace("\\", "/")
+            seen += 1
 
             middle_path = reverse.get(encoded_rel)
             if middle_path is None:
@@ -159,15 +234,19 @@ def _decrypt_buffer_to_local(ctx: RepoContext, action_folder: str) -> tuple:
                     "no cloud_index entry maps this encoded_path — cannot "
                     "recover original filename",
                 )
+                emit_progress(ctx.repo_id, "post_manual_download", "decrypt",
+                              seen, total, f"SKIP {encoded_rel}")
                 continue
 
-            target = os.path.join(ctx.repo_root, *middle_path.split("/"))
+            target = os.path.join(base, *middle_path.split("/"))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(buf_full, "rb") as src, open(target, "wb") as dst:
                 dec = AesGcmDecryptStream(src, ctx.key)  # type: ignore[arg-type]
                 shutil.copyfileobj(dec, dst)
             os.remove(buf_full)
             decrypted += 1
+            emit_progress(ctx.repo_id, "post_manual_download", "decrypt",
+                          seen, total, f"DECRYPT {middle_path}")
 
     # Prune empty buffer subdirs
     for cur_dir, _dirs, _files in os.walk(buffer_root, topdown=False):

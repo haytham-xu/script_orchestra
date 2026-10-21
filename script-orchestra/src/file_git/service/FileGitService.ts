@@ -43,6 +43,7 @@ export interface RepoConfig {
   password_set: boolean            // server never echoes the password
   baidu_cloud?: Record<string, string>
   hook_retention_days?: number
+  download_dest_root?: string
 }
 
 export interface QueueStatus {
@@ -137,7 +138,30 @@ export interface PostManualDownloadResponse {
   message?: string
   decrypted?: number
   unmapped?: string[]
+  destination?: string | null
   action_folder?: string | null
+  error?: string
+}
+
+export interface DownloadScanResponse {
+  success: boolean
+  message?: string
+  count?: number
+  total_size?: number
+  error?: string
+}
+
+export interface DownloadScanChild {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number | null
+  encoded_path: string
+}
+
+export interface DownloadScanChildrenResponse {
+  success: boolean
+  children: DownloadScanChild[]
   error?: string
 }
 
@@ -271,6 +295,8 @@ export interface SyncFilterChild {
   mode: SyncMode
   status: string
   can_set: SyncMode[]
+  size: number | null          // local file size in bytes; null for dirs or remote-only files
+  unsynced_count: number       // for dirs: count of direct children not in 'synced' status; 0 for files
 }
 
 export interface SyncFilterResponse {
@@ -460,13 +486,41 @@ export class FileGitService {
     return data
   }
 
+  static async abandonManualUpload(repoId: string): Promise<Envelope> {
+    const { data } = await axios.post(repoUrl(repoId, '/abandon-manual-upload'))
+    return data
+  }
+
   static async preManualDownload(repoId: string): Promise<PreManualDownloadResponse> {
     const { data } = await axios.post(repoUrl(repoId, '/pre-manual-download'))
     return data
   }
 
-  static async postManualDownload(repoId: string): Promise<PostManualDownloadResponse> {
-    const { data } = await axios.post(repoUrl(repoId, '/post-manual-download'))
+  static async postManualDownload(
+    repoId: string,
+    useCustomDest: boolean = false,
+  ): Promise<PostManualDownloadResponse> {
+    const { data } = await axios.post(
+      repoUrl(repoId, '/post-manual-download'),
+      { use_custom_dest: useCustomDest },
+      jsonHeaders,
+    )
+    return data
+  }
+
+  static async downloadScan(repoId: string): Promise<DownloadScanResponse> {
+    const { data } = await axios.post(repoUrl(repoId, '/download-scan'))
+    return data
+  }
+
+  static async getDownloadScanChildren(
+    repoId: string,
+    path: string = '',
+  ): Promise<DownloadScanChildrenResponse> {
+    const { data } = await axios.get(
+      repoUrl(repoId, '/download-scan/children'),
+      { params: { path } },
+    )
     return data
   }
 
@@ -517,6 +571,23 @@ export class FileGitService {
     mode: CleanupMode = 'expired',
   ): Promise<CleanupResponse> {
     const { data } = await axios.post(repoUrl(repoId, '/cleanup'), { mode }, jsonHeaders)
+    return data
+  }
+
+  // ---- settings-page operation progress --------------------------------
+
+  static async getSettingsProgress(repoId: string): Promise<{
+    success: boolean
+    state: {
+      operation: string
+      status: 'running' | 'done' | 'error'
+      message: string
+      count: number
+      updated_at: number
+    } | null
+    error?: string
+  }> {
+    const { data } = await axios.get(repoUrl(repoId, '/settings-progress'))
     return data
   }
 
