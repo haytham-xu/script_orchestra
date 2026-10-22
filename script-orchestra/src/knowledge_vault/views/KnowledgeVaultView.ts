@@ -152,37 +152,40 @@ export default defineComponent({
     }
 
     const templateArgs = ref<Record<string, string[]>>({})
+    const templateGenerated = ref<Record<string, string>>({})
 
-    function normalizeVarName(input: string, fallbackIdx: number): string {
-      const cleaned = (input || '')
-        .trim()
-        .replace(/[^a-zA-Z0-9_]/g, '_')
-        .replace(/^[^a-zA-Z_]+/, '')
-      return cleaned || `arg${fallbackIdx + 1}`
+    function detectTemplateVarNames(body: string): string[] {
+      const names: string[] = []
+      const seen = new Set<string>()
+      const re = /\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(body || '')) !== null) {
+        const name = m[1]
+        if (!seen.has(name)) {
+          seen.add(name)
+          names.push(name)
+        }
+      }
+      return names
     }
 
-    function normalizeTemplateArgNames(blk: ContentBlock): string[] {
-      const source = Array.isArray(blk.arg_names) && blk.arg_names.length
-        ? blk.arg_names
-        : Array.from({ length: Math.max(1, Number((blk as any).arg_count || 1)) }, (_, i) => `arg${i + 1}`)
-      const used = new Set<string>()
-      const next = source.map((raw, idx) => {
-        let base = normalizeVarName(String(raw || ''), idx)
-        let name = base
-        let n = 2
-        while (used.has(name)) {
-          name = `${base}_${n}`
-          n += 1
-        }
-        used.add(name)
-        return name
-      })
-      blk.arg_names = next.length ? next : ['arg1']
+    function ensureTemplateArgNames(blk: ContentBlock): string[] {
+      if (Array.isArray(blk.arg_names) && blk.arg_names.length > 0) {
+        blk.arg_names = blk.arg_names.map(v => String(v ?? ''))
+        return blk.arg_names
+      }
+      const detected = detectTemplateVarNames(blk.body || '')
+      if (detected.length > 0) {
+        blk.arg_names = detected
+        return blk.arg_names
+      }
+      const count = Math.max(1, Number((blk as any).arg_count || 1))
+      blk.arg_names = Array.from({ length: count }, (_, i) => `arg${i + 1}`)
       return blk.arg_names
     }
 
     function getTemplateArgNames(blk: ContentBlock): string[] {
-      return normalizeTemplateArgNames(blk)
+      return ensureTemplateArgNames(blk)
     }
 
     function templateKey(scope: 'search', fragId: number | null | undefined, blockIdx: number): string {
@@ -219,24 +222,38 @@ export default defineComponent({
       templateArgs.value[key] = args
     }
 
+    function getTemplateGenerated(key: string): string {
+      return templateGenerated.value[key] || ''
+    }
+
+    function hasTemplateGenerated(key: string): boolean {
+      return !!templateGenerated.value[key]
+    }
+
     function templateAllArgsFilled(key: string, blk: ContentBlock): boolean {
       const names = getTemplateArgNames(blk)
       const args = ensureTemplateArgs(key, blk)
-      return names.every((_, idx) => (args[idx] || '').trim().length > 0)
+      return names.every((name, idx) => name.trim().length > 0 && (args[idx] || '').trim().length > 0)
     }
 
     function fillTemplateBody(body: string, args: string[]): string {
-      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*|\d+)\}?/g, (_, token) => {
-        if (/^\d+$/.test(token)) {
-          const idx = Number(token) - 1
-          return idx >= 0 ? (args[idx] ?? '') : ''
-        }
+      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?/g, (_, token) => {
         return `$${token}`
       })
     }
 
-    async function copyBlockFilled(blk: ContentBlock, key?: string) {
+    function blurCopyTrigger(evt?: Event) {
+      const target = evt?.currentTarget as HTMLElement | null | undefined
+      target?.blur?.()
+      if (typeof document !== 'undefined') {
+        const active = document.activeElement as HTMLElement | null
+        active?.blur?.()
+      }
+    }
+
+    async function copyBlockFilled(blk: ContentBlock, key?: string, evt?: Event) {
       if (blk.type === 'template' && key && !templateAllArgsFilled(key, blk)) {
+        blurCopyTrigger(evt)
         return
       }
       const text = blk.type === 'template'
@@ -245,12 +262,14 @@ export default defineComponent({
           let rendered = fillTemplateBody(blk.body, args)
           const names = getTemplateArgNames(blk)
           names.forEach((name, idx) => {
+            if (!name.trim()) return
             const val = args[idx] ?? ''
             const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
             rendered = rendered
               .replace(new RegExp(`\\$\\{${esc}\\}`, 'g'), val)
               .replace(new RegExp(`\\$${esc}\\b`, 'g'), val)
           })
+          if (key) templateGenerated.value[key] = rendered
           return rendered
         })()
         : blk.body
@@ -258,6 +277,7 @@ export default defineComponent({
       } catch {
         // silently ignore in search view
       }
+      blurCopyTrigger(evt)
     }
 
     // Load labels for tag display in results
@@ -271,7 +291,9 @@ export default defineComponent({
       runSearch, fmtDate, fragmentSummary, renderMd, tableForView,
       tableRowsForView, tableColProp,
       getTablePersistKey, getTableColWidth, onTableHeaderDragEnd,
-      templateKey, getTemplateArgNames, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg, templateAllArgsFilled, copyBlockFilled,
+      templateKey, getTemplateArgNames, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg,
+      getTemplateGenerated, hasTemplateGenerated,
+      templateAllArgsFilled, copyBlockFilled,
       expandedLongs, toggleLong,
     }
   },

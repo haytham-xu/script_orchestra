@@ -59,6 +59,8 @@ import FileTrackerSettingsView from '@/file_tracker/views/FileTrackerSettingsVie
 import ApprenticeView from '@/apprentice/views/ApprenticeView.vue'
 import FileDuplicateView from '@/file_duplicate/views/FileDuplicateView.vue'
 import WebTerminalView from '@/web_terminal/views/WebTerminalView.vue'
+import K8sConsoleView from '@/k8s_console/views/K8sConsoleView.vue'
+import K8sInstanceView from '@/k8s_console/views/K8sInstanceView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -137,6 +139,8 @@ const router = createRouter({
     { path: '/apprentice', name: 'apprentice', component: ApprenticeView },
     { path: '/file-duplicate', name: 'file-duplicate', component: FileDuplicateView },
     { path: '/web-terminal', name: 'web-terminal', component: WebTerminalView },
+    { path: '/k8s-console', name: 'k8s-console', component: K8sConsoleView },
+    { path: '/k8s-console/:id', name: 'k8s-instance', component: K8sInstanceView },
   ],
 })
 
@@ -149,7 +153,7 @@ export const ALL_TOOL_KEYS = [
   'browser-agent', 'memory-curve', 'knowledge-vault', 'translator', 'claude-bridge',
   'assistant', 'file-git', 'proxy-forward', 'relay-proxy', 'clean-keyword',
   'loans-calc', 'compress-image', 'dedup-folder', 'file-pipeline', 'file-tracker',
-  'apprentice', 'file-duplicate', 'web-terminal',
+  'apprentice', 'file-duplicate', 'web-terminal', 'k8s-console',
 ]
 
 // Navigation guard: redirect to dashboard when navigating to a disabled tool,

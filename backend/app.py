@@ -205,6 +205,13 @@ else:
     wt_websocket = None
     get_wt_manager = None
 
+if _on('k8s-console'):
+    from k8s_console.blueprint import blueprint as k8s_console_blueprint
+    from k8s_console import repository as k8s_console_repo
+else:
+    k8s_console_blueprint = None
+    k8s_console_repo = None
+
 # claude_bridge: Unix-only deps, guarded by both feature flag and import availability
 if _on('claude-bridge'):
     try:
@@ -315,6 +322,8 @@ def create_app() -> Flask:
         app.register_blueprint(file_duplicate_blueprint)
     if web_terminal_blueprint:
         app.register_blueprint(web_terminal_blueprint)
+    if k8s_console_blueprint:
+        app.register_blueprint(k8s_console_blueprint)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
 
@@ -423,6 +432,8 @@ def create_app() -> Flask:
         file_duplicate_repo.init_db()
     if web_terminal_repo:
         web_terminal_repo.init_db()
+    if k8s_console_repo:
+        k8s_console_repo.init_db()
     if claude_bridge_repo:
         claude_bridge_repo.init_db()
 

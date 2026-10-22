@@ -33,6 +33,7 @@ const TOOLS: Tool[] = [
   { key: 'apprentice',             name: 'Apprentice',             path: '/apprentice' },
   { key: 'file-duplicate',         name: 'File Duplicate',         path: '/file-duplicate' },
   { key: 'web-terminal',           name: 'Web Terminal',           path: '/web-terminal' },
+  { key: 'k8s-console',            name: 'K8s Console',             path: '/k8s-console' },
 ]
 
 const TOOL_BY_KEY: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.key, t]))

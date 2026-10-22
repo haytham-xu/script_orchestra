@@ -49,6 +49,9 @@ def _blocks_from_request(data: dict):
                 block["lang"] = b["lang"]
             if b.get("subtitle"):
                 block["subtitle"] = b["subtitle"]
+            if isinstance(b.get("arg_names"), list):
+                # Keep user-defined template variable names as-is (including order).
+                block["arg_names"] = [str(x) for x in b.get("arg_names", [])]
             result.append(block)
         return result
     content = (data.get("content") or "").strip()

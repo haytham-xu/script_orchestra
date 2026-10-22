@@ -275,4 +275,19 @@ export const toolIcons: Record<string, string> = {
       <rect x="10" y="44" width="44" height="10" rx="3" fill="#3f3f46"/>
       <text x="14" y="52" font-family="monospace" font-size="7" fill="#a1a1aa">zsh</text>
     </svg>`,
+  'k8s-console': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#326ce5"/>
+      <!-- Kubernetes wheel: center hub + 7 spokes + outer ring -->
+      <circle cx="32" cy="32" r="9" fill="none" stroke="#fff" stroke-width="3"/>
+      <circle cx="32" cy="32" r="3" fill="#fff"/>
+      <line x1="32" y1="23" x2="32" y2="12" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="32" y1="41" x2="32" y2="52" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="23" y1="32" x2="12" y2="32" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="41" y1="32" x2="52" y2="32" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="25.5" y1="25.5" x2="17" y2="17" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="38.5" y1="38.5" x2="47" y2="47" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="38.5" y1="25.5" x2="47" y2="17" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="25.5" y1="38.5" x2="17" y2="47" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>`,
 }

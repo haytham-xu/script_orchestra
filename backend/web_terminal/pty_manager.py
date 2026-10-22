@@ -28,7 +28,13 @@ _READER_JOIN_TIMEOUT = 2.0
 
 
 class _PtyProcess:
-    def __init__(self, window_id: str, cwd: str, broadcaster: Callable[[dict], None]):
+    def __init__(
+        self,
+        window_id: str,
+        cwd: str,
+        broadcaster: Callable[[dict], None],
+        extra_env: Optional[dict[str, str]] = None,
+    ):
         self.window_id = window_id
         self.cwd = cwd
         self._broadcaster = broadcaster
@@ -38,6 +44,8 @@ class _PtyProcess:
         shell = os.environ.get('SHELL', '/bin/zsh')
         env = dict(os.environ)
         env['TERM'] = 'xterm-256color'
+        if extra_env:
+            env.update(extra_env)
 
         self.pid, self._fd = pty.fork()
         if self.pid == 0:
@@ -145,13 +153,13 @@ class PtyManager:
             except Exception:
                 pass
 
-    def attach(self, window_id: str, cwd: str) -> bool:
+    def attach(self, window_id: str, cwd: str, extra_env: Optional[dict[str, str]] = None) -> bool:
         """Spawn a new PTY for window_id. Returns False if one is already running."""
         with self._lock:
             existing = self._ptys.get(window_id)
             if existing and existing.alive:
                 return False
-            proc = _PtyProcess(window_id, cwd, self._emit)
+            proc = _PtyProcess(window_id, cwd, self._emit, extra_env=extra_env)
             self._ptys[window_id] = proc
             return True
 

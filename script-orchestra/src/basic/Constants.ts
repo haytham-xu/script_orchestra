@@ -61,5 +61,6 @@ export const APPRENTICE_ENDPOINT = '/apprentice'
 export const FILE_DUPLICATE_ENDPOINT = '/file-duplicate'
 
 export const WEB_TERMINAL_ENDPOINT = '/web-terminal'
+export const K8S_CONSOLE_ENDPOINT = '/k8s-console'
 
 export const ENABLED_TOOLS_ENDPOINT = '/enabled-tools'

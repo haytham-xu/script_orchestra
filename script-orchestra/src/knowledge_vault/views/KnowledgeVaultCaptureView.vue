@@ -169,7 +169,7 @@
                   text
                   size="small"
                   :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk)"
-                  @click.stop="copyBlockFilled(blk, templateKey('capture', selectedFrag?.id, i))"
+                  @click.stop="copyBlockFilled(blk, templateKey('capture', selectedFrag?.id, i), $event)"
                 >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
@@ -182,14 +182,21 @@
                 <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
                 <div class="kv-template-args kv-template-args--compact">
                   <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('capture', selectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
-                    <span class="kv-template-arg-label">${{ getTemplateArgNames(blk)[argIdx] }}</span>
+                    <span class="kv-template-arg-label">{{ getTemplateArgNames(blk)[argIdx] }}</span>
                     <el-input
                       :model-value="arg"
                       size="small"
-                      :placeholder="`value for $${getTemplateArgNames(blk)[argIdx]}`"
+                      :placeholder="`value for ${getTemplateArgNames(blk)[argIdx]}`"
                       @update:model-value="(v) => setTemplateArg(templateKey('capture', selectedFrag?.id, i), blk, argIdx, v)"
                     />
                   </div>
+                </div>
+                <div
+                  v-if="hasTemplateGenerated(templateKey('capture', selectedFrag?.id, i))"
+                  class="kv-template-result kv-template-result--compact"
+                >
+                  <div class="kv-template-result-label">Generated</div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGenerated(templateKey('capture', selectedFrag?.id, i)) }}</pre>
                 </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
@@ -262,7 +269,6 @@
                   @drop="dropTemplateVar(blk, argIdx)"
                 >
                   <span class="kv-template-drag-handle" title="Drag to reorder">⋮⋮</span>
-                  <span class="kv-template-arg-label kv-template-arg-label--editor">${{ argIdx + 1 }}</span>
                   <el-input
                     :model-value="name"
                     size="small"
@@ -449,7 +455,7 @@
                   text
                   size="small"
                   :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk)"
-                  @click.stop="copyBlockFilled(blk, templateKey('organize', organizeSelectedFrag?.id, i))"
+                  @click.stop="copyBlockFilled(blk, templateKey('organize', organizeSelectedFrag?.id, i), $event)"
                 >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
@@ -462,14 +468,21 @@
                 <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
                 <div class="kv-template-args kv-template-args--compact">
                   <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('organize', organizeSelectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
-                    <span class="kv-template-arg-label">${{ getTemplateArgNames(blk)[argIdx] }}</span>
+                    <span class="kv-template-arg-label">{{ getTemplateArgNames(blk)[argIdx] }}</span>
                     <el-input
                       :model-value="arg"
                       size="small"
-                      :placeholder="`value for $${getTemplateArgNames(blk)[argIdx]}`"
+                      :placeholder="`value for ${getTemplateArgNames(blk)[argIdx]}`"
                       @update:model-value="(v) => setTemplateArg(templateKey('organize', organizeSelectedFrag?.id, i), blk, argIdx, v)"
                     />
                   </div>
+                </div>
+                <div
+                  v-if="hasTemplateGenerated(templateKey('organize', organizeSelectedFrag?.id, i))"
+                  class="kv-template-result kv-template-result--compact"
+                >
+                  <div class="kv-template-result-label">Generated</div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGenerated(templateKey('organize', organizeSelectedFrag?.id, i)) }}</pre>
                 </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
@@ -549,7 +562,6 @@
               @drop="dropTemplateVar(blk, argIdx)"
             >
               <span class="kv-template-drag-handle" title="Drag to reorder">⋮⋮</span>
-              <span class="kv-template-arg-label kv-template-arg-label--editor">${{ argIdx + 1 }}</span>
               <el-input
                 :model-value="name"
                 size="small"
@@ -890,9 +902,6 @@
   user-select: none;
   line-height: 1;
 }
-.kv-template-arg-label--editor {
-  min-width: 22px;
-}
 .kv-template-arg-label {
   width: auto;
   min-width: 20px;
@@ -917,6 +926,8 @@
   transition: max-height .15s ease, opacity .15s ease, margin .15s ease;
   margin-top: 0;
 }
+.kv-block:hover .kv-template-body .kv-template-args--compact,
+.kv-block:focus-within .kv-template-body .kv-template-args--compact,
 .kv-template-body:hover .kv-template-args--compact,
 .kv-template-body:focus-within .kv-template-args--compact {
   max-height: 220px;
@@ -924,12 +935,47 @@
   pointer-events: auto;
   margin-top: 6px;
 }
+.kv-template-result {
+  margin-top: 8px;
+}
+.kv-template-result-label {
+  font-size: 11px;
+  color: #9a7a3a;
+  margin-bottom: 4px;
+}
+.kv-pre-template-result {
+  background: #102015;
+  color: #defbe6;
+}
+.kv-template-result--compact {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height .15s ease, opacity .15s ease, margin .15s ease;
+  margin-top: 0;
+}
+.kv-block:hover .kv-template-body .kv-template-result--compact,
+.kv-block:focus-within .kv-template-body .kv-template-result--compact,
+.kv-template-body:hover .kv-template-result--compact,
+.kv-template-body:focus-within .kv-template-result--compact {
+  max-height: 240px;
+  opacity: 1;
+  pointer-events: auto;
+  margin-top: 8px;
+}
 @media (hover: none) {
   .kv-template-args--compact {
     max-height: 220px;
     opacity: 1;
     pointer-events: auto;
     margin-top: 6px;
+  }
+  .kv-template-result--compact {
+    max-height: 240px;
+    opacity: 1;
+    pointer-events: auto;
+    margin-top: 8px;
   }
 }
 .kv-table-view-wrap { padding: 8px 12px 10px; overflow-x: auto; background: #fff; }

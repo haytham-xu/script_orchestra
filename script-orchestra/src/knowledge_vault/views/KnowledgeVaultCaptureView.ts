@@ -575,7 +575,7 @@ export default defineComponent({
       blocks[idx] = { ...blocks[idx], type: type as ContentBlock['type'] }
       if (blocks[idx].type === 'table') ensureTableBody(blocks[idx])
       if (blocks[idx].type === 'template') {
-        normalizeTemplateArgNames(blocks[idx])
+        ensureTemplateArgNames(blocks[idx])
       }
     }
     async function copyBlock(text: string) {
@@ -584,51 +584,52 @@ export default defineComponent({
     }
 
     const templateArgs = ref<Record<string, string[]>>({})
+    const templateGenerated = ref<Record<string, string>>({})
 
-    function normalizeVarName(input: string, fallbackIdx: number): string {
-      const cleaned = (input || '')
-        .trim()
-        .replace(/[^a-zA-Z0-9_]/g, '_')
-        .replace(/^[^a-zA-Z_]+/, '')
-      return cleaned || `arg${fallbackIdx + 1}`
+    function detectTemplateVarNames(body: string): string[] {
+      const names: string[] = []
+      const seen = new Set<string>()
+      const re = /\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(body || '')) !== null) {
+        const name = m[1]
+        if (!seen.has(name)) {
+          seen.add(name)
+          names.push(name)
+        }
+      }
+      return names
     }
 
-    function normalizeTemplateArgNames(blk: ContentBlock): string[] {
-      const source = Array.isArray(blk.arg_names) && blk.arg_names.length
-        ? blk.arg_names
-        : Array.from({ length: Math.max(1, Number((blk as any).arg_count || 1)) }, (_, i) => `arg${i + 1}`)
-      const used = new Set<string>()
-      const next = source.map((raw, idx) => {
-        let base = normalizeVarName(String(raw || ''), idx)
-        let name = base
-        let n = 2
-        while (used.has(name)) {
-          name = `${base}_${n}`
-          n += 1
-        }
-        used.add(name)
-        return name
-      })
-      blk.arg_names = next.length ? next : ['arg1']
+    function ensureTemplateArgNames(blk: ContentBlock): string[] {
+      if (Array.isArray(blk.arg_names) && blk.arg_names.length > 0) {
+        blk.arg_names = blk.arg_names.map(v => String(v ?? ''))
+        return blk.arg_names
+      }
+      const detected = detectTemplateVarNames(blk.body || '')
+      if (detected.length > 0) {
+        blk.arg_names = detected
+        return blk.arg_names
+      }
+      const count = Math.max(1, Number((blk as any).arg_count || 1))
+      blk.arg_names = Array.from({ length: count }, (_, i) => `arg${i + 1}`)
       return blk.arg_names
     }
 
     function getTemplateArgNames(blk: ContentBlock): string[] {
-      return normalizeTemplateArgNames(blk)
+      return ensureTemplateArgNames(blk)
     }
 
     function setTemplateArgName(blk: ContentBlock, argIdx: number, value: string) {
       const names = [...getTemplateArgNames(blk)]
       names[argIdx] = value
       blk.arg_names = names
-      normalizeTemplateArgNames(blk)
     }
 
     function addTemplateVar(blk: ContentBlock) {
       const names = [...getTemplateArgNames(blk)]
       names.push(`arg${names.length + 1}`)
       blk.arg_names = names
-      normalizeTemplateArgNames(blk)
     }
 
     function removeTemplateVar(blk: ContentBlock, argIdx: number) {
@@ -636,7 +637,6 @@ export default defineComponent({
       if (names.length <= 1) return
       names.splice(argIdx, 1)
       blk.arg_names = names
-      normalizeTemplateArgNames(blk)
     }
 
     const draggingTemplateVar = ref<{ blk: ContentBlock | null; index: number }>({ blk: null, index: -1 })
@@ -648,7 +648,6 @@ export default defineComponent({
       const [picked] = names.splice(argIdx, 1)
       names.splice(targetIdx, 0, picked)
       blk.arg_names = names
-      normalizeTemplateArgNames(blk)
     }
 
     function startTemplateVarDrag(blk: ContentBlock, argIdx: number) {
@@ -664,7 +663,6 @@ export default defineComponent({
       const [picked] = names.splice(fromIdx, 1)
       names.splice(targetIdx, 0, picked)
       blk.arg_names = names
-      normalizeTemplateArgNames(blk)
     }
 
     function templateKey(scope: 'capture' | 'organize', fragId: number | null | undefined, blockIdx: number): string {
@@ -701,42 +699,60 @@ export default defineComponent({
       templateArgs.value[key] = args
     }
 
+    function getTemplateGenerated(key: string): string {
+      return templateGenerated.value[key] || ''
+    }
+
+    function hasTemplateGenerated(key: string): boolean {
+      return !!templateGenerated.value[key]
+    }
+
     function templateAllArgsFilled(key: string, blk: ContentBlock): boolean {
       const names = getTemplateArgNames(blk)
       const args = ensureTemplateArgs(key, blk)
-      return names.every((_, idx) => (args[idx] || '').trim().length > 0)
+      return names.every((name, idx) => name.trim().length > 0 && (args[idx] || '').trim().length > 0)
     }
 
     function fillTemplateBody(body: string, args: string[]): string {
-      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*|\d+)\}?/g, (_, token) => {
-        if (/^\d+$/.test(token)) {
-          const idx = Number(token) - 1
-          return idx >= 0 ? (args[idx] ?? '') : ''
-        }
+      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?/g, (_, token) => {
         return `$${token}`
       })
     }
 
-    function copyBlockFilled(blk: ContentBlock, key?: string) {
+    function blurCopyTrigger(evt?: Event) {
+      const target = evt?.currentTarget as HTMLElement | null | undefined
+      target?.blur?.()
+      if (typeof document !== 'undefined') {
+        const active = document.activeElement as HTMLElement | null
+        active?.blur?.()
+      }
+    }
+
+    function copyBlockFilled(blk: ContentBlock, key?: string, evt?: Event) {
       if (blk.type !== 'template') {
         copyBlock(blk.body)
+        blurCopyTrigger(evt)
         return
       }
       if (key && !templateAllArgsFilled(key, blk)) {
         ElMessage.warning('Fill all template variable values before copy')
+        blurCopyTrigger(evt)
         return
       }
       const args = key ? ensureTemplateArgs(key, blk) : Array.from({ length: getTemplateArgNames(blk).length }, () => '')
       let rendered = fillTemplateBody(blk.body, args)
       const names = getTemplateArgNames(blk)
       names.forEach((name, idx) => {
+        if (!name.trim()) return
         const val = args[idx] ?? ''
         const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         rendered = rendered
           .replace(new RegExp(`\\$\\{${esc}\\}`, 'g'), val)
           .replace(new RegExp(`\\$${esc}\\b`, 'g'), val)
       })
+      if (key) templateGenerated.value[key] = rendered
       copyBlock(rendered)
+      blurCopyTrigger(evt)
     }
 
     // ---- reindex ----
@@ -815,6 +831,7 @@ export default defineComponent({
       fmtDate, fragmentSummary, copyBlock, copyBlockFilled, setBlockType, renderMd,
       templateKey, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg,
       templateAllArgsFilled,
+      getTemplateGenerated, hasTemplateGenerated,
       getTemplateArgNames, setTemplateArgName, addTemplateVar, removeTemplateVar, moveTemplateVar,
       startTemplateVarDrag, dropTemplateVar,
       tableForView,
