@@ -151,6 +151,115 @@ export default defineComponent({
       expandedLongs.value = new Set(expandedLongs.value)
     }
 
+    const templateArgs = ref<Record<string, string[]>>({})
+
+    function normalizeVarName(input: string, fallbackIdx: number): string {
+      const cleaned = (input || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/^[^a-zA-Z_]+/, '')
+      return cleaned || `arg${fallbackIdx + 1}`
+    }
+
+    function normalizeTemplateArgNames(blk: ContentBlock): string[] {
+      const source = Array.isArray(blk.arg_names) && blk.arg_names.length
+        ? blk.arg_names
+        : Array.from({ length: Math.max(1, Number((blk as any).arg_count || 1)) }, (_, i) => `arg${i + 1}`)
+      const used = new Set<string>()
+      const next = source.map((raw, idx) => {
+        let base = normalizeVarName(String(raw || ''), idx)
+        let name = base
+        let n = 2
+        while (used.has(name)) {
+          name = `${base}_${n}`
+          n += 1
+        }
+        used.add(name)
+        return name
+      })
+      blk.arg_names = next.length ? next : ['arg1']
+      return blk.arg_names
+    }
+
+    function getTemplateArgNames(blk: ContentBlock): string[] {
+      return normalizeTemplateArgNames(blk)
+    }
+
+    function templateKey(scope: 'search', fragId: number | null | undefined, blockIdx: number): string {
+      return `${scope}:${fragId ?? 0}:${blockIdx}`
+    }
+
+    function ensureTemplateArgs(key: string, blk: ContentBlock): string[] {
+      const expected = getTemplateArgNames(blk).length
+      const existing = templateArgs.value[key] || []
+      const next = Array.from({ length: Math.max(expected, existing.length, 1) }, (_, i) => existing[i] ?? '')
+      templateArgs.value[key] = next
+      return next
+    }
+
+    function getTemplateArgs(key: string, blk: ContentBlock): string[] {
+      return ensureTemplateArgs(key, blk)
+    }
+
+    function setTemplateArg(key: string, blk: ContentBlock, argIdx: number, value: string) {
+      const args = [...ensureTemplateArgs(key, blk)]
+      args[argIdx] = value
+      templateArgs.value[key] = args
+    }
+
+    function addTemplateArg(key: string, blk: ContentBlock) {
+      const args = [...ensureTemplateArgs(key, blk), '']
+      templateArgs.value[key] = args
+    }
+
+    function removeTemplateArg(key: string, blk: ContentBlock, argIdx: number) {
+      const args = [...ensureTemplateArgs(key, blk)]
+      if (args.length <= 1) return
+      args.splice(argIdx, 1)
+      templateArgs.value[key] = args
+    }
+
+    function templateAllArgsFilled(key: string, blk: ContentBlock): boolean {
+      const names = getTemplateArgNames(blk)
+      const args = ensureTemplateArgs(key, blk)
+      return names.every((_, idx) => (args[idx] || '').trim().length > 0)
+    }
+
+    function fillTemplateBody(body: string, args: string[]): string {
+      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*|\d+)\}?/g, (_, token) => {
+        if (/^\d+$/.test(token)) {
+          const idx = Number(token) - 1
+          return idx >= 0 ? (args[idx] ?? '') : ''
+        }
+        return `$${token}`
+      })
+    }
+
+    async function copyBlockFilled(blk: ContentBlock, key?: string) {
+      if (blk.type === 'template' && key && !templateAllArgsFilled(key, blk)) {
+        return
+      }
+      const text = blk.type === 'template'
+        ? (() => {
+          const args = key ? ensureTemplateArgs(key, blk) : Array.from({ length: getTemplateArgNames(blk).length }, () => '')
+          let rendered = fillTemplateBody(blk.body, args)
+          const names = getTemplateArgNames(blk)
+          names.forEach((name, idx) => {
+            const val = args[idx] ?? ''
+            const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            rendered = rendered
+              .replace(new RegExp(`\\$\\{${esc}\\}`, 'g'), val)
+              .replace(new RegExp(`\\$${esc}\\b`, 'g'), val)
+          })
+          return rendered
+        })()
+        : blk.body
+      try { await navigator.clipboard.writeText(text)
+      } catch {
+        // silently ignore in search view
+      }
+    }
+
     // Load labels for tag display in results
     void loadTableWidths()
     loadLabels()
@@ -162,6 +271,7 @@ export default defineComponent({
       runSearch, fmtDate, fragmentSummary, renderMd, tableForView,
       tableRowsForView, tableColProp,
       getTablePersistKey, getTableColWidth, onTableHeaderDragEnd,
+      templateKey, getTemplateArgNames, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg, templateAllArgsFilled, copyBlockFilled,
       expandedLongs, toggleLong,
     }
   },

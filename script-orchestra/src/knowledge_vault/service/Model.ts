@@ -1,10 +1,11 @@
-export type BlockType = 'text' | 'code' | 'url' | 'long' | 'table'
+export type BlockType = 'text' | 'code' | 'url' | 'long' | 'table' | 'template'
 
 export interface ContentBlock {
   type: BlockType
   body: string
   lang?: string   // for code blocks
   subtitle?: string  // optional one-line description for any block
+  arg_names?: string[]  // for template blocks
 }
 
 export interface RawFragment {

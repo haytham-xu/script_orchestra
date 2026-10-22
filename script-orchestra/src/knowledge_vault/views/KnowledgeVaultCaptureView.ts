@@ -129,7 +129,7 @@ export default defineComponent({
     function startEdit() {
       if (!selectedFrag.value) return
       editingBlocks.value = selectedFrag.value.blocks.map(b => ({
-        type: b.type, body: b.body, lang: b.lang ?? '', subtitle: b.subtitle ?? '',
+        type: b.type, body: b.body, lang: b.lang ?? '', subtitle: b.subtitle ?? '', arg_names: b.arg_names,
       }))
       editingNote.value = selectedFrag.value.note
       editingHeader.value = selectedFrag.value.header || ''
@@ -139,7 +139,13 @@ export default defineComponent({
     function cancelEdit() { detailEditing.value = false }
 
     function createBlock(type: ContentBlock['type'] = 'text'): ContentBlock {
-      return { type, body: '', subtitle: '', ...(type === 'code' ? { lang: '' } : {}) }
+      return {
+        type,
+        body: '',
+        subtitle: '',
+        ...(type === 'code' ? { lang: '' } : {}),
+        ...(type === 'template' ? { arg_names: ['arg1'] } : {}),
+      }
     }
 
     type TableData = { headers: string[]; rows: string[][] }
@@ -568,10 +574,169 @@ export default defineComponent({
     function setBlockType(blocks: ContentBlock[], idx: number, type: string) {
       blocks[idx] = { ...blocks[idx], type: type as ContentBlock['type'] }
       if (blocks[idx].type === 'table') ensureTableBody(blocks[idx])
+      if (blocks[idx].type === 'template') {
+        normalizeTemplateArgNames(blocks[idx])
+      }
     }
     async function copyBlock(text: string) {
       try { await navigator.clipboard.writeText(text); ElMessage.success('Copied') }
       catch { ElMessage.error('Copy failed') }
+    }
+
+    const templateArgs = ref<Record<string, string[]>>({})
+
+    function normalizeVarName(input: string, fallbackIdx: number): string {
+      const cleaned = (input || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .replace(/^[^a-zA-Z_]+/, '')
+      return cleaned || `arg${fallbackIdx + 1}`
+    }
+
+    function normalizeTemplateArgNames(blk: ContentBlock): string[] {
+      const source = Array.isArray(blk.arg_names) && blk.arg_names.length
+        ? blk.arg_names
+        : Array.from({ length: Math.max(1, Number((blk as any).arg_count || 1)) }, (_, i) => `arg${i + 1}`)
+      const used = new Set<string>()
+      const next = source.map((raw, idx) => {
+        let base = normalizeVarName(String(raw || ''), idx)
+        let name = base
+        let n = 2
+        while (used.has(name)) {
+          name = `${base}_${n}`
+          n += 1
+        }
+        used.add(name)
+        return name
+      })
+      blk.arg_names = next.length ? next : ['arg1']
+      return blk.arg_names
+    }
+
+    function getTemplateArgNames(blk: ContentBlock): string[] {
+      return normalizeTemplateArgNames(blk)
+    }
+
+    function setTemplateArgName(blk: ContentBlock, argIdx: number, value: string) {
+      const names = [...getTemplateArgNames(blk)]
+      names[argIdx] = value
+      blk.arg_names = names
+      normalizeTemplateArgNames(blk)
+    }
+
+    function addTemplateVar(blk: ContentBlock) {
+      const names = [...getTemplateArgNames(blk)]
+      names.push(`arg${names.length + 1}`)
+      blk.arg_names = names
+      normalizeTemplateArgNames(blk)
+    }
+
+    function removeTemplateVar(blk: ContentBlock, argIdx: number) {
+      const names = [...getTemplateArgNames(blk)]
+      if (names.length <= 1) return
+      names.splice(argIdx, 1)
+      blk.arg_names = names
+      normalizeTemplateArgNames(blk)
+    }
+
+    const draggingTemplateVar = ref<{ blk: ContentBlock | null; index: number }>({ blk: null, index: -1 })
+
+    function moveTemplateVar(blk: ContentBlock, argIdx: number, direction: -1 | 1) {
+      const names = [...getTemplateArgNames(blk)]
+      const targetIdx = argIdx + direction
+      if (targetIdx < 0 || targetIdx >= names.length) return
+      const [picked] = names.splice(argIdx, 1)
+      names.splice(targetIdx, 0, picked)
+      blk.arg_names = names
+      normalizeTemplateArgNames(blk)
+    }
+
+    function startTemplateVarDrag(blk: ContentBlock, argIdx: number) {
+      draggingTemplateVar.value = { blk, index: argIdx }
+    }
+
+    function dropTemplateVar(blk: ContentBlock, targetIdx: number) {
+      const { blk: sourceBlk, index: fromIdx } = draggingTemplateVar.value
+      draggingTemplateVar.value = { blk: null, index: -1 }
+      if (!sourceBlk || sourceBlk !== blk || fromIdx < 0 || fromIdx === targetIdx) return
+      const names = [...getTemplateArgNames(blk)]
+      if (fromIdx >= names.length || targetIdx < 0 || targetIdx >= names.length) return
+      const [picked] = names.splice(fromIdx, 1)
+      names.splice(targetIdx, 0, picked)
+      blk.arg_names = names
+      normalizeTemplateArgNames(blk)
+    }
+
+    function templateKey(scope: 'capture' | 'organize', fragId: number | null | undefined, blockIdx: number): string {
+      return `${scope}:${fragId ?? 0}:${blockIdx}`
+    }
+
+    function ensureTemplateArgs(key: string, blk: ContentBlock): string[] {
+      const expected = getTemplateArgNames(blk).length
+      const existing = templateArgs.value[key] || []
+      const next = Array.from({ length: Math.max(expected, existing.length, 1) }, (_, i) => existing[i] ?? '')
+      templateArgs.value[key] = next
+      return next
+    }
+
+    function getTemplateArgs(key: string, blk: ContentBlock): string[] {
+      return ensureTemplateArgs(key, blk)
+    }
+
+    function setTemplateArg(key: string, blk: ContentBlock, argIdx: number, value: string) {
+      const args = [...ensureTemplateArgs(key, blk)]
+      args[argIdx] = value
+      templateArgs.value[key] = args
+    }
+
+    function addTemplateArg(key: string, blk: ContentBlock) {
+      const args = [...ensureTemplateArgs(key, blk), '']
+      templateArgs.value[key] = args
+    }
+
+    function removeTemplateArg(key: string, blk: ContentBlock, argIdx: number) {
+      const args = [...ensureTemplateArgs(key, blk)]
+      if (args.length <= 1) return
+      args.splice(argIdx, 1)
+      templateArgs.value[key] = args
+    }
+
+    function templateAllArgsFilled(key: string, blk: ContentBlock): boolean {
+      const names = getTemplateArgNames(blk)
+      const args = ensureTemplateArgs(key, blk)
+      return names.every((_, idx) => (args[idx] || '').trim().length > 0)
+    }
+
+    function fillTemplateBody(body: string, args: string[]): string {
+      return (body || '').replace(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*|\d+)\}?/g, (_, token) => {
+        if (/^\d+$/.test(token)) {
+          const idx = Number(token) - 1
+          return idx >= 0 ? (args[idx] ?? '') : ''
+        }
+        return `$${token}`
+      })
+    }
+
+    function copyBlockFilled(blk: ContentBlock, key?: string) {
+      if (blk.type !== 'template') {
+        copyBlock(blk.body)
+        return
+      }
+      if (key && !templateAllArgsFilled(key, blk)) {
+        ElMessage.warning('Fill all template variable values before copy')
+        return
+      }
+      const args = key ? ensureTemplateArgs(key, blk) : Array.from({ length: getTemplateArgNames(blk).length }, () => '')
+      let rendered = fillTemplateBody(blk.body, args)
+      const names = getTemplateArgNames(blk)
+      names.forEach((name, idx) => {
+        const val = args[idx] ?? ''
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        rendered = rendered
+          .replace(new RegExp(`\\$\\{${esc}\\}`, 'g'), val)
+          .replace(new RegExp(`\\$${esc}\\b`, 'g'), val)
+      })
+      copyBlock(rendered)
     }
 
     // ---- reindex ----
@@ -647,7 +812,11 @@ export default defineComponent({
       organizeToggle, organizeToggleAll, organizeBulkMove, organizeQuickMove,
       organizeDeleteOne, organizeDeleteSelected,
       reindexStatus, triggerReindex,
-      fmtDate, fragmentSummary, copyBlock, setBlockType, renderMd,
+      fmtDate, fragmentSummary, copyBlock, copyBlockFilled, setBlockType, renderMd,
+      templateKey, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg,
+      templateAllArgsFilled,
+      getTemplateArgNames, setTemplateArgName, addTemplateVar, removeTemplateVar, moveTemplateVar,
+      startTemplateVarDrag, dropTemplateVar,
       tableForView,
       tableRowsForView, tableColProp,
       getTablePersistKey, getTableColWidth, onTableHeaderDragEnd,

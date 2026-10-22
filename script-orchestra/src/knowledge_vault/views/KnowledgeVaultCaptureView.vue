@@ -156,7 +156,7 @@
 
           <div class="kv-blocks">
             <div v-for="(blk, i) in selectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -165,13 +165,32 @@
                 <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(selectedFrag.created_at) }}</span>
-                <el-button text size="small" @click.stop="copyBlock(blk.body)">Copy</el-button>
+                <el-button
+                  text
+                  size="small"
+                  :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk)"
+                  @click.stop="copyBlockFilled(blk, templateKey('capture', selectedFrag?.id, i))"
+                >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
               <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+              </div>
+              <div v-else-if="blk.type === 'template'" class="kv-template-body">
+                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+                <div class="kv-template-args kv-template-args--compact">
+                  <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('capture', selectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
+                    <span class="kv-template-arg-label">${{ getTemplateArgNames(blk)[argIdx] }}</span>
+                    <el-input
+                      :model-value="arg"
+                      size="small"
+                      :placeholder="`value for $${getTemplateArgNames(blk)[argIdx]}`"
+                      @update:model-value="(v) => setTemplateArg(templateKey('capture', selectedFrag?.id, i), blk, argIdx, v)"
+                    />
+                  </div>
+                </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
                 <el-table
@@ -216,12 +235,13 @@
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'text')">+ Text ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'code')">+ Code ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'url')">+ URL ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'template')">+ Template ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'table')">+ Table ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'long')">+ Long ↑</el-button>
               </div>
               <div class="kv-bk-toolbar">
                 <div class="kv-bk-type-group">
-                  <button v-for="t in ['text','code','url','table','long']" :key="t"
+                  <button v-for="t in ['text','code','url','template','table','long']" :key="t"
                     class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                     @click="setBlockType(editingBlocks, i, t)">{{ t }}</button>
                 </div>
@@ -231,10 +251,38 @@
                 <el-button text size="small" :disabled="i === editingBlocks.length - 1" @click="moveBlock(i, 1)">↓</el-button>
                 <el-button text size="small" type="danger" :disabled="editingBlocks.length <= 1" @click="removeBlock(i)">✕</el-button>
               </div>
+              <div v-if="blk.type === 'template'" class="kv-template-editor-vars">
+                <div
+                  v-for="(name, argIdx) in getTemplateArgNames(blk)"
+                  :key="argIdx"
+                  class="kv-template-editor-var-row"
+                  draggable="true"
+                  @dragstart="startTemplateVarDrag(blk, argIdx)"
+                  @dragover.prevent
+                  @drop="dropTemplateVar(blk, argIdx)"
+                >
+                  <span class="kv-template-drag-handle" title="Drag to reorder">⋮⋮</span>
+                  <span class="kv-template-arg-label kv-template-arg-label--editor">${{ argIdx + 1 }}</span>
+                  <el-input
+                    :model-value="name"
+                    size="small"
+                    placeholder="variable name"
+                    @update:model-value="(v) => setTemplateArgName(blk, argIdx, v)"
+                  />
+                  <el-button
+                    text
+                    size="small"
+                    type="danger"
+                    :disabled="getTemplateArgNames(blk).length <= 1"
+                    @click="removeTemplateVar(blk, argIdx)"
+                  >−</el-button>
+                </div>
+                <el-button text size="small" @click="addTemplateVar(blk)">+ Variable</el-button>
+              </div>
               <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
               <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
                 :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
-                :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
+                :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : 'Text...'"
                 :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
                 style="margin-top:4px" />
               <div v-else class="kv-table-editor-wrap">
@@ -297,6 +345,7 @@
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'text')">+ Text ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'code')">+ Code ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'template')">+ Template ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'table')">+ Table ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'long')">+ Long ↓</el-button>
               </div>
@@ -387,7 +436,7 @@
           </div>
           <div class="kv-blocks">
             <div v-for="(blk, i) in organizeSelectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -396,13 +445,32 @@
                 <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(organizeSelectedFrag.created_at) }}</span>
-                <el-button text size="small" @click.stop="copyBlock(blk.body)">Copy</el-button>
+                <el-button
+                  text
+                  size="small"
+                  :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk)"
+                  @click.stop="copyBlockFilled(blk, templateKey('organize', organizeSelectedFrag?.id, i))"
+                >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
               </div>
               <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
               <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+              </div>
+              <div v-else-if="blk.type === 'template'" class="kv-template-body">
+                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+                <div class="kv-template-args kv-template-args--compact">
+                  <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('organize', organizeSelectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
+                    <span class="kv-template-arg-label">${{ getTemplateArgNames(blk)[argIdx] }}</span>
+                    <el-input
+                      :model-value="arg"
+                      size="small"
+                      :placeholder="`value for $${getTemplateArgNames(blk)[argIdx]}`"
+                      @update:model-value="(v) => setTemplateArg(templateKey('organize', organizeSelectedFrag?.id, i), blk, argIdx, v)"
+                    />
+                  </div>
+                </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
                 <el-table
@@ -456,12 +524,13 @@
             <el-button text size="small" @click="insertDraftBlockAt(i, 'text')">+ Text ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'code')">+ Code ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'url')">+ URL ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'template')">+ Template ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'table')">+ Table ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'long')">+ Long ↑</el-button>
           </div>
           <div class="kv-bk-toolbar">
             <div class="kv-bk-type-group">
-              <button v-for="t in ['text','code','url','table','long']" :key="t"
+              <button v-for="t in ['text','code','url','template','table','long']" :key="t"
                 class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                 @click="setBlockType(draftBlocks, i, t)">{{ t }}</button>
             </div>
@@ -469,10 +538,38 @@
             <div style="flex:1" />
             <el-button text size="small" type="danger" :disabled="draftBlocks.length <= 1" @click="removeDraftBlock(i)">✕</el-button>
           </div>
+          <div v-if="blk.type === 'template'" class="kv-template-editor-vars">
+            <div
+              v-for="(name, argIdx) in getTemplateArgNames(blk)"
+              :key="argIdx"
+              class="kv-template-editor-var-row"
+              draggable="true"
+              @dragstart="startTemplateVarDrag(blk, argIdx)"
+              @dragover.prevent
+              @drop="dropTemplateVar(blk, argIdx)"
+            >
+              <span class="kv-template-drag-handle" title="Drag to reorder">⋮⋮</span>
+              <span class="kv-template-arg-label kv-template-arg-label--editor">${{ argIdx + 1 }}</span>
+              <el-input
+                :model-value="name"
+                size="small"
+                placeholder="variable name"
+                @update:model-value="(v) => setTemplateArgName(blk, argIdx, v)"
+              />
+              <el-button
+                text
+                size="small"
+                type="danger"
+                :disabled="getTemplateArgNames(blk).length <= 1"
+                @click="removeTemplateVar(blk, argIdx)"
+              >−</el-button>
+            </div>
+            <el-button text size="small" @click="addTemplateVar(blk)">+ Variable</el-button>
+          </div>
           <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
           <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
             :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
-            :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : 'Text...'"
+            :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : 'Text...'"
             :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
             style="margin-top:4px" />
           <div v-else class="kv-table-editor-wrap">
@@ -535,6 +632,7 @@
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'text')">+ Text ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'code')">+ Code ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'url')">+ URL ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'template')">+ Template ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'table')">+ Table ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'long')">+ Long ↓</el-button>
           </div>
@@ -719,6 +817,7 @@
 .kv-blk-bar--url { background: #f0f7ff; }
 .kv-blk-bar--long { background: #f5f0ff; }
 .kv-blk-bar--table { background: #ecfdf5; }
+.kv-blk-bar--template { background: #fff6e8; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-date { font-size: 11px; color: #86868b; white-space: nowrap; flex-shrink: 0; }
 .kv-blk-bar--code .kv-blk-date { color: #888; }
@@ -750,6 +849,89 @@
 .kv-url-link { font-size: 12px; color: #0a84ff; word-break: break-all; text-decoration: none; }
 .kv-url-link:hover { text-decoration: underline; }
 .kv-table-body { overflow-x: auto; }
+.kv-template-body { padding: 8px 10px; background: #fff; }
+.kv-pre-template { background: #2b2112; margin-bottom: 8px; }
+.kv-template-args { display: flex; flex-direction: column; gap: 6px; }
+.kv-template-arg-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #fffaf0;
+  border: 1px solid rgba(122, 90, 30, 0.15);
+}
+.kv-template-editor-vars {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed rgba(122, 90, 30, 0.25);
+  border-radius: 6px;
+  background: #fffdf8;
+}
+.kv-template-editor-var-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid rgba(122, 90, 30, 0.18);
+  border-radius: 6px;
+  padding: 4px 6px;
+  cursor: grab;
+}
+.kv-template-editor-var-row:active { cursor: grabbing; }
+.kv-template-drag-handle {
+  font-size: 12px;
+  color: #9a7a3a;
+  user-select: none;
+  line-height: 1;
+}
+.kv-template-arg-label--editor {
+  min-width: 22px;
+}
+.kv-template-arg-label {
+  width: auto;
+  min-width: 20px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #7a5a1e;
+  text-align: left;
+  flex-shrink: 0;
+}
+.kv-template-actions { display: flex; justify-content: flex-start; padding-top: 4px; }
+.kv-template-args--compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height .15s ease, opacity .15s ease, margin .15s ease;
+  margin-top: 0;
+}
+.kv-template-body:hover .kv-template-args--compact,
+.kv-template-body:focus-within .kv-template-args--compact {
+  max-height: 220px;
+  opacity: 1;
+  pointer-events: auto;
+  margin-top: 6px;
+}
+@media (hover: none) {
+  .kv-template-args--compact {
+    max-height: 220px;
+    opacity: 1;
+    pointer-events: auto;
+    margin-top: 6px;
+  }
+}
 .kv-table-view-wrap { padding: 8px 12px 10px; overflow-x: auto; background: #fff; }
 .kv-table-view { min-width: 320px; }
 .kv-table-cell { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #1d1d1f; }

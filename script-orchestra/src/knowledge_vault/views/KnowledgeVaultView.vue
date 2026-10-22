@@ -86,18 +86,37 @@
             </div>
             <div class="kv-blocks">
               <div v-for="(blk, i) in searchDetail.blocks" :key="i" class="kv-block">
-                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : 'kv-blk-bar--text'"
+                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
                   @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                   <span class="kv-blk-subtitle" v-if="blk.subtitle">{{ blk.subtitle }}</span>
                   <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                   <span v-else style="flex:1" />
-                  <el-button text size="small" @click.stop="$navigator?.clipboard?.writeText(blk.body)">Copy</el-button>
+                  <el-button
+                    text
+                    size="small"
+                    :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('search', searchDetail?.id, i), blk)"
+                    @click.stop="copyBlockFilled(blk, templateKey('search', searchDetail?.id, i))"
+                  >Copy</el-button>
                   <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
                 </div>
                 <div v-if="blk.type === 'text'" class="kv-blk-text-body kv-md" v-html="renderMd(blk.body)" />
                 <pre v-else-if="blk.type === 'code'" class="kv-pre">{{ blk.body }}</pre>
                 <div v-else-if="blk.type === 'url'" class="kv-url-body">
                   <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
+                </div>
+                <div v-else-if="blk.type === 'template'" class="kv-template-body">
+                  <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+                  <div class="kv-template-args kv-template-args--compact">
+                    <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('search', searchDetail?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
+                      <span class="kv-template-arg-label">${{ getTemplateArgNames(blk)[argIdx] }}</span>
+                      <el-input
+                        :model-value="arg"
+                        size="small"
+                        :placeholder="`value for $${getTemplateArgNames(blk)[argIdx]}`"
+                        @update:model-value="(v) => setTemplateArg(templateKey('search', searchDetail?.id, i), blk, argIdx, v)"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
                   <el-table
@@ -221,6 +240,7 @@
 .kv-blk-bar--url { background: #f0f7ff; }
 .kv-blk-bar--long { background: #f5f0ff; }
 .kv-blk-bar--table { background: #ecfdf5; }
+.kv-blk-bar--template { background: #fff6e8; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-subtitle {
   flex: 1; font-size: 12px; color: #555; font-style: italic;
@@ -260,6 +280,57 @@
 .kv-url-body { padding: 6px 12px 10px; }
 .kv-url-link { font-size: 12px; color: #0a84ff; word-break: break-all; text-decoration: none; }
 .kv-url-link:hover { text-decoration: underline; }
+.kv-template-body { padding: 8px 10px; background: #fff; }
+.kv-pre-template { background: #2b2112; margin-bottom: 8px; }
+.kv-template-args { display: flex; flex-direction: column; gap: 6px; }
+.kv-template-arg-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #fffaf0;
+  border: 1px solid rgba(122, 90, 30, 0.15);
+}
+.kv-template-arg-label {
+  width: auto;
+  min-width: 20px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: #7a5a1e;
+  text-align: left;
+  flex-shrink: 0;
+}
+.kv-template-actions { display: flex; justify-content: flex-start; padding-top: 4px; }
+.kv-template-args--compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-height .15s ease, opacity .15s ease, margin .15s ease;
+  margin-top: 0;
+}
+.kv-template-body:hover .kv-template-args--compact,
+.kv-template-body:focus-within .kv-template-args--compact {
+  max-height: 220px;
+  opacity: 1;
+  pointer-events: auto;
+  margin-top: 6px;
+}
+@media (hover: none) {
+  .kv-template-args--compact {
+    max-height: 220px;
+    opacity: 1;
+    pointer-events: auto;
+    margin-top: 6px;
+  }
+}
 .kv-table-view-wrap { padding: 8px 12px 10px; overflow-x: auto; background: #fff; }
 .kv-table-view { min-width: 320px; }
 .kv-table-cell { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #1d1d1f; }
