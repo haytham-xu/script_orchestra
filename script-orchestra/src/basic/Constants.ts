@@ -60,4 +60,6 @@ export const APPRENTICE_ENDPOINT = '/apprentice'
 
 export const FILE_DUPLICATE_ENDPOINT = '/file-duplicate'
 
+export const WEB_TERMINAL_ENDPOINT = '/web-terminal'
+
 export const ENABLED_TOOLS_ENDPOINT = '/enabled-tools'

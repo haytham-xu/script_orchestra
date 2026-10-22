@@ -261,4 +261,18 @@ export const toolIcons: Record<string, string> = {
       <path d="M33 14v8h8" fill="none" stroke="#0891b2" stroke-width="1.5"/>
       <path d="M22 30h12M22 35h12M22 40h8" stroke="#0891b2" stroke-width="2" stroke-linecap="round"/>
     </svg>`,
+
+  // Web Terminal — dark screen with a blinking cursor prompt
+  'web-terminal': `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="#18181b"/>
+      <rect x="10" y="10" width="44" height="30" rx="4" fill="#27272a"/>
+      <circle cx="16" cy="16" r="2.5" fill="#ef4444"/>
+      <circle cx="23" cy="16" r="2.5" fill="#f59e0b"/>
+      <circle cx="30" cy="16" r="2.5" fill="#22c55e"/>
+      <text x="13" y="28" font-family="monospace" font-size="8" fill="#22c55e">$ _</text>
+      <text x="13" y="36" font-family="monospace" font-size="6" fill="#6b7280">ls -la</text>
+      <rect x="10" y="44" width="44" height="10" rx="3" fill="#3f3f46"/>
+      <text x="14" y="52" font-family="monospace" font-size="7" fill="#a1a1aa">zsh</text>
+    </svg>`,
 }

@@ -194,6 +194,17 @@ else:
     file_duplicate_repo = None
     fd_websocket = None
 
+if _on('web-terminal'):
+    from web_terminal.blueprint import blueprint as web_terminal_blueprint
+    from web_terminal import repository as web_terminal_repo
+    from web_terminal import websocket_service as wt_websocket
+    from web_terminal.pty_manager import get_manager as get_wt_manager
+else:
+    web_terminal_blueprint = None
+    web_terminal_repo = None
+    wt_websocket = None
+    get_wt_manager = None
+
 # claude_bridge: Unix-only deps, guarded by both feature flag and import availability
 if _on('claude-bridge'):
     try:
@@ -302,6 +313,8 @@ def create_app() -> Flask:
         app.register_blueprint(apprentice_blueprint)
     if file_duplicate_blueprint:
         app.register_blueprint(file_duplicate_blueprint)
+    if web_terminal_blueprint:
+        app.register_blueprint(web_terminal_blueprint)
     if _claude_bridge_available:
         app.register_blueprint(claude_bridge_blueprint)
 
@@ -375,6 +388,9 @@ def create_app() -> Flask:
             fp_websocket.init_socketio(socketio)
         if fd_websocket:
             fd_websocket.init_socketio(socketio)
+        if wt_websocket:
+            wt_websocket.init_socketio(socketio)
+            wt_websocket.register_socketio_events()
         if _claude_bridge_available and cb_websocket:
             cb_websocket.init_socketio(socketio)
             cb_websocket.register_socketio_events()
@@ -405,6 +421,8 @@ def create_app() -> Flask:
         apprentice_repo.init_db()
     if file_duplicate_repo:
         file_duplicate_repo.init_db()
+    if web_terminal_repo:
+        web_terminal_repo.init_db()
     if claude_bridge_repo:
         claude_bridge_repo.init_db()
 
@@ -418,6 +436,11 @@ def create_app() -> Flask:
                 _cs_get_lan().start(_cs_settings.get('lan_port', 50002))
         except Exception as _e:
             print(f'[ClipboardShare] auto_start failed: {_e}')
+
+    # ── Web Terminal teardown ─────────────────────────────────────
+    if get_wt_manager:
+        import atexit
+        atexit.register(get_wt_manager().shutdown_all)
 
     return app, socketio
 
