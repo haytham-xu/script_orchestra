@@ -1,6 +1,8 @@
 """Knowledge Vault — REST controller (blueprint prefix /knowledge-vault)."""
 from flask_restx import Namespace, Resource
 from flask import request
+import subprocess
+import re
 
 from . import repository, settings_manager, query_service, ai_client
 from .entity import RawFragment, FragmentGroup, _blocks_to_storage, _blocks_to_plain, _parse_blocks
@@ -32,6 +34,30 @@ def _build_index_text(frag) -> str:
 ns = Namespace("")
 
 _reindex_status = {"running": False, "total": 0, "indexed": 0}
+
+_EXEC_TIMEOUT_SEC = 20
+_EXEC_OUTPUT_LIMIT = 400_000
+
+
+def _clip_output(text: str | None, limit: int = _EXEC_OUTPUT_LIMIT) -> str:
+    data = text or ""
+    if len(data) <= limit:
+        return data
+    omitted = len(data) - limit
+    return data[:limit] + f"\n\n[truncated: omitted {omitted} chars]"
+
+
+def _render_named_template(body: str, arg_names: list[str], arg_values: list[str]) -> str:
+    rendered = body or ""
+    for idx, name in enumerate(arg_names):
+        n = (name or "").strip()
+        if not n:
+            continue
+        val = arg_values[idx] if idx < len(arg_values) else ""
+        esc = re.escape(n)
+        rendered = re.sub(rf"\$\{{{esc}\}}", val, rendered)
+        rendered = re.sub(rf"\${esc}\b", val, rendered)
+    return rendered
 
 
 def _blocks_from_request(data: dict):
@@ -157,6 +183,51 @@ def _safe_index(fid, text):
         query_service.index_fragment(fid, text)
     except Exception as exc:
         print(f"[knowledge_vault] re-index failed: {exc}")
+
+
+@ns.route("/template/execute")
+class TemplateExecuteResource(Resource):
+    def post(self):
+        data = request.get_json(force=True) or {}
+        body = str(data.get("body") or "")
+        arg_names = data.get("arg_names") or []
+        arg_values = data.get("arg_values") or []
+        if not isinstance(arg_names, list) or not isinstance(arg_values, list):
+            return {"error": "arg_names and arg_values must be arrays"}, 400
+
+        arg_names = [str(x or "") for x in arg_names]
+        arg_values = [str(x or "") for x in arg_values]
+        command = _render_named_template(body, arg_names, arg_values)
+        if not command.strip():
+            return {"error": "rendered command is empty"}, 400
+
+        try:
+            run = subprocess.run(
+                ["/bin/bash", "-lc", command],
+                capture_output=True,
+                text=True,
+                timeout=_EXEC_TIMEOUT_SEC,
+            )
+            stdout = _clip_output(run.stdout)
+            stderr = _clip_output(run.stderr)
+            return {
+                "command": command,
+                "exit_code": run.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+            }, 200
+        except subprocess.TimeoutExpired as exc:
+            stdout = _clip_output(exc.stdout)
+            stderr = _clip_output(exc.stderr)
+            return {
+                "command": command,
+                "exit_code": -1,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": True,
+            }, 200
+        except Exception as exc:
+            return {"error": f"execute failed: {exc}"}, 500
 
 
 def _sanitize_fragments(frags) -> list:

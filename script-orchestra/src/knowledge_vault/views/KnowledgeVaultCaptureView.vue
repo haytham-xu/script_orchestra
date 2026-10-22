@@ -156,7 +156,7 @@
 
           <div class="kv-blocks">
             <div v-for="(blk, i) in selectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : blk.type === 'execute' ? 'kv-blk-bar--execute' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -166,9 +166,19 @@
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(selectedFrag.created_at) }}</span>
                 <el-button
+                  v-if="blk.type === 'execute'"
                   text
                   size="small"
-                  :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk)"
+                  :loading="isExecuteRunning(templateKey('capture', selectedFrag?.id, i))"
+                  :disabled="!templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk)"
+                  @click.stop="runExecuteBlock(blk, templateKey('capture', selectedFrag?.id, i), $event)"
+                >Execute</el-button>
+                <el-button
+                  text
+                  size="small"
+                  :disabled="blk.type === 'execute'
+                    ? (!templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk) || !hasExecuteResult(templateKey('capture', selectedFrag?.id, i)))
+                    : (blk.type === 'template' && !templateAllArgsFilled(templateKey('capture', selectedFrag?.id, i), blk))"
                   @click.stop="copyBlockFilled(blk, templateKey('capture', selectedFrag?.id, i), $event)"
                 >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
@@ -178,8 +188,7 @@
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
               </div>
-              <div v-else-if="blk.type === 'template'" class="kv-template-body">
-                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+              <div v-else-if="blk.type === 'template' || blk.type === 'execute'" class="kv-template-body">
                 <div class="kv-template-args kv-template-args--compact">
                   <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('capture', selectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
                     <span class="kv-template-arg-label">{{ getTemplateArgNames(blk)[argIdx] }}</span>
@@ -191,12 +200,30 @@
                     />
                   </div>
                 </div>
+                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
                 <div
-                  v-if="hasTemplateGenerated(templateKey('capture', selectedFrag?.id, i))"
+                  v-if="blk.type === 'template' && hasTemplateGenerated(templateKey('capture', selectedFrag?.id, i))"
                   class="kv-template-result kv-template-result--compact"
                 >
-                  <div class="kv-template-result-label">Generated</div>
-                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGenerated(templateKey('capture', selectedFrag?.id, i)) }}</pre>
+                  <div class="kv-template-result-head">
+                    <div class="kv-template-result-label">Generated</div>
+                    <el-button text size="small" @click="toggleResultViewMode(templateKey('capture', selectedFrag?.id, i))">
+                      {{ getResultViewMode(templateKey('capture', selectedFrag?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                    </el-button>
+                  </div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGeneratedDisplay(templateKey('capture', selectedFrag?.id, i)) }}</pre>
+                </div>
+                <div
+                  v-if="blk.type === 'execute' && hasExecuteResult(templateKey('capture', selectedFrag?.id, i))"
+                  class="kv-template-result kv-template-result--compact"
+                >
+                  <div class="kv-template-result-head">
+                    <div class="kv-template-result-label">Execution Result</div>
+                    <el-button text size="small" @click="toggleResultViewMode(templateKey('capture', selectedFrag?.id, i))">
+                      {{ getResultViewMode(templateKey('capture', selectedFrag?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                    </el-button>
+                  </div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getExecuteResultDisplay(templateKey('capture', selectedFrag?.id, i)) }}</pre>
                 </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
@@ -243,12 +270,13 @@
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'code')">+ Code ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'url')">+ URL ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'template')">+ Template ↑</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i, 'execute')">+ Execute ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'table')">+ Table ↑</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i, 'long')">+ Long ↑</el-button>
               </div>
               <div class="kv-bk-toolbar">
                 <div class="kv-bk-type-group">
-                  <button v-for="t in ['text','code','url','template','table','long']" :key="t"
+                  <button v-for="t in ['text','code','url','template','execute','table','long']" :key="t"
                     class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                     @click="setBlockType(editingBlocks, i, t)">{{ t }}</button>
                 </div>
@@ -258,7 +286,7 @@
                 <el-button text size="small" :disabled="i === editingBlocks.length - 1" @click="moveBlock(i, 1)">↓</el-button>
                 <el-button text size="small" type="danger" :disabled="editingBlocks.length <= 1" @click="removeBlock(i)">✕</el-button>
               </div>
-              <div v-if="blk.type === 'template'" class="kv-template-editor-vars">
+              <div v-if="blk.type === 'template' || blk.type === 'execute'" class="kv-template-editor-vars">
                 <div
                   v-for="(name, argIdx) in getTemplateArgNames(blk)"
                   :key="argIdx"
@@ -288,7 +316,7 @@
               <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
               <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
                 :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
-                :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : 'Text...'"
+                :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : blk.type === 'execute' ? 'kubectl get pods -n $namespace' : 'Text...'"
                 :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
                 style="margin-top:4px" />
               <div v-else class="kv-table-editor-wrap">
@@ -352,6 +380,7 @@
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'code')">+ Code ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'url')">+ URL ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'template')">+ Template ↓</el-button>
+                <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'execute')">+ Execute ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'table')">+ Table ↓</el-button>
                 <el-button text size="small" @click="insertEditingBlockAt(i + 1, 'long')">+ Long ↓</el-button>
               </div>
@@ -442,7 +471,7 @@
           </div>
           <div class="kv-blocks">
             <div v-for="(blk, i) in organizeSelectedFrag.blocks" :key="i" class="kv-block">
-              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
+              <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : blk.type === 'execute' ? 'kv-blk-bar--execute' : 'kv-blk-bar--text'"
                 @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                 <span class="kv-blk-subtitle" v-if="blk.subtitle">
                   {{ blk.subtitle }}
@@ -452,9 +481,19 @@
                 <span v-else style="flex:1" />
                 <span class="kv-blk-date">{{ fmtDate(organizeSelectedFrag.created_at) }}</span>
                 <el-button
+                  v-if="blk.type === 'execute'"
                   text
                   size="small"
-                  :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk)"
+                  :loading="isExecuteRunning(templateKey('organize', organizeSelectedFrag?.id, i))"
+                  :disabled="!templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk)"
+                  @click.stop="runExecuteBlock(blk, templateKey('organize', organizeSelectedFrag?.id, i), $event)"
+                >Execute</el-button>
+                <el-button
+                  text
+                  size="small"
+                  :disabled="blk.type === 'execute'
+                    ? (!templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk) || !hasExecuteResult(templateKey('organize', organizeSelectedFrag?.id, i)))
+                    : (blk.type === 'template' && !templateAllArgsFilled(templateKey('organize', organizeSelectedFrag?.id, i), blk))"
                   @click.stop="copyBlockFilled(blk, templateKey('organize', organizeSelectedFrag?.id, i), $event)"
                 >Copy</el-button>
                 <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
@@ -464,8 +503,7 @@
               <div v-else-if="blk.type === 'url'" class="kv-url-body">
                 <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
               </div>
-              <div v-else-if="blk.type === 'template'" class="kv-template-body">
-                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+              <div v-else-if="blk.type === 'template' || blk.type === 'execute'" class="kv-template-body">
                 <div class="kv-template-args kv-template-args--compact">
                   <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('organize', organizeSelectedFrag?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
                     <span class="kv-template-arg-label">{{ getTemplateArgNames(blk)[argIdx] }}</span>
@@ -477,12 +515,30 @@
                     />
                   </div>
                 </div>
+                <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
                 <div
-                  v-if="hasTemplateGenerated(templateKey('organize', organizeSelectedFrag?.id, i))"
+                  v-if="blk.type === 'template' && hasTemplateGenerated(templateKey('organize', organizeSelectedFrag?.id, i))"
                   class="kv-template-result kv-template-result--compact"
                 >
-                  <div class="kv-template-result-label">Generated</div>
-                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGenerated(templateKey('organize', organizeSelectedFrag?.id, i)) }}</pre>
+                  <div class="kv-template-result-head">
+                    <div class="kv-template-result-label">Generated</div>
+                    <el-button text size="small" @click="toggleResultViewMode(templateKey('organize', organizeSelectedFrag?.id, i))">
+                      {{ getResultViewMode(templateKey('organize', organizeSelectedFrag?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                    </el-button>
+                  </div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getTemplateGeneratedDisplay(templateKey('organize', organizeSelectedFrag?.id, i)) }}</pre>
+                </div>
+                <div
+                  v-if="blk.type === 'execute' && hasExecuteResult(templateKey('organize', organizeSelectedFrag?.id, i))"
+                  class="kv-template-result kv-template-result--compact"
+                >
+                  <div class="kv-template-result-head">
+                    <div class="kv-template-result-label">Execution Result</div>
+                    <el-button text size="small" @click="toggleResultViewMode(templateKey('organize', organizeSelectedFrag?.id, i))">
+                      {{ getResultViewMode(templateKey('organize', organizeSelectedFrag?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                    </el-button>
+                  </div>
+                  <pre class="kv-pre kv-pre-template-result">{{ getExecuteResultDisplay(templateKey('organize', organizeSelectedFrag?.id, i)) }}</pre>
                 </div>
               </div>
               <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
@@ -538,12 +594,13 @@
             <el-button text size="small" @click="insertDraftBlockAt(i, 'code')">+ Code ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'url')">+ URL ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'template')">+ Template ↑</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i, 'execute')">+ Execute ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'table')">+ Table ↑</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i, 'long')">+ Long ↑</el-button>
           </div>
           <div class="kv-bk-toolbar">
             <div class="kv-bk-type-group">
-              <button v-for="t in ['text','code','url','template','table','long']" :key="t"
+              <button v-for="t in ['text','code','url','template','execute','table','long']" :key="t"
                 class="kv-bk-type-btn" :class="{ active: blk.type === t }"
                 @click="setBlockType(draftBlocks, i, t)">{{ t }}</button>
             </div>
@@ -551,7 +608,7 @@
             <div style="flex:1" />
             <el-button text size="small" type="danger" :disabled="draftBlocks.length <= 1" @click="removeDraftBlock(i)">✕</el-button>
           </div>
-          <div v-if="blk.type === 'template'" class="kv-template-editor-vars">
+          <div v-if="blk.type === 'template' || blk.type === 'execute'" class="kv-template-editor-vars">
             <div
               v-for="(name, argIdx) in getTemplateArgNames(blk)"
               :key="argIdx"
@@ -581,7 +638,7 @@
           <el-input v-model="blk.subtitle" placeholder="Subtitle (optional)" size="small" style="margin-top:4px" />
           <el-input v-if="blk.type !== 'table'" v-model="blk.body" type="textarea"
             :autosize="{ minRows: blk.type === 'url' ? 2 : 3 }"
-            :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : 'Text...'"
+            :placeholder="blk.type === 'code' ? 'Code...' : blk.type === 'url' ? 'https://...' : blk.type === 'template' ? 'echo Hello $name' : blk.type === 'execute' ? 'kubectl get pods -n $namespace' : 'Text...'"
             :class="blk.type === 'code' ? 'kv-textarea-mono' : ''"
             style="margin-top:4px" />
           <div v-else class="kv-table-editor-wrap">
@@ -645,6 +702,7 @@
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'code')">+ Code ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'url')">+ URL ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'template')">+ Template ↓</el-button>
+            <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'execute')">+ Execute ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'table')">+ Table ↓</el-button>
             <el-button text size="small" @click="insertDraftBlockAt(i + 1, 'long')">+ Long ↓</el-button>
           </div>
@@ -830,6 +888,7 @@
 .kv-blk-bar--long { background: #f5f0ff; }
 .kv-blk-bar--table { background: #ecfdf5; }
 .kv-blk-bar--template { background: #fff6e8; }
+.kv-blk-bar--execute { background: #eef7ff; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-date { font-size: 11px; color: #86868b; white-space: nowrap; flex-shrink: 0; }
 .kv-blk-bar--code .kv-blk-date { color: #888; }
@@ -938,6 +997,11 @@
 .kv-template-result {
   margin-top: 8px;
 }
+.kv-template-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .kv-template-result-label {
   font-size: 11px;
   color: #9a7a3a;
@@ -946,6 +1010,9 @@
 .kv-pre-template-result {
   background: #102015;
   color: #defbe6;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
 }
 .kv-template-result--compact {
   max-height: 0;

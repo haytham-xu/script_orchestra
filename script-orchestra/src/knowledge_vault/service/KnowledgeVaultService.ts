@@ -2,7 +2,7 @@ import { getRequest, postRequest, putRequest, deleteRequest } from '@/basic/Requ
 import { KNOWLEDGE_VAULT_ENDPOINT } from '@/basic/Constants'
 import type {
   RawFragment, KnowledgeVaultSettings,
-  Label, FragmentGroup, ContentBlock,
+  Label, FragmentGroup, ContentBlock, TemplateExecuteResult,
 } from './Model'
 
 const B = KNOWLEDGE_VAULT_ENDPOINT
@@ -94,4 +94,16 @@ export async function getTableWidths(): Promise<TableWidthStore> {
 
 export async function saveTableWidths(widths: TableWidthStore): Promise<TableWidthStore> {
   return (await putRequest<{ widths: TableWidthStore }>(`${B}/ui/table-widths`, {}, { widths })).widths || {}
+}
+
+export async function executeTemplateCommand(
+  body: string,
+  argNames: string[],
+  argValues: string[],
+): Promise<TemplateExecuteResult> {
+  return postRequest<TemplateExecuteResult>(`${B}/template/execute`, {}, {
+    body,
+    arg_names: argNames,
+    arg_values: argValues,
+  })
 }

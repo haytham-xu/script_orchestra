@@ -1,4 +1,4 @@
-export type BlockType = 'text' | 'code' | 'url' | 'long' | 'table' | 'template'
+export type BlockType = 'text' | 'code' | 'url' | 'long' | 'table' | 'template' | 'execute'
 
 export interface ContentBlock {
   type: BlockType
@@ -33,6 +33,14 @@ export interface Label {
 export interface KnowledgeVaultSettings {
   ai_model: string
   embed_model: string
+}
+
+export interface TemplateExecuteResult {
+  command: string
+  exit_code: number
+  stdout: string
+  stderr: string
+  timed_out?: boolean
 }
 
 export interface FragmentGroup {

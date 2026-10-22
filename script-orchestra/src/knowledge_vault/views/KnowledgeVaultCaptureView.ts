@@ -144,7 +144,7 @@ export default defineComponent({
         body: '',
         subtitle: '',
         ...(type === 'code' ? { lang: '' } : {}),
-        ...(type === 'template' ? { arg_names: ['arg1'] } : {}),
+        ...((type === 'template' || type === 'execute') ? { arg_names: ['arg1'] } : {}),
       }
     }
 
@@ -574,7 +574,7 @@ export default defineComponent({
     function setBlockType(blocks: ContentBlock[], idx: number, type: string) {
       blocks[idx] = { ...blocks[idx], type: type as ContentBlock['type'] }
       if (blocks[idx].type === 'table') ensureTableBody(blocks[idx])
-      if (blocks[idx].type === 'template') {
+      if (blocks[idx].type === 'template' || blocks[idx].type === 'execute') {
         ensureTemplateArgNames(blocks[idx])
       }
     }
@@ -585,6 +585,11 @@ export default defineComponent({
 
     const templateArgs = ref<Record<string, string[]>>({})
     const templateGenerated = ref<Record<string, string>>({})
+    const executeResult = ref<Record<string, string>>({})
+    const executeCopyText = ref<Record<string, string>>({})
+    const executeRunning = ref<Record<string, boolean>>({})
+    const resultViewMode = ref<Record<string, 'tail' | 'full'>>({})
+    const RESULT_TAIL_CHARS = 12000
 
     function detectTemplateVarNames(body: string): string[] {
       const names: string[] = []
@@ -685,6 +690,10 @@ export default defineComponent({
       const args = [...ensureTemplateArgs(key, blk)]
       args[argIdx] = value
       templateArgs.value[key] = args
+      if (blk.type === 'execute') {
+        delete executeResult.value[key]
+        delete executeCopyText.value[key]
+      }
     }
 
     function addTemplateArg(key: string, blk: ContentBlock) {
@@ -705,6 +714,46 @@ export default defineComponent({
 
     function hasTemplateGenerated(key: string): boolean {
       return !!templateGenerated.value[key]
+    }
+
+    function getResultViewMode(key: string): 'tail' | 'full' {
+      return resultViewMode.value[key] || 'tail'
+    }
+
+    function toggleResultViewMode(key: string) {
+      resultViewMode.value[key] = getResultViewMode(key) === 'tail' ? 'full' : 'tail'
+    }
+
+    function formatResultText(key: string, text: string): string {
+      if (getResultViewMode(key) === 'full' || text.length <= RESULT_TAIL_CHARS) return text
+      const omitted = text.length - RESULT_TAIL_CHARS
+      return `[showing last ${RESULT_TAIL_CHARS} chars, omitted ${omitted}]\n${text.slice(-RESULT_TAIL_CHARS)}`
+    }
+
+    function getTemplateGeneratedDisplay(key: string): string {
+      return formatResultText(key, getTemplateGenerated(key))
+    }
+
+    function getExecuteResult(key: string): string {
+      return executeResult.value[key] || ''
+    }
+
+    function hasExecuteResult(key: string): boolean {
+      return !!executeResult.value[key]
+    }
+
+    function getExecuteResultDisplay(key: string): string {
+      return formatResultText(key, getExecuteResult(key))
+    }
+
+    function isExecuteRunning(key: string): boolean {
+      return !!executeRunning.value[key]
+    }
+
+    function normalizeExecuteCopyText(stdout: string, stderr: string, fallback: string): string {
+      if (stdout) return stdout.replace(/\r?\n$/, '')
+      if (stderr) return stderr.replace(/\r?\n$/, '')
+      return fallback
     }
 
     function templateAllArgsFilled(key: string, blk: ContentBlock): boolean {
@@ -729,8 +778,19 @@ export default defineComponent({
     }
 
     function copyBlockFilled(blk: ContentBlock, key?: string, evt?: Event) {
-      if (blk.type !== 'template') {
+      if (blk.type !== 'template' && blk.type !== 'execute') {
         copyBlock(blk.body)
+        blurCopyTrigger(evt)
+        return
+      }
+      if (blk.type === 'execute') {
+        const output = key ? (executeCopyText.value[key] || '') : ''
+        if (!output) {
+          ElMessage.warning('Run Execute first, then copy the execution result')
+          blurCopyTrigger(evt)
+          return
+        }
+        copyBlock(output)
         blurCopyTrigger(evt)
         return
       }
@@ -753,6 +813,42 @@ export default defineComponent({
       if (key) templateGenerated.value[key] = rendered
       copyBlock(rendered)
       blurCopyTrigger(evt)
+    }
+
+    async function runExecuteBlock(blk: ContentBlock, key: string, evt?: Event) {
+      if (blk.type !== 'execute') return
+      if (!templateAllArgsFilled(key, blk)) {
+        ElMessage.warning('Fill all execute variable values before run')
+        blurCopyTrigger(evt)
+        return
+      }
+      if (executeRunning.value[key]) return
+      executeRunning.value[key] = true
+      try {
+        const args = ensureTemplateArgs(key, blk)
+        const names = getTemplateArgNames(blk)
+        const result = await api.executeTemplateCommand(blk.body, names, args)
+        const lines: string[] = [
+          `$ ${result.command}`,
+          `exit: ${result.exit_code}${result.timed_out ? ' (timed out)' : ''}`,
+        ]
+        if (result.stdout) lines.push('', '[stdout]', result.stdout)
+        if (result.stderr) lines.push('', '[stderr]', result.stderr)
+        executeResult.value[key] = lines.join('\n')
+        executeCopyText.value[key] = normalizeExecuteCopyText(result.stdout, result.stderr, lines.join('\n'))
+      } catch (e: any) {
+        const maybeAxios = e as { response?: { data?: any }; message?: string }
+        const serverMsg = maybeAxios?.response?.data?.message || maybeAxios?.response?.data?.error
+        const msg = serverMsg || maybeAxios?.message || 'unknown error'
+        const normalized = msg === 'Network Error'
+          ? 'Network Error (backend unavailable at 127.0.0.1:50001)'
+          : msg
+        executeResult.value[key] = `execute failed: ${normalized}`
+        delete executeCopyText.value[key]
+      } finally {
+        executeRunning.value[key] = false
+        blurCopyTrigger(evt)
+      }
     }
 
     // ---- reindex ----
@@ -832,6 +928,9 @@ export default defineComponent({
       templateKey, getTemplateArgs, setTemplateArg, addTemplateArg, removeTemplateArg,
       templateAllArgsFilled,
       getTemplateGenerated, hasTemplateGenerated,
+      getTemplateGeneratedDisplay, getExecuteResultDisplay,
+      getResultViewMode, toggleResultViewMode,
+      getExecuteResult, hasExecuteResult, isExecuteRunning, runExecuteBlock,
       getTemplateArgNames, setTemplateArgName, addTemplateVar, removeTemplateVar, moveTemplateVar,
       startTemplateVarDrag, dropTemplateVar,
       tableForView,

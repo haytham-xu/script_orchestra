@@ -86,15 +86,25 @@
             </div>
             <div class="kv-blocks">
               <div v-for="(blk, i) in searchDetail.blocks" :key="i" class="kv-block">
-                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : 'kv-blk-bar--text'"
+                <div class="kv-blk-bar" :class="blk.type === 'code' ? 'kv-blk-bar--code' : blk.type === 'url' ? 'kv-blk-bar--url' : blk.type === 'long' ? 'kv-blk-bar--long' : blk.type === 'table' ? 'kv-blk-bar--table' : blk.type === 'template' ? 'kv-blk-bar--template' : blk.type === 'execute' ? 'kv-blk-bar--execute' : 'kv-blk-bar--text'"
                   @click="blk.type === 'long' ? toggleLong(blk) : undefined" :style="blk.type === 'long' ? 'cursor:pointer' : ''">
                   <span class="kv-blk-subtitle" v-if="blk.subtitle">{{ blk.subtitle }}</span>
                   <span v-else-if="blk.type === 'long'" class="kv-blk-subtitle kv-blk-subtitle--long">Long text — click to expand</span>
                   <span v-else style="flex:1" />
                   <el-button
+                    v-if="blk.type === 'execute'"
                     text
                     size="small"
-                    :disabled="blk.type === 'template' && !templateAllArgsFilled(templateKey('search', searchDetail?.id, i), blk)"
+                    :loading="isExecuteRunning(templateKey('search', searchDetail?.id, i))"
+                    :disabled="!templateAllArgsFilled(templateKey('search', searchDetail?.id, i), blk)"
+                    @click.stop="runExecuteBlock(blk, templateKey('search', searchDetail?.id, i), $event)"
+                  >Execute</el-button>
+                  <el-button
+                    text
+                    size="small"
+                    :disabled="blk.type === 'execute'
+                      ? (!templateAllArgsFilled(templateKey('search', searchDetail?.id, i), blk) || !hasExecuteResult(templateKey('search', searchDetail?.id, i)))
+                      : (blk.type === 'template' && !templateAllArgsFilled(templateKey('search', searchDetail?.id, i), blk))"
                     @click.stop="copyBlockFilled(blk, templateKey('search', searchDetail?.id, i), $event)"
                   >Copy</el-button>
                   <span v-if="blk.type === 'long'" class="kv-long-chevron" :class="{ expanded: expandedLongs.has(blk) }">›</span>
@@ -104,8 +114,7 @@
                 <div v-else-if="blk.type === 'url'" class="kv-url-body">
                   <a :href="blk.body" target="_blank" rel="noopener" class="kv-url-link">{{ blk.body }}</a>
                 </div>
-                <div v-else-if="blk.type === 'template'" class="kv-template-body">
-                  <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
+                <div v-else-if="blk.type === 'template' || blk.type === 'execute'" class="kv-template-body">
                   <div class="kv-template-args kv-template-args--compact">
                     <div v-for="(arg, argIdx) in getTemplateArgs(templateKey('search', searchDetail?.id, i), blk)" :key="argIdx" class="kv-template-arg-row">
                       <span class="kv-template-arg-label">{{ getTemplateArgNames(blk)[argIdx] }}</span>
@@ -117,12 +126,30 @@
                       />
                     </div>
                   </div>
+                  <pre class="kv-pre kv-pre-template">{{ blk.body }}</pre>
                   <div
-                    v-if="hasTemplateGenerated(templateKey('search', searchDetail?.id, i))"
+                    v-if="blk.type === 'template' && hasTemplateGenerated(templateKey('search', searchDetail?.id, i))"
                     class="kv-template-result kv-template-result--compact"
                   >
-                    <div class="kv-template-result-label">Generated</div>
-                    <pre class="kv-pre kv-pre-template-result">{{ getTemplateGenerated(templateKey('search', searchDetail?.id, i)) }}</pre>
+                    <div class="kv-template-result-head">
+                      <div class="kv-template-result-label">Generated</div>
+                      <el-button text size="small" @click="toggleResultViewMode(templateKey('search', searchDetail?.id, i))">
+                        {{ getResultViewMode(templateKey('search', searchDetail?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                      </el-button>
+                    </div>
+                    <pre class="kv-pre kv-pre-template-result">{{ getTemplateGeneratedDisplay(templateKey('search', searchDetail?.id, i)) }}</pre>
+                  </div>
+                  <div
+                    v-if="blk.type === 'execute' && hasExecuteResult(templateKey('search', searchDetail?.id, i))"
+                    class="kv-template-result kv-template-result--compact"
+                  >
+                    <div class="kv-template-result-head">
+                      <div class="kv-template-result-label">Execution Result</div>
+                      <el-button text size="small" @click="toggleResultViewMode(templateKey('search', searchDetail?.id, i))">
+                        {{ getResultViewMode(templateKey('search', searchDetail?.id, i)) === 'tail' ? 'Show full' : 'Show tail' }}
+                      </el-button>
+                    </div>
+                    <pre class="kv-pre kv-pre-template-result">{{ getExecuteResultDisplay(templateKey('search', searchDetail?.id, i)) }}</pre>
                   </div>
                 </div>
                 <div v-else-if="blk.type === 'table'" class="kv-table-view-wrap">
@@ -248,6 +275,7 @@
 .kv-blk-bar--long { background: #f5f0ff; }
 .kv-blk-bar--table { background: #ecfdf5; }
 .kv-blk-bar--template { background: #fff6e8; }
+.kv-blk-bar--execute { background: #eef7ff; }
 .kv-block:has(.kv-blk-bar--code) { background: #1e1e1e; }
 .kv-blk-subtitle {
   flex: 1; font-size: 12px; color: #555; font-style: italic;
@@ -335,6 +363,11 @@
 .kv-template-result {
   margin-top: 8px;
 }
+.kv-template-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .kv-template-result-label {
   font-size: 11px;
   color: #9a7a3a;
@@ -343,6 +376,9 @@
 .kv-pre-template-result {
   background: #102015;
   color: #defbe6;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
 }
 .kv-template-result--compact {
   max-height: 0;
