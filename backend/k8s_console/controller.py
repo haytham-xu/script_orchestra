@@ -130,11 +130,16 @@ class InstanceTerminal(Resource):
                 )
             win = wt_repo.get_window(window_id)
 
-        # Inject kubeconfig env
+        # Inject kubeconfig env — always respawn so env vars are fresh
+        from web_terminal import scrollback_store
         extra_env = service.build_pty_env(instance_id)
         mgr = get_manager()
-        if not mgr.is_alive(window_id):
-            mgr.attach(window_id, win.cwd, extra_env=extra_env)
+        if mgr.is_alive(window_id):
+            # Kill existing shell so it respawns with the current KUBECONFIG
+            mgr.detach(window_id)
+        # Always start clean: delete stale scrollback from previous sessions
+        scrollback_store.delete(window_id)
+        mgr.attach(window_id, win.cwd, extra_env=extra_env)
 
         wt_repo.touch_window(window_id)
         return {
