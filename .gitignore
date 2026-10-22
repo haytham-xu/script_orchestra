@@ -25,3 +25,10 @@ backend/photo_classifier/.thumbnail_cache
 # Assistant runtime storage
 backend/assistant/media/
 /script-orchestra/.playwright-mcp
+
+# iOS / Xcode
+## Per-developer UI state (breakpoints, window layout, schemes) — never shared
+**/xcuserdata/
+**/*.xcuserdatad
+## macOS folder metadata
+app/**/.DS_Store
